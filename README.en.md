@@ -27,6 +27,16 @@ Think: ……（keeps built-in default）
 - **Stays expanded during the turn**: until the next Think appears, the current group of tool calls stays expanded so you can watch execution live.
 - **Manual expand/collapse**: click a group header to toggle; manual choices override the auto rule.
 
+### Screenshots
+
+**Before collapse**: all tool calls expanded, listed one by one:
+
+![Before collapse](docs/images/segment-before-collapse.png)
+
+**After collapse**: once the next Think appears, tool calls auto-collapse into segment-level group headers:
+
+![After collapse](docs/images/segment-after-collapse.png)
+
 ## Feature 2: Collapse the whole turn into one big header
 
 ```
@@ -42,6 +52,12 @@ Think: ……（keeps built-in default）
 - Click the big header to expand/collapse the whole turn; when reopening a historical session, completed turns stay collapsed as well;
 - **Final summary shows only body**: after the turn ends, Think lines inside the final summary message are hidden too;
 - **Single items are not grouped**: when there is only **1** command between two Think blocks, no segment-level header is applied and the command card is always rendered as-is; at turn end it is folded into the big header, and returns to normal once expanded.
+
+### Screenshots
+
+After the turn ends, the whole turn collapses into one big header with metrics, keeping only the final summary body:
+
+![Turn-end collapse](docs/images/turn-collapsed.png)
 
 ## Component styles & spacing
 
