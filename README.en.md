@@ -2,6 +2,10 @@
 
 > [简体中文](README.md)（默认） | **English**
 
+> Tired of dozens of tool calls filling your screen?
+> Envious of Codex's auto-collapse next door?
+> Then this plugin is made for you.
+
 A **pure plugin** for DeepSeek Harness (DSH) that only handles **collapsing**:
 1. **Segment-level auto-collapse**: tool calls are grouped by Think; once the next Think appears, the group automatically collapses into a segment-level group header (Think blocks keep their built-in defaults and only act as group boundaries).
 2. **Whole-turn collapse**: after a reply finishes, all Think blocks + tool calls + context injections of that turn collapse into **one big group header**, which shows the turn's duration / tokens / tok/s / cache-hit rate; only the final summary text stays visible.
