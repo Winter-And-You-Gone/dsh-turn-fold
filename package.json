@@ -1,0 +1,37 @@
+{
+  "name": "dsh-turn-fold",
+  "version": "0.2.2",
+  "type": "module",
+  "main": "index.js",
+  "description": "DeepSeek Harness 纯插件（只负责折叠）：工具调用按 Think 段级分组自动折叠；回合结束后整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头，大组头显示本轮耗时/token/tok/s/缓存命中率指标，最终总结只显示正文。不改 DSH 源码。",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.3"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "collapse",
+    "fold",
+    "think",
+    "tool-call"
+  ],
+  "files": [
+    "index.js",
+    "client.js",
+    "install.ps1",
+    "README.md",
+    "README.en.md"
+  ],
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  }
+}
