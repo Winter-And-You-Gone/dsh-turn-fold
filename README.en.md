@@ -62,6 +62,10 @@ Before/after collapse (left: all tool calls expanded, listed one by one; right: 
   auto-collapse into **one big group header**, keeping only the final summary message and the official duration/token footer visible;
 - **The big header shows this turn's metrics**: `duration (xh xm xs, or just m s under 1 hour, or just s under 1 minute), N tokens, N tok/s, cache hit NN%`; missing items are omitted automatically, and only when all are missing does it fall back to "Ran N commands";
 - Click the big header to expand/collapse the whole turn; when reopening a historical session, completed turns stay collapsed as well;
+- **The fold never crosses the user message**: the big header only folds content between the user message and the agent's reply.
+  Context rows anchored **above** the user message (e.g. approval-policy change notices) are not part of this turn's output
+  interval: they stay visible as-is, never participate in the fold, and are never used as the header anchor — so the big
+  header can never fold content sitting above the user message;
 - **Final summary shows only body**: after the turn ends, Think lines inside the final summary message are hidden too;
 - **Single items are not grouped**: when there is only **1** command between two Think blocks, no segment-level header is applied and the command card is always rendered as-is; at turn end it is folded into the big header, and returns to normal once expanded.
 
