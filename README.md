@@ -9,8 +9,6 @@ DeepSeek Harness（DSH）**纯插件**，只负责**折叠**：
 
 **不修改任何 `@deepseek-ai/dsh-*` 源码。**
 
-> 重启 DSH 的功能（🔄 按钮 + 自动续跑）已拆到独立的 `dsh-restart` 插件。
-
 ## 功能一：段级分组自动折叠
 
 ```
@@ -59,7 +57,7 @@ Think：……（保持内置默认）
 ## 安装
 
 ```powershell
-# 把插件目录放到你已有的插件目录（与 dsh-vision-opencode 同约定），然后：
+# 把插件目录放到你已有的插件目录，然后：
 .\install.ps1 -PluginSource "<你的插件目录>"
 # 例如：.\install.ps1 -PluginSource "C:\dsh-plugins\dsh-turn-fold"
 # 不传参数时默认用脚本自身所在目录作为插件源
@@ -71,9 +69,6 @@ Think：……（保持内置默认）
 3. 校验 `require.resolve` 可解析。
 
 然后**完全退出 DSH 进程并重启**。
-
-> 若需要一键重启 DSH 以便应用插件改动，请同时安装 `dsh-restart` 插件
-> （会话头部会出现「🔄 重启 DSH」按钮）。
 
 ## 卸载
 

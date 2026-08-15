@@ -9,8 +9,6 @@ A **pure plugin** for DeepSeek Harness (DSH) that only handles **collapsing**:
 
 **Does not modify any `@deepseek-ai/dsh-*` source code.**
 
-> The DSH restart feature (🔄 button + auto-resume) has been moved to the separate `dsh-restart` plugin.
-
 ## Feature 1: Segment-level auto-collapse
 
 ```
@@ -53,7 +51,7 @@ Think: ……（keeps built-in default）
 ## Installation
 
 ```powershell
-# Put the plugin directory into your existing plugins directory (same convention as dsh-vision-opencode), then:
+# Put the plugin directory into your existing plugins directory, then:
 .\install.ps1 -PluginSource "<your-plugin-directory>"
 # e.g. .\install.ps1 -PluginSource "C:\dsh-plugins\dsh-turn-fold"
 # When no argument is given, the script uses its own directory as the plugin source
@@ -65,9 +63,6 @@ The script will:
 3. Verify `require.resolve` resolves.
 
 Then **fully exit the DSH process and restart**.
-
-> If you want one-click DSH restart to apply plugin changes, also install the `dsh-restart` plugin
-> (a "🔄 Restart DSH" button will appear at the top of the session).
 
 ## Uninstall
 
