@@ -9,6 +9,9 @@ A **pure plugin** for DeepSeek Harness (DSH) that only handles **collapsing**:
 
 **Does not modify any `@deepseek-ai/dsh-*` source code.**
 
+> **Design reference**: this plugin's tool-call auto-collapse feature and interaction style are inspired by
+> Codex's (OpenAI) tool-call auto-collapse experience — tool calls auto-collapse by reasoning segment and can be expanded by clicking the group header.
+
 ## Feature 1: Segment-level auto-collapse
 
 ```
