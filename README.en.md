@@ -37,8 +37,8 @@ Before/after collapse (left: all tool calls expanded, listed one by one; right: 
     <td align="center"><b>After collapse</b></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/segment-before-collapse.png" alt="Before collapse" width="100%"/></td>
-    <td align="center"><img src="docs/images/segment-after-collapse.png" alt="After collapse" width="100%"/></td>
+    <td align="center"><img src="docs/images/segment-before-collapse.png" alt="Before collapse" width="300"/></td>
+    <td align="center"><img src="docs/images/segment-after-collapse.png" alt="After collapse" width="300"/></td>
   </tr>
 </table>
 

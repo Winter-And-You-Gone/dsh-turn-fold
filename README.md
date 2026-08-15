@@ -37,8 +37,8 @@ Think：……（保持内置默认）
     <td align="center"><b>折叠后</b></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/segment-before-collapse.png" alt="折叠前" width="100%"/></td>
-    <td align="center"><img src="docs/images/segment-after-collapse.png" alt="折叠后" width="100%"/></td>
+    <td align="center"><img src="docs/images/segment-before-collapse.png" alt="折叠前" width="300"/></td>
+    <td align="center"><img src="docs/images/segment-after-collapse.png" alt="折叠后" width="300"/></td>
   </tr>
 </table>
 
