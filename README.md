@@ -29,13 +29,18 @@ Think：……（保持内置默认）
 
 ### 效果示意
 
-**折叠前**：工具调用全部展开、逐条显示：
+折叠前后对比（左：工具调用全部展开、逐条显示；右：下一个 Think 出现后自动收成段级组头）：
 
-![折叠前](docs/images/segment-before-collapse.png)
-
-**折叠后**：下一个 Think 出现后，工具调用自动收成段级组头：
-
-![折叠后](docs/images/segment-after-collapse.png)
+<table>
+  <tr>
+    <td align="center"><b>折叠前</b></td>
+    <td align="center"><b>折叠后</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/segment-before-collapse.png" alt="折叠前" width="100%"/></td>
+    <td align="center"><img src="docs/images/segment-after-collapse.png" alt="折叠后" width="100%"/></td>
+  </tr>
+</table>
 
 ## 功能二：整回合折叠成一个大组头
 

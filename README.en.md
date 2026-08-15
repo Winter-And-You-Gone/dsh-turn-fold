@@ -29,13 +29,18 @@ Think: ……（keeps built-in default）
 
 ### Screenshots
 
-**Before collapse**: all tool calls expanded, listed one by one:
+Before/after collapse (left: all tool calls expanded, listed one by one; right: auto-collapsed into segment-level group headers after the next Think):
 
-![Before collapse](docs/images/segment-before-collapse.png)
-
-**After collapse**: once the next Think appears, tool calls auto-collapse into segment-level group headers:
-
-![After collapse](docs/images/segment-after-collapse.png)
+<table>
+  <tr>
+    <td align="center"><b>Before collapse</b></td>
+    <td align="center"><b>After collapse</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/segment-before-collapse.png" alt="Before collapse" width="100%"/></td>
+    <td align="center"><img src="docs/images/segment-after-collapse.png" alt="After collapse" width="100%"/></td>
+  </tr>
+</table>
 
 ## Feature 2: Collapse the whole turn into one big header
 
