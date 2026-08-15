@@ -245,24 +245,30 @@ window.__ModuleLoader__.load({
 				if (n.kind === "assistant-step") finalAssistantKey = keys[j];
 				else if (n.kind === "tool-call") toolCount++;
 			}
-			// 组头必须锚定在用户消息之后：DSH 会把上下文注入（source 非 user 的
-			// user/message 事件，如批准策略 / 权限 / skills 提醒）排到用户首条消息
-			// 之前（anchorSeq 更小），若把整回合组头挂在这样的 context 节点上，
-			// 大组头会渲染到用户消息上方。因此跳过锚定在"最后一个 user 节点"
-			// 之前的 context 候选；assistant-step / tool-call 在 settle 后必然位于
-			// 用户消息之后，不受此限制（且保证组头候选永不落空，避免误隐藏）。
+			// 折叠作用域 = (最后一个 user 节点, 当前 agent 回合]：
+			// DSH 会把上下文注入（source 非 user 的 user/message 事件，如批准
+			// 策略 / 权限 / skills 提醒）排到用户首条消息之前（anchorSeq 更小）。
+			// 整回合折叠只能折叠"用户消息之后"的内容——锚定在最后一个 user 节点
+			// 之前（含）的节点（如审批策略变更通知）不属于本回合的输出区间，
+			// 绝不参与折叠、也绝不作组头候选，否则大组头会"跨过"用户消息去折叠
+			// 其上方的内容，破坏"折叠 = 收起用户消息与 agent 回复之间内容"的语义。
 			var lastUserSeq = -1;
 			for (var u = 0; u < keys.length; u++) {
 				var un = nodes.get(keys[u]);
 				if (un && un.kind === "user" && typeof un.anchorSeq === "number" && un.anchorSeq > lastUserSeq) lastUserSeq = un.anchorSeq;
 			}
+			var ourAnchor = typeof ourNode.anchorSeq === "number" ? ourNode.anchorSeq : undefined;
+			// 当前节点是否位于折叠作用域之外（锚定在最后一个 user 节点之前/之上）。
+			var outsideScope = ourKey !== null && ourAnchor !== undefined && lastUserSeq >= 0 && ourAnchor <= lastUserSeq;
 			var headerKey = null;
 			for (var m = 0; m < keys.length; m++) {
 				var key = keys[m];
 				if (key === finalAssistantKey) continue;
 				var node = nodes.get(key);
 				if (!node || !(node.kind === "tool-call" || node.kind === "assistant-step" || node.kind === "context")) continue;
-				if (node.kind === "context" && lastUserSeq >= 0 && typeof node.anchorSeq === "number" && node.anchorSeq <= lastUserSeq) continue;
+				// 组头必须锚定在用户消息之后（anchorSeq > lastUserSeq）；
+				// assistant-step / tool-call 在 settle 后必然位于用户消息之后。
+				if (lastUserSeq >= 0 && typeof node.anchorSeq === "number" && node.anchorSeq <= lastUserSeq) continue;
 				headerKey = key;
 				break;
 			}
@@ -273,9 +279,11 @@ window.__ModuleLoader__.load({
 				headerKey: headerKey,
 				finalAssistantKey: finalAssistantKey,
 				ourKey: ourKey,
-				// 只有能同时定位到"自己的 key"和"最终总结消息"时才允许折叠：
-				// 否则（比如 turn/end 与最终消息索引的瞬时竞态）绝不能隐藏任何内容。
-				foldable: ourKey !== null && finalAssistantKey !== null,
+				outsideScope: outsideScope,
+				// 只有能同时定位到"自己的 key"、"最终总结消息"和"作用域内的组头"
+				// 时才允许折叠：否则（比如 turn/end 与最终消息索引的瞬时竞态，
+				// 或回合内没有任何位于用户消息之后的中间节点）绝不能隐藏任何内容。
+				foldable: ourKey !== null && finalAssistantKey !== null && headerKey !== null,
 				isTurnHeader: ourKey !== null && ourKey === headerKey,
 				isFinalAssistant: ourKey !== null && ourKey === finalAssistantKey
 			};
@@ -505,7 +513,8 @@ window.__ModuleLoader__.load({
 			var open = manual === null ? !group.autoCollapsed : manual;
 
 			// 回合已结束 → 整回合折叠成一个大组头（段级组头不再各自显示）。
-			if (fold && fold.closed && fold.toolCount > 0 && fold.foldable) {
+			// 折叠作用域之外（用户消息上方）的节点不参与整回合折叠。
+			if (fold && fold.closed && fold.toolCount > 0 && fold.foldable && !fold.outsideScope) {
 				if (!fold.isTurnHeader) {
 					// 成员：折叠时隐藏；展开大组头后显示自己的段级内容。
 					return turnExpanded ? renderSegment(props, group, open, sessionId) : hiddenMarker();
@@ -548,8 +557,9 @@ window.__ModuleLoader__.load({
 			var turnExpanded = useTurnExpanded(sessionId, turn);
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings); }, [turn, nodes, locations, turnTimings]);
 
-			// 未到回合结束 / 本回合无可折叠内容 / 无法安全定位最终消息：原样委托内置渲染。
-			if (!fold || !fold.closed || fold.toolCount === 0 || !fold.foldable) {
+			// 未到回合结束 / 本回合无可折叠内容 / 无法安全定位最终消息 /
+			// 节点在折叠作用域之外（用户消息上方）：原样委托内置渲染。
+			if (!fold || !fold.closed || fold.toolCount === 0 || !fold.foldable || fold.outsideScope) {
 				return renderBuiltinAssistant(props);
 			}
 			if (fold.isFinalAssistant) {
@@ -597,7 +607,8 @@ window.__ModuleLoader__.load({
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings); }, [turn, nodes, locations, turnTimings]);
 
 			// 未折叠：原样渲染；折叠时作为成员隐藏，展开大组头后恢复。
-			if (!fold || !fold.closed || fold.toolCount === 0 || !fold.foldable) {
+			// 折叠作用域之外（用户消息上方）的上下文行不参与折叠，始终原样渲染。
+			if (!fold || !fold.closed || fold.toolCount === 0 || !fold.foldable || fold.outsideScope) {
 				return renderBuiltinContext(props);
 			}
 			if (fold.isTurnHeader) {

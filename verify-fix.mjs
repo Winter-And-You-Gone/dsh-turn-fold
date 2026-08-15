@@ -1,7 +1,10 @@
-// dsh-turn-fold fix verification: headerKey selection for turn-fold.
+// dsh-turn-fold fix verification: headerKey selection and fold-scope boundary for turn-fold.
 // Reconstructs turn-1 / turn-3 node flows from a real session log
 // (e.g. <DSH_HOME>\sessions\<session-id>\session.jsonl.zstd)
-// and compares OLD (pre-fix) vs NEW (post-fix) computeTurnFold headerKey.
+// and compares OLD (pre-fix) vs NEW (post-fix) computeTurnFold headerKey,
+// plus the outsideScope boundary: nodes anchored at/before the last user
+// message must never participate in the turn fold (folding scope is
+// strictly the interval (last user message, agent work]).
 
 // ---- node factory (mirrors chatNode in dsh-client-ui-conversation) ----
 function node(key, kind, anchorSeq) {
@@ -101,6 +104,8 @@ function headerKeyOld(keys, nodes) {
 }
 
 // ---- NEW (post-fix) headerKey selection, copied verbatim from client.js ----
+// Folding scope = (last user node, agent work]: header must be anchored AFTER
+// the last user message; any node at/before it is never a header candidate.
 function headerKeyNew(keys, nodes) {
   let finalAssistantKey = null;
   for (const key of keys) {
@@ -118,11 +123,25 @@ function headerKeyNew(keys, nodes) {
     if (key === finalAssistantKey) continue;
     const node = nodes.get(key);
     if (!node || !(node.kind === "tool-call" || node.kind === "assistant-step" || node.kind === "context")) continue;
-    if (node.kind === "context" && lastUserSeq >= 0 && typeof node.anchorSeq === "number" && node.anchorSeq <= lastUserSeq) continue;
+    if (lastUserSeq >= 0 && typeof node.anchorSeq === "number" && node.anchorSeq <= lastUserSeq) continue;
     headerKey = key;
     break;
   }
   return headerKey;
+}
+
+// outsideScope (mirrors computeTurnFold's outsideScope flag): true when the
+// node is anchored at/before the last user message — it must never be folded.
+function outsideScopeOf(keys, nodes, ourKey) {
+  if (ourKey === null) return false;
+  const our = nodes.get(ourKey);
+  if (our === undefined || typeof our.anchorSeq !== "number") return false;
+  let lastUserSeq = -1;
+  for (const key of keys) {
+    const n = nodes.get(key);
+    if (n && n.kind === "user" && typeof n.anchorSeq === "number" && n.anchorSeq > lastUserSeq) lastUserSeq = n.anchorSeq;
+  }
+  return lastUserSeq >= 0 && our.anchorSeq <= lastUserSeq;
 }
 
 function userSeqOf(keys, nodes) {
@@ -150,5 +169,25 @@ check("turn3 (ctx after user, unchanged)", turn3.keys, turn3.nodes, "ctx-vision"
 check("no-user turn (fallback)", turnNoUser.keys, turnNoUser.nodes, "ctx-a", "ctx-a");
 check("two users + mid ctx", turnTwoUsers.keys, turnTwoUsers.nodes, "ctx-mid", "as-1");
 
+// ---- outsideScope boundary: pre-user nodes must never fold ----
+let scopeFailures = 0;
+function checkScope(name, keys, nodes, expected) {
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    const got = outsideScopeOf(keys, nodes, key);
+    if (got !== expectedValue) {
+      scopeFailures++;
+      console.log(`[${name}] outsideScope(${key}) = ${got}  <-- EXPECTED ${expectedValue}`);
+    } else {
+      console.log(`[${name}] outsideScope(${key}) = ${got}`);
+    }
+  }
+}
+
+checkScope("turn1", turn1.keys, turn1.nodes, { "ctx-approval": true, "as-step1": false, "ctx-skills": false, "as-final": false });
+checkScope("turn3", turn3.keys, turn3.nodes, { "ctx-vision": false, "as-t3s1": false, "as-t3-final": false });
+checkScope("no-user turn", turnNoUser.keys, turnNoUser.nodes, { "ctx-a": false, "as-1": false });
+checkScope("two users + mid ctx", turnTwoUsers.keys, turnTwoUsers.nodes, { "ctx-mid": true, "as-1": false, "tool-a": false });
+
+failures += scopeFailures;
 console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
