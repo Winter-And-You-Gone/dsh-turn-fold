@@ -30,9 +30,10 @@ window.__ModuleLoader__.load({
 
 		// ---- 可调配置 ----
 		var CONFIG = {
-			// 组头文案："运行了 N 条命令"
+			// 组头文案："运行了 N 条命令"；组内有失败命令时追加"——M条执行失败"
 			headerPrefix: "运行了",
-			headerSuffix: "条命令"
+			headerSuffix: "条命令",
+			failureSuffix: "条执行失败"
 		};
 
 		// ---- React ----
@@ -70,6 +71,8 @@ window.__ModuleLoader__.load({
 				".ccg-group-root[data-ccg-open] .ccg-header{margin-bottom:8px}",
 				/* 官方 DisclosureRow 组头微调：标题 400、可省略号（大组头指标文案可能较长）、chevron 用 label-secondary */
 				".ccg-header-title{font-weight:400;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+				/* 组内有执行失败命令时标题标红（与官方错误色 token 一致） */
+				".ccg-header-danger{color:var(--dsw-alias-state-error-primary,#ef4444)}",
 				".ccg-header-chevron{color:var(--dsw-alias-label-secondary,#9ca3af)}",
 				/* 兜底组头（官方 DisclosureRow 不可用时）：24px 行高 + 14px chevron + 14px/24px 文案 */
 				".ccg-header-fallback{display:flex;align-items:center;gap:6px;height:24px;cursor:pointer;user-select:none;color:var(--dsw-alias-label-secondary,#9ca3af);font-size:14px;line-height:24px;white-space:nowrap}",
@@ -193,9 +196,14 @@ window.__ModuleLoader__.load({
 			var keys = [];
 			for (var k = start; k <= end; k++) keys.push(order[k]);
 			var anyRunning = false;
+			var failures = 0;
 			for (var m = 0; m < keys.length; m++) {
 				var n = nodes.get(keys[m]);
-				if (n && n.data && isRunningRoot(n.data.root)) { anyRunning = true; break; }
+				if (!n || n.kind !== "tool-call") continue;
+				if (n.data && isRunningRoot(n.data.root)) { anyRunning = true; continue; }
+				// 已结算的命令以 isError=true 标记执行失败（含中断）。
+				var root = n.data && n.data.root;
+				if (root && "kind" in root && root.kind === "tool-result" && root.isError === true) failures++;
 			}
 			var hasLaterThink = false;
 			for (var j = end + 1; j < order.length; j++) {
@@ -208,6 +216,8 @@ window.__ModuleLoader__.load({
 				leaderKey: keys[0],
 				isLeader: ourIdx === start,
 				count: keys.length,
+				// 组内已结算且执行失败（isError=true，含中断）的命令数。
+				failures: failures,
 				anyRunning: anyRunning,
 				hasLaterThink: hasLaterThink,
 				autoCollapsed: hasLaterThink && !anyRunning
@@ -427,13 +437,16 @@ window.__ModuleLoader__.load({
 			var onToggle = props.onToggle;
 			// label 可选：大组头传指标文案；缺省用"运行了 N 条命令"。
 			var label = props.label || (CONFIG.headerPrefix + " " + count + " " + CONFIG.headerSuffix);
+			// danger：组内有执行失败的命令时标题标红。
+			var danger = props.danger === true;
+			var titleClass = "ccg-header-title" + (danger ? " ccg-header-danger" : "");
 			if (DisclosureRow && IconChevronDownOutline14 && IconChevronRightOutline14) {
 				return react.createElement(
 					DisclosureRow,
 					{
 						rowClassName: "ccg-header",
 						leadingClassName: "ccg-header-leading",
-						titleClassName: "ccg-header-title",
+						titleClassName: titleClass,
 						chevronClassName: "ccg-header-chevron",
 						// 收起：官方右向 chevron（14px）；展开：DisclosureRow 内建的下向 chevron（14px）
 						icon: react.createElement(IconChevronRightOutline14, { size: 14 }),
@@ -462,7 +475,7 @@ window.__ModuleLoader__.load({
 					}
 				},
 				react.createElement("span", { className: "ccg-chevron" }, "›"),
-				react.createElement("span", { className: "ccg-title" }, label),
+				react.createElement("span", { className: "ccg-title" + (danger ? " ccg-header-danger" : "") }, label),
 				open ? props.children : null
 			);
 		}
@@ -476,12 +489,17 @@ window.__ModuleLoader__.load({
 			var toggle = function () {
 				setGroupOpen(sessionId, group.leaderKey, !open);
 			};
+			// 组内有失败命令时：标题标红，并在"运行了 N 条命令"后追加失败数。
+			var label = CONFIG.headerPrefix + " " + group.count + " " + CONFIG.headerSuffix;
+			if (group.failures > 0) {
+				label += "——" + group.failures + CONFIG.failureSuffix;
+			}
 			return react.createElement(
 				"div",
 				{ className: "ccg-group-root", "data-ccg-count": String(group.count), "data-ccg-open": open ? "true" : undefined },
 				react.createElement(
 					GroupHeader,
-					{ count: group.count, open: open, onToggle: toggle },
+					{ count: group.count, open: open, onToggle: toggle, label: label, danger: group.failures > 0 },
 					open ? renderBuiltinToolCall(props) : null
 				)
 			);

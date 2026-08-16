@@ -188,6 +188,51 @@ checkScope("turn3", turn3.keys, turn3.nodes, { "ctx-vision": false, "as-t3s1": f
 checkScope("no-user turn", turnNoUser.keys, turnNoUser.nodes, { "ctx-a": false, "as-1": false });
 checkScope("two users + mid ctx", turnTwoUsers.keys, turnTwoUsers.nodes, { "ctx-mid": true, "as-1": false, "tool-a": false });
 
+// ---- failure counting (mirrors computeGroup's failures in client.js) ----
+// A settled command counts as failed when root.isError === true (interrupted
+// counts too); a running root never counts until it settles.
+function isRunningRoot(root) {
+  return !!root && !("kind" in root);
+}
+function countGroupFailures(keys, nodes) {
+  let failures = 0;
+  for (const key of keys) {
+    const n = nodes.get(key);
+    if (!n || n.kind !== "tool-call") continue;
+    if (n.data && isRunningRoot(n.data.root)) continue;
+    const root = n.data && n.data.root;
+    if (root && "kind" in root && root.kind === "tool-result" && root.isError === true) failures++;
+  }
+  return failures;
+}
+const failGroup = {
+  keys: ["t-ok", "t-err", "t-run", "t-interrupted"],
+  nodes: new Map([
+    ["t-ok", { key: "t-ok", kind: "tool-call", anchorSeq: 10, data: { root: { kind: "tool-result", callId: "1", isError: false } } }],
+    ["t-err", { key: "t-err", kind: "tool-call", anchorSeq: 11, data: { root: { kind: "tool-result", callId: "2", isError: true } } }],
+    ["t-run", { key: "t-run", kind: "tool-call", anchorSeq: 12, data: { root: { callId: "3", name: "pwsh" } } }],
+    ["t-interrupted", { key: "t-interrupted", kind: "tool-call", anchorSeq: 13, data: { root: { kind: "tool-result", callId: "4", isError: true } } }],
+  ]),
+};
+const cleanGroup = {
+  keys: ["t-a", "t-b"],
+  nodes: new Map([
+    ["t-a", { key: "t-a", kind: "tool-call", anchorSeq: 20, data: { root: { kind: "tool-result", callId: "a", isError: false } } }],
+    ["t-b", { key: "t-b", kind: "tool-call", anchorSeq: 21, data: { root: { kind: "tool-result", callId: "b", isError: false } } }],
+  ]),
+};
+function checkFailures(name, keys, nodes, expected) {
+  const got = countGroupFailures(keys, nodes);
+  if (got !== expected) {
+    failures++;
+    console.log(`[${name}] failures = ${got}  <-- EXPECTED ${expected}`);
+  } else {
+    console.log(`[${name}] failures = ${got}`);
+  }
+}
+checkFailures("fail group (1 error + 1 interrupted, 1 running)", failGroup.keys, failGroup.nodes, 2);
+checkFailures("clean group", cleanGroup.keys, cleanGroup.nodes, 0);
+
 failures += scopeFailures;
 console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

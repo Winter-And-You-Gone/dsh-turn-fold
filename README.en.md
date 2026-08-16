@@ -33,6 +33,7 @@ Think: ……（keeps built-in default）
 - **Auto-collapse timing**: when the **next Think** after a group of tool calls appears, that group auto-collapses.
 - **Stays expanded during the turn**: until the next Think appears, the current group of tool calls stays expanded so you can watch execution live.
 - **Manual expand/collapse**: click a group header to toggle; manual choices override the auto rule.
+- **Failed commands turn red**: when a command in the group **failed** (tool result `isError`, interrupted counts too), the group header text turns red and the failed count is appended after "Ran N commands", e.g. `Ran 6 commands——2 failed`.
 
 ### Screenshots
 
