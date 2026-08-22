@@ -134,6 +134,10 @@ window.__ModuleLoader__.load({
 				   CSS 只负责裁切。不依赖 CSS transition 起始帧 / interpolate-size。 */
 				".ccg-fold-clip{overflow:hidden}",
 				".ccg-fold-body{min-width:0;min-height:0}",
+				/* 大组头展开时，非第一个段的成员节点不经过 FoldClip 高度动画，
+				   用淡入+微位移入场动画避免"瞬间出现"（.22s ease-out） */
+				"@keyframes ccg-member-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}",
+				".ccg-member-in{animation:ccg-member-in .22s ease-out both}",
 				/* 官方 DisclosureRow 组头微调：标题 400、可省略号（大组头指标文案可能较长）、chevron 用 label-secondary */
 				".ccg-header-title{font-weight:400;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 				/* 组内有执行失败命令时标题标红（与官方错误色 token 一致） */
@@ -723,6 +727,8 @@ window.__ModuleLoader__.load({
 					setMounted(true);
 					setHeight("auto");
 					setVisible(false);
+					// 【调试 v6】展开流程日志
+					if (typeof console !== "undefined" && console.log) console.log("[dsh-turn-fold] expand: mount full-render (opacity:0)");
 					var rafId = null;
 					var timer = setTimeout(function () {
 						var el = elRef.current;
@@ -744,10 +750,14 @@ window.__ModuleLoader__.load({
 							totalFrames++;
 							if (h === prevH) { stableFrames++; } else { stableFrames = 0; prevH = h; }
 							if (h > fullH) fullH = h;
+							if (typeof console !== "undefined" && console.log && totalFrames <= 6) {
+								console.log("[dsh-turn-fold] measure frame " + totalFrames + ": h=" + h);
+							}
 							if (stableFrames < 2 && totalFrames < 30) {
 								rafId = raf(measureLoop);
 								return;
 							}
+							if (typeof console !== "undefined" && console.log) console.log("[dsh-turn-fold] measured fullH=" + fullH + " after " + totalFrames + " frames (stable " + stableFrames + ")");
 							if (fullH <= 0) { setVisible(true); return; }
 							// 测量完成：立即收起（opacity:0 掩盖，无闪烁），播放 0→fullH 动画
 							el.style.height = "0px";
@@ -755,6 +765,7 @@ window.__ModuleLoader__.load({
 							el.style.transform = "translateY(-4px)";
 							var start = null;
 							var DURATION = 280;
+							var frameCount = 0;
 							rafId = raf(function frame(t) {
 								if (start === null) start = t;
 								var p = Math.min(1, (t - start) / DURATION);
@@ -762,9 +773,14 @@ window.__ModuleLoader__.load({
 								el.style.height = Math.round(e * fullH) + "px";
 								el.style.opacity = String(e);
 								el.style.transform = "translateY(" + (-4 * (1 - e)) + "px)";
+								frameCount++;
+								if (typeof console !== "undefined" && console.log && (frameCount % 6 === 1 || p >= 1)) {
+									console.log("[dsh-turn-fold] anim frame " + frameCount + ": p=" + p.toFixed(2) + " h=" + Math.round(e * fullH));
+								}
 								if (p < 1) {
 									rafId = raf(frame);
 								} else {
+									if (typeof console !== "undefined" && console.log) console.log("[dsh-turn-fold] expand done: h=" + Math.round(e * fullH) + " → auto");
 									setVisible(true);
 									setHeight("auto");
 								}
@@ -997,7 +1013,7 @@ window.__ModuleLoader__.load({
 		function renderSegment(props, group, open, sessionId) {
 			if (group.count === 1) return renderBuiltinToolCall(props);
 			if (!group.isLeader) {
-				return open ? renderBuiltinToolCall(props) : hiddenMarker();
+				return open ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinToolCall(props)) : hiddenMarker();
 			}
 			var toggle = function () {
 				setGroupOpen(sessionId, group.leaderKey, !open);
@@ -1060,7 +1076,7 @@ window.__ModuleLoader__.load({
 				var turnOpen = turnOverride === null ? !closed : turnOverride;
 				if (!fold.isTurnHeader) {
 					// 成员：大组头展开时显示自己的段级内容；收起时隐藏（整行 display:none）。
-					return turnOpen ? renderSegment(props, group, open, sessionId) : hiddenMarker();
+					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderSegment(props, group, open, sessionId)) : hiddenMarker();
 				}
 				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签，无数据则退回
 				// "运行了 N 条命令"）；组头下方常驻分隔线（收起/展开都显示），其下接自己的段级内容。
@@ -1125,7 +1141,7 @@ window.__ModuleLoader__.load({
 			}
 			if (!fold.isTurnHeader) {
 				// 中间 Think 节点：大组头展开时显示自己的 Think 行；收起时隐藏。
-				return turnOpen ? renderBuiltinAssistant(props) : hiddenMarker();
+				return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinAssistant(props)) : hiddenMarker();
 			}
 			// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；组头下方常驻
 			// 分隔线（收起/展开都显示），其下接自己的内容（Think 行）。
@@ -1194,7 +1210,7 @@ window.__ModuleLoader__.load({
 					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinContext(props))
 				);
 			}
-			return turnOpen ? renderBuiltinContext(props) : hiddenMarker();
+			return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinContext(props)) : hiddenMarker();
 		}
 
 		// ---- Cordis 插件入口 ----
