@@ -62,6 +62,8 @@ Think：……（保持内置默认）
 
 - 一轮回复**完成**（输出最终总结、回合结束）后，本回合内所有 Think、工具调用和上下文注入
   自动收成**一个大组头**，只保留最终总结消息和官方耗时/token 脚注可见；
+- **无工具调用也折叠**：回合内只有上下文注入 / Think、没有任何工具调用时，同样收成
+  一个大组头（组头显示耗时/token 指标，不显示命令数）；
 - **大组头显示本轮指标**：`耗时x时x分x秒（不足 1 小时只显示分秒，不足 1 分钟只显示秒），
   消耗xxx token，xxx tok/s，缓存命中 xx%`；某几项缺失时自动省略，全部缺失才回退为
   「运行了 N 条命令」；
@@ -90,6 +92,28 @@ Think：……（保持内置默认）
 
 ## 安装
 
+### 方式一（推荐）：从 npm 安装
+
+本插件已发布到 npm registry：[dsh-turn-fold](https://www.npmjs.com/package/dsh-turn-fold)
+
+```sh
+# 官方命令（推荐）
+dsh plugin --profile web add dsh-turn-fold
+
+# 或从 GitHub 源码安装
+dsh plugin --profile web add github:Winter-And-You-Gone/dsh-turn-fold
+```
+
+`dsh plugin` 会将包加入 profile 的 pnpm 依赖并自动追加到组合包层（`dsh.profile.bundles`），无需手动改任何文件。验证方式：
+
+```sh
+dsh --profile web --dump-config    # 确认输出中能看到 "dsh-turn-fold" 层
+```
+
+然后**完全退出 DSH 进程并重启**。
+
+### 方式二：手工 `install.ps1`
+
 ```powershell
 # 把插件目录放到你已有的插件目录，然后：
 .\install.ps1 -PluginSource "<你的插件目录>"
@@ -106,10 +130,44 @@ Think：……（保持内置默认）
 
 ## 卸载
 
+```sh
+# 官方方式：同时移除依赖和插件层
+dsh plugin --profile web remove dsh-turn-fold
+```
+
+手工方式（曾用 `install.ps1` 安装时）：
+
 ```powershell
 Remove-Item "$env:DSH_HOME\profiles\node_modules\dsh-turn-fold" -Force   # 删 Junction
 # 手动删掉 cordis.patch.yml 里对应的 insert 块
 ```
+
+## CI 与发布
+
+GitHub Actions 会在每次 PR / push 到 `main` 时自动运行语法检查、`verify-fix.mjs` 校验和
+`npm pack --dry-run` 打包预检；推送 `v*` tag 时自动发布到 npm（OIDC Trusted Publishing，
+无需长期 token）并创建 GitHub Release。
+
+**一次性配置**（把 npm 包绑定到本仓库的 release workflow）：
+
+```sh
+npx npm@^11.15.0 trust github dsh-turn-fold \
+  --repo Winter-And-You-Gone/dsh-turn-fold \
+  --file release.yml \
+  --allow-publish
+```
+
+也可以改为在 npmjs.com 网站账户设置里配置 Trusted Publishing。
+
+**之后每次发版只需两步**：
+
+```sh
+npm version patch    # 或 minor / major：bump 版本并自动打 v* tag
+git push --follow-tags
+```
+
+> 提示：`npm version` 要求工作区干净，先把待发布的改动提交；tag 名必须与
+> `package.json` 的 `version` 一致（workflow 会校验，不一致即失败）。
 
 ## 工作原理（为什么不用改源码）
 

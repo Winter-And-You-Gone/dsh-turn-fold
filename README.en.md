@@ -83,6 +83,29 @@ After the turn ends, the whole turn collapses into one big header with metrics, 
 
 ## Installation
 
+### Option 1 (recommended): install from npm
+
+This plugin is published on the npm registry: [dsh-turn-fold](https://www.npmjs.com/package/dsh-turn-fold)
+
+```sh
+# Official command (recommended)
+dsh plugin --profile web add dsh-turn-fold
+
+# Or install from the GitHub source
+dsh plugin --profile web add github:Winter-And-You-Gone/dsh-turn-fold
+```
+
+`dsh plugin` adds the package to the profile's pnpm dependencies and appends it to the bundle layer
+(`dsh.profile.bundles`) automatically — no manual file edits. To verify:
+
+```sh
+dsh --profile web --dump-config    # confirm a "dsh-turn-fold" layer appears in the output
+```
+
+Then **fully exit the DSH process and restart**.
+
+### Option 2: manual `install.ps1`
+
 ```powershell
 # Put the plugin directory into your existing plugins directory, then:
 .\install.ps1 -PluginSource "<your-plugin-directory>"
@@ -99,10 +122,46 @@ Then **fully exit the DSH process and restart**.
 
 ## Uninstall
 
+```sh
+# Official way: removes both the dependency and the plugin layer
+dsh plugin --profile web remove dsh-turn-fold
+```
+
+Manual way (when previously installed via `install.ps1`):
+
 ```powershell
 Remove-Item "$env:DSH_HOME\profiles\node_modules\dsh-turn-fold" -Force   # remove the Junction
 # Manually remove the corresponding insert block from cordis.patch.yml
 ```
+
+## CI and release
+
+GitHub Actions runs syntax checks, the `verify-fix.mjs` verification, and an
+`npm pack --dry-run` preflight for every pull request and every push to `main`.
+Pushing a `v*` tag publishes to npm automatically (OIDC Trusted Publishing, no
+long-lived token) and creates a GitHub Release.
+
+**One-time setup** (bind the npm package to this repository's release workflow):
+
+```sh
+npx npm@^11.15.0 trust github dsh-turn-fold \
+  --repo Winter-And-You-Gone/dsh-turn-fold \
+  --file release.yml \
+  --allow-publish
+```
+
+You can also configure Trusted Publishing in your npmjs.com account settings.
+
+**After that, each release is two steps:**
+
+```sh
+npm version patch    # or minor / major: bumps the version and tags it v*
+git push --follow-tags
+```
+
+> Note: `npm version` requires a clean working tree — commit your changes first.
+> The tag name must match the `version` field in `package.json` (the workflow
+> verifies this and fails otherwise).
 
 ## How it works (why no source changes)
 
