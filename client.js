@@ -526,6 +526,7 @@ window.__ModuleLoader__.load({
 		// ---- 组头组件 ----
 		// 优先用官方 DisclosureRow（24px 行高、16px 前导、14px 官方 chevron、14px/24px 标题），
 		// 与 Think / 工具卡片的折叠行样式一致；平台原语缺失时回退到自带兜底行。
+		// 无障碍：两种路径都带 aria-label / aria-expanded，键盘可操作。
 		function GroupHeader(props) {
 			var count = props.count;
 			var open = props.open;
@@ -534,7 +535,12 @@ window.__ModuleLoader__.load({
 			var label = props.label || (_T("headerPrefix") + " " + count + " " + _T("headerSuffix"));
 			// danger：组内有执行失败的命令时标题标红。
 			var danger = props.danger === true;
+			// isTurn：大组头（整回合折叠）用回合语义的无障碍标签。
+			var isTurn = props.isTurn === true;
 			var titleClass = "ccg-header-title" + (danger ? " ccg-header-danger" : "");
+			var ariaLabel = isTurn
+				? (open ? _T("ariaTurnExpanded") : _T("ariaTurn"))
+				: (open ? _T("ariaGroupExpanded") : _T("ariaGroup"));
 			if (DisclosureRow && IconChevronDownOutline14 && IconChevronRightOutline14) {
 				return react.createElement(
 					DisclosureRow,
@@ -550,7 +556,8 @@ window.__ModuleLoader__.load({
 						expandable: true,
 						expandOnRowClick: true,
 						previewChevron: false,
-						onToggle: onToggle
+						onToggle: onToggle,
+						"aria-label": ariaLabel
 					},
 					props.children
 				);
@@ -562,7 +569,7 @@ window.__ModuleLoader__.load({
 					role: "button",
 					tabIndex: 0,
 					"aria-expanded": !!open,
-					title: open ? "折叠本组" : "展开本组",
+					"aria-label": ariaLabel,
 					"data-open": open ? "true" : undefined,
 					onClick: onToggle,
 					onKeyDown: function (e) {
@@ -594,7 +601,7 @@ window.__ModuleLoader__.load({
 				{ className: "ccg-group-root", "data-ccg-count": String(group.count), "data-ccg-open": open ? "true" : undefined },
 				react.createElement(
 					GroupHeader,
-					{ count: group.count, open: open, onToggle: toggle, label: label, danger: group.failures > 0 },
+					{ count: group.count, open: open, onToggle: toggle, label: label, danger: group.failures > 0, isTurn: false },
 					open ? renderBuiltinToolCall(props) : null
 				)
 			);
@@ -646,7 +653,7 @@ window.__ModuleLoader__.load({
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
 					react.createElement(
 						GroupHeader,
-						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn },
+						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true },
 						turnExpanded ? renderSegment(props, group, open, sessionId) : null
 					)
 				);
@@ -702,7 +709,7 @@ window.__ModuleLoader__.load({
 				{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
 				react.createElement(
 					GroupHeader,
-					{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn },
+					{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true },
 					turnExpanded ? renderBuiltinAssistant(props) : null
 				)
 			);
@@ -742,7 +749,7 @@ window.__ModuleLoader__.load({
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
 					react.createElement(
 						GroupHeader,
-						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn },
+						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true },
 						turnExpanded ? renderBuiltinContext(props) : null
 					)
 				);
