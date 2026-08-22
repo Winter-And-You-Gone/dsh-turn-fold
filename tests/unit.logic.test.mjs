@@ -396,6 +396,54 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
   })
 })
 
+// ─────────────────────────── 回合结束状态（timeline reason） ───────────────────────────
+// DSH 快照的 s.chat.timeline.turns 里，turn.end 是完整 turn/end 事件，
+// 其 data.reason.kind 由 agent-loop 写入（completed / aborted / error / max-tokens / blocked）。
+describe('回合结束状态（timeline reason）', () => {
+  function turnWithReason(kind) {
+    const nodes = [userNode('u', 100), asNode('as', 200), asNode('final', 500)]
+    const s = buildSnapshot(nodes, {
+      turnEnds: new Map([[13, 600]]),
+      timeline: {
+        turns: new Map([[13, {
+          turn: 13,
+          start: { seq: 100 },
+          end: { seq: 600, data: { turn: 13, reason: { kind } } },
+          status: 'closed',
+        }]]),
+      },
+    })
+    return T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('final'), s.chat.timeline)
+  }
+
+  it('正常完成 reason.kind=completed → 无状态标签（completed）', () => {
+    assert.equal(turnWithReason('completed').turnStatus, 'completed')
+  })
+
+  it('用户停止 reason.kind=aborted → stopped', () => {
+    assert.equal(turnWithReason('aborted').turnStatus, 'stopped')
+  })
+
+  it('出错 reason.kind=error → interrupted', () => {
+    assert.equal(turnWithReason('error').turnStatus, 'interrupted')
+  })
+
+  it('max-tokens → interrupted', () => {
+    assert.equal(turnWithReason('max-tokens').turnStatus, 'interrupted')
+  })
+
+  it('blocked（输入被拒绝）→ 按正常完成处理，不误报', () => {
+    assert.equal(turnWithReason('blocked').turnStatus, 'completed')
+  })
+
+  it('无 timeline → 默认 completed（不误报）', () => {
+    const nodes = [userNode('u', 100), asNode('as', 200), asNode('final', 500)]
+    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
+    const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('final'))
+    assert.equal(f.turnStatus, 'completed')
+  })
+})
+
 // ─────────────────────────── 英文界面（en） ───────────────────────────
 // 重新加载一个 factory 实例（LOCALE 在 factory 顶层按 navigator 计算），
 // 验证英语适配：耗时/token/tok/s/缓存命中的英文格式。

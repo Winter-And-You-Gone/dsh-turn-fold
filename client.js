@@ -64,7 +64,7 @@ window.__ModuleLoader__.load({
 				headerPrefix: "运行了",
 				headerSuffix: "条命令",
 				failureSuffix: "条执行失败",
-				statusCompleted: "完成",
+				statusCompleted: "已完成",
 				statusStopped: "已停止",
 				statusInterrupted: "已中断",
 				ariaGroup: "展开本组",
@@ -346,7 +346,7 @@ window.__ModuleLoader__.load({
 		 *     作为大组头锚点，保证大组头从回复第一条内容起就出现。
 		 *   - headerKey：回合内第一条"中间节点"（tool-call / context / 非最终 assistant-step），由它渲染大组头。
 		 */
-		function computeTurnFold(order, nodes, locations, turnEnds, ourNode) {
+		function computeTurnFold(order, nodes, locations, turnEnds, ourNode, timeline) {
 			if (!order || !nodes || !locations || !turnEnds || !ourNode) return null;
 			var turn = turnNumber(ourNode);
 			if (turn === undefined) return null;
@@ -395,11 +395,24 @@ window.__ModuleLoader__.load({
 				break;
 			}
 			// ---- 回合结束状态检测（completed / stopped / interrupted）----
-			// 优先从 turnEnds 的 Map 形态读取详因（reason/stopReason）；
-			// 否则从最终 assistant-step 的 stopReason/finishReason 推断。
-			// 取不到任何信号时按正常完成处理，绝不误报。
+			// 权威数据源：快照的 s.chat.timeline.turns 里，turn.end 是完整的
+			// turn/end 事件对象，其 data.reason.kind 由 agent-loop 写入：
+			//   completed（正常） / aborted（用户停止） / error（出错） /
+			//   max-tokens / blocked。turnEnds Map 只存 seq 拿不到 reason，
+			// 因此以 timeline 为准，其余信号作兜底。取不到任何信号时按
+			// 正常完成处理，绝不误报。
 			var turnStatus = "completed";
-			if (turnEnds && typeof turnEnds.get === "function") {
+			var reasonKind = null;
+			if (timeline && timeline.turns && typeof timeline.turns.get === "function") {
+				var tlTurn = timeline.turns.get(turn);
+				if (tlTurn && tlTurn.end && tlTurn.end.data && tlTurn.end.data.reason) {
+					reasonKind = tlTurn.end.data.reason.kind;
+				}
+			}
+			if (reasonKind === "aborted") turnStatus = "stopped";
+			else if (reasonKind === "error" || reasonKind === "max-tokens") turnStatus = "interrupted";
+			// blocked：输入被拒绝，按正常完成处理（不误报）。
+			if (turnStatus === "completed" && turnEnds && typeof turnEnds.get === "function") {
 				var endInfo = turnEnds.get(turn);
 				if (endInfo) {
 					var reason = endInfo.reason || endInfo.stopReason || "";
@@ -583,10 +596,9 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 回合状态标签 ----
-		/** 非完成状态的回合在大组头前置状态文本（如"已停止 | 耗时…"）。 */
+		/** 已结束的回合在大组头前置状态文本（如"已完成 | 耗时…"、"已停止 | 耗时…"）。 */
 		function turnLabelWithStatus(baseLabel, turnStatus) {
-			if (!turnStatus || turnStatus === "completed") return baseLabel;
-			var key = "status" + turnStatus.charAt(0).toUpperCase() + turnStatus.slice(1);
+			var key = "status" + (turnStatus || "completed").charAt(0).toUpperCase() + (turnStatus || "completed").slice(1);
 			var text = _T(key);
 			return text ? (text + " | " + baseLabel) : baseLabel;
 		}
@@ -987,8 +999,9 @@ window.__ModuleLoader__.load({
 			var locations = useSession(function (s) { return s.chat.locations; });
 			var turnEnds = useSession(function (s) { return s.turnEnds; });
 			var turnTimings = useSession(function (s) { return s.turnTimings; });
+			var timeline = useSession(function (s) { return s.chat.timeline; });
 			var group = useMemo(function () { return computeGroup(order, nodes, node); }, [order, nodes, node]);
-			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node); }, [order, nodes, locations, turnEnds, node]);
+			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node, timeline); }, [order, nodes, locations, turnEnds, node, timeline]);
 			var leaderKey = group ? group.leaderKey : "";
 			var manual = useGroupOverride(sessionId, leaderKey);
 			var turn = fold ? fold.turn : undefined;
@@ -1025,7 +1038,7 @@ window.__ModuleLoader__.load({
 					setTurnOpen(sessionId, fold.turn, !turnOpen);
 				};
 				var baseLabel = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
-				var turnLabel = turnLabelWithStatus(baseLabel, fold.turnStatus);
+				var turnLabel = closed ? turnLabelWithStatus(baseLabel, fold.turnStatus) : baseLabel;
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
@@ -1054,7 +1067,8 @@ window.__ModuleLoader__.load({
 			var locations = useSession(function (s) { return s.chat.locations; });
 			var turnEnds = useSession(function (s) { return s.turnEnds; });
 			var turnTimings = useSession(function (s) { return s.turnTimings; });
-			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node); }, [order, nodes, locations, turnEnds, node]);
+			var timeline = useSession(function (s) { return s.chat.timeline; });
+			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node, timeline); }, [order, nodes, locations, turnEnds, node, timeline]);
 			var turn = fold ? fold.turn : undefined;
 			var turnOverride = useTurnOverride(sessionId, turn);
 			var closed = fold ? fold.closed : true;
@@ -1113,7 +1127,8 @@ window.__ModuleLoader__.load({
 			var locations = useSession(function (s) { return s.chat.locations; });
 			var turnEnds = useSession(function (s) { return s.turnEnds; });
 			var turnTimings = useSession(function (s) { return s.turnTimings; });
-			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node); }, [order, nodes, locations, turnEnds, node]);
+			var timeline = useSession(function (s) { return s.chat.timeline; });
+			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node, timeline); }, [order, nodes, locations, turnEnds, node, timeline]);
 			var turn = fold ? fold.turn : undefined;
 			var turnOverride = useTurnOverride(sessionId, turn);
 			var closed = fold ? fold.closed : true;
@@ -1137,7 +1152,7 @@ window.__ModuleLoader__.load({
 					setTurnOpen(sessionId, fold.turn, !turnOpen);
 				};
 				var baseLabel = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
-				var turnLabel = turnLabelWithStatus(baseLabel, fold.turnStatus);
+				var turnLabel = closed ? turnLabelWithStatus(baseLabel, fold.turnStatus) : baseLabel;
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },

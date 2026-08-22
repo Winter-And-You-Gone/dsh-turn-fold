@@ -195,10 +195,10 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
     }
   })
 
-  it('大组头文案显示真实会话指标', () => {
+  it('大组头文案显示真实会话指标（已结束回合带"已完成"状态前缀）', () => {
     const title = container.querySelector('.ccg-header .ccg-title')
     assert.ok(title)
-    assert.equal(title.textContent, '耗时22分34秒，消耗370202token，144tok/s，缓存命中94%')
+    assert.equal(title.textContent, '已完成 | 耗时22分34秒，消耗370202token，144tok/s，缓存命中94%')
   })
 })
 

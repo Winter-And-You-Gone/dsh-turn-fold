@@ -70,9 +70,14 @@ export function tailNode(key, anchorSeq, { tokensPerSecond } = {}) {
 
 /**
  * 从节点数组构建快照（order 按 anchorSeq 排序 = DSH orderedVisible 语义）。
- * @returns {{ chat: { order, nodes, locations }, turnEnds: Map, turnTimings: Map }}
+ * @param {object} [options]
+ * @param {Map} [options.turnEnds]
+ * @param {Map} [options.turnTimings]
+ * @param {object} [options.timeline] 可选：{ turns: Map<turn, { turn, start, end, status }> }，
+ *   end 为完整 turn/end 事件（data.reason.kind 用于回合状态检测）。
+ * @returns {{ chat: { order, nodes, locations, timeline? }, turnEnds: Map, turnTimings: Map }}
  */
-export function buildSnapshot(nodes, { turnEnds = new Map(), turnTimings = new Map() } = {}) {
+export function buildSnapshot(nodes, { turnEnds = new Map(), turnTimings = new Map(), timeline = undefined } = {}) {
   const byKey = new Map(nodes.map((n) => [n.key, n]))
   const visible = nodes.filter((n) => n.visibility !== 'hidden')
   visible.sort((a, b) => a.anchorSeq - b.anchorSeq || (a.key < b.key ? -1 : 1))
@@ -96,7 +101,7 @@ export function buildSnapshot(nodes, { turnEnds = new Map(), turnTimings = new M
     },
   }
   return {
-    chat: { order, nodes: byKey, locations },
+    chat: { order, nodes: byKey, locations, ...(timeline !== undefined ? { timeline } : {}) },
     turnEnds,
     turnTimings,
   }
