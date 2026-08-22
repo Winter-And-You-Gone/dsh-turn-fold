@@ -672,10 +672,18 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 折叠内容过渡动画包装器 ----
-		// 折叠时内容不挂载（保持 DOM 干净）；展开时测量内容高度，用
-		// Web Animations API（element.animate）显式播放 height 0→Npx + 淡入 + 微位移
-		// （280ms）；收起时播放收缩动画（200ms）后卸载——不依赖 CSS transition
-		// 起始帧，浏览器强制播放关键帧动画。prefers-reduced-motion 时跳过动画。
+		// 折叠时内容不挂载（保持 DOM 干净）；展开时用手动 rAF 动画（每帧重新测量
+		// 内容高度、动画目标实时跟随，easeOutQuint 280ms，高度+淡入+微位移），
+		// 结束 height:auto 完全放开；收起用 Web Animations API 播放收缩动画
+		// （200ms）后卸载。不依赖 CSS transition 起始帧；prefers-reduced-motion
+		// 时跳过动画。
+		// rAF 兜底：jsdom/非浏览器环境没有 window.requestAnimationFrame 时用 setTimeout。
+		var raf = (typeof window !== "undefined" && window.requestAnimationFrame)
+			? window.requestAnimationFrame.bind(window)
+			: function (fn) { return setTimeout(fn, 16); };
+		var caf = (typeof window !== "undefined" && window.cancelAnimationFrame)
+			? window.cancelAnimationFrame.bind(window)
+			: function (id) { clearTimeout(id); };
 		function FoldClip(props) {
 			var open = props.open;
 			var live = props.live === true;
@@ -705,44 +713,46 @@ window.__ModuleLoader__.load({
 				if (open && !prev) {
 					// 从折叠切到展开：挂载（height:0, opacity:0），用 setTimeout(fn,0)
 					// 确保 React 18 的异步批处理先提交 mounted=true 渲染（DOM 挂载），
-					// 再测量内容高度并播放 WAAPI 动画。rAF 可能在 React 提交之前执行
-					// 导致 elRef.current 为 null，所以用 setTimeout 取代 rAF。
+					// 再启动手动 rAF 展开动画。
 					setMounted(true);
 					setHeight("0px");
+					var rafId = null;
 					var timer = setTimeout(function () {
 						var el = elRef.current;
 						if (!el) return;
-						// 测量内容高度：优先读 .ccg-fold-body 的 offsetHeight（body 不受
-						// clip 的 height:0 + overflow:hidden 裁切影响）。
-						var body = el.firstElementChild;
-						var target = Math.max(0, body ? body.offsetHeight : el.scrollHeight);
-						if (target <= 0) { setHeight("auto"); return; }
 						// 检查 prefers-reduced-motion
 						var reduced = false;
 						try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
-						if (reduced || typeof el.animate !== "function") {
-							setHeight(target + "px");
-							return;
-						}
-						var anim = el.animate(
-							[
-								{ height: "0px", opacity: 0, transform: "translateY(-4px)" },
-								{ height: target + "px", opacity: 1, transform: "translateY(0)" }
-							],
-							{ duration: 280, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" }
-						);
-						animRef.current = anim;
-						anim.onfinish = function () {
-							animRef.current = null;
-							// commitStyles：把动画终态（68px / opacity:1 / translateY(0)）
-							// 写入元素内联样式，再 cancel 动画——否则 fill:forwards 被
-							// cancel 移除后样式回退到 height:0px，造成"回弹"闪烁。
-							try { anim.commitStyles(); } catch (e) {}
-							try { anim.cancel(); } catch (e) {}
-							setHeight(target + "px");
-						};
+						if (reduced) { setHeight("auto"); return; }
+						// 手动 rAF 展开动画（easeOutQuint，280ms）：
+						//   每帧重新测量内容高度，动画目标实时跟随内容增长——内容
+						//   挂载后可能还要若干帧才完成布局（内置组件异步渲染/字体/
+						//   图片加载），固定目标高度的动画会"只展开一部分、剩余
+						//   瞬间跳出"；逐帧跟随则永远平滑。
+						//   动画结束把 height 设为 auto，彻底放开、绝不裁切。
+						var start = null;
+						var DURATION = 280;
+						rafId = raf(function frame(t) {
+							if (start === null) start = t;
+							var p = Math.min(1, (t - start) / DURATION);
+							var e = 1 - Math.pow(1 - p, 5); // easeOutQuint
+							var body = el.firstElementChild;
+							var h = Math.max(0, body ? body.offsetHeight : el.scrollHeight);
+							el.style.height = Math.round(e * h) + "px";
+							el.style.opacity = String(e);
+							el.style.transform = "translateY(" + (-4 * (1 - e)) + "px)";
+							if (p < 1) {
+								rafId = raf(frame);
+							} else {
+								setHeight("auto");
+							}
+						});
 					}, 0);
-					return function () { clearTimeout(timer); if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; } };
+					return function () {
+						clearTimeout(timer);
+						if (rafId !== null) caf(rafId);
+						if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
+					};
 				}
 				if (!open) {
 					// 收起：播放收缩动画（高度→0 + 淡出 + 下移），完成后卸载内容；
