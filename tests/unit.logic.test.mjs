@@ -7,6 +7,9 @@ import { loadPlugin } from './helpers/loader.mjs'
 import { makeNode, toolNode, asNode, userNode, contextNode, tailNode, buildSnapshot } from './helpers/store.mjs'
 import { TURN13, TURN13_NODES, TURN13_METRICS, TURN13_LABEL, OUTSIDE_SCOPE, TWO_USERS } from './helpers/fixtures.mjs'
 
+// 固定界面语言为简体中文（client.js 按 navigator.language(s) 检测；文案断言按中文）。
+Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
+
 const { test: T } = loadPlugin()
 
 // ─────────────────────────── computeGroup ───────────────────────────
@@ -293,5 +296,21 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
   it('CONFIG 兜底文案与失败追加', () => {
     assert.equal(`${T.CONFIG.headerPrefix} 4 ${T.CONFIG.headerSuffix}`, '运行了 4 条命令')
     assert.equal(`${T.CONFIG.headerPrefix} 6 ${T.CONFIG.headerSuffix}——2${T.CONFIG.failureSuffix}`, '运行了 6 条命令——2条执行失败')
+  })
+})
+
+// ─────────────────────────── 英文界面（en） ───────────────────────────
+// 重新加载一个 factory 实例（LOCALE 在 factory 顶层按 navigator 计算），
+// 验证英语适配：耗时/token/tok/s/缓存命中的英文格式。
+describe('英文界面（en）', () => {
+  it('formatTurnDuration / turnHeaderLabel 输出英文格式', () => {
+    Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US', languages: ['en-US'] }, configurable: true })
+    const { test: T2 } = loadPlugin()
+    assert.equal(T2.formatTurnDuration(45000), '45s')
+    assert.equal(T2.formatTurnDuration(90000), '1m 30s')
+    assert.equal(T2.formatTurnDuration(1354551), '22m 34s')
+    assert.equal(T2.formatTurnDuration(3661000), '1h 1m 1s')
+    assert.equal(T2.turnHeaderLabel(TURN13_METRICS), '22m 34s, 370202 tokens, 144 tok/s, cache hit 94%')
+    assert.equal(T2.turnHeaderLabel({ tokens: 100 }), '100 tokens')
   })
 })

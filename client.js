@@ -36,6 +36,48 @@ window.__ModuleLoader__.load({
 			failureSuffix: "条执行失败"
 		};
 
+		// ---- 多语言支持 ----
+		// 根据浏览器语言自动选择界面语言：任一语言以 zh 开头即简体中文，否则英语；
+		// 无 navigator（如部分测试/SSR 环境）时回退英语。
+		var LOCALE = "en";
+		if (typeof navigator !== "undefined" && navigator) {
+			var langList = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]);
+			for (var li = 0; li < langList.length; li++) {
+				if (langList[li] && String(langList[li]).indexOf("zh") !== -1) { LOCALE = "zh"; break; }
+			}
+		}
+		var TEXTS = {
+			zh: {
+				headerPrefix: "运行了",
+				headerSuffix: "条命令",
+				failureSuffix: "条执行失败",
+				statusCompleted: "完成",
+				statusStopped: "已停止",
+				statusInterrupted: "已中断",
+				ariaGroup: "展开本组",
+				ariaGroupExpanded: "折叠本组",
+				ariaTurn: "展开回合",
+				ariaTurnExpanded: "折叠回合"
+			},
+			en: {
+				headerPrefix: "Ran",
+				headerSuffix: "commands",
+				failureSuffix: "failed",
+				statusCompleted: "Completed",
+				statusStopped: "Stopped",
+				statusInterrupted: "Interrupted",
+				ariaGroup: "Expand group",
+				ariaGroupExpanded: "Collapse group",
+				ariaTurn: "Expand turn",
+				ariaTurnExpanded: "Collapse turn"
+			}
+		};
+		/** 取当前语言下的文案；缺失键回退英文，再缺失返回键名本身。 */
+		function _T(key) {
+			var dict = TEXTS[LOCALE] || TEXTS.en;
+			return dict[key] !== undefined ? dict[key] : key;
+		}
+
 		// ---- React ----
 		var react = require("react");
 		var useMemo = react.useMemo;
@@ -335,16 +377,24 @@ window.__ModuleLoader__.load({
 				cacheHitPercent: hasUsage && billedInput > 0 ? Math.round(cacheRead / billedInput * 100) : undefined
 			};
 		}
-		/** 耗时格式化：>=1 小时 → "x时x分x秒"；>=1 分钟 → "x分x秒"；否则 → "x秒"。 */
+		/** 耗时格式化：中英文各自的单位写法；>=1 小时 → "x时x分x秒" / "xh xm xs"。 */
 		function formatTurnDuration(ms) {
 			var total = Math.floor(ms / 1000);
 			if (total >= 3600) {
-				return Math.floor(total / 3600) + "时" + Math.floor((total % 3600) / 60) + "分" + (total % 60) + "秒";
+				var h = Math.floor(total / 3600);
+				var m = Math.floor((total % 3600) / 60);
+				var s = total % 60;
+				if (LOCALE === "zh") return h + "时" + m + "分" + s + "秒";
+				return h + "h " + m + "m " + s + "s";
 			}
 			if (total >= 60) {
-				return Math.floor(total / 60) + "分" + (total % 60) + "秒";
+				var mm = Math.floor(total / 60);
+				var ss = total % 60;
+				if (LOCALE === "zh") return mm + "分" + ss + "秒";
+				return mm + "m " + ss + "s";
 			}
-			return total + "秒";
+			if (LOCALE === "zh") return total + "秒";
+			return total + "s";
 		}
 		/** tok/s：>=10 取整，<10 保留一位小数（与官方一致）。 */
 		function formatTokPerSec(tps) {
@@ -355,11 +405,23 @@ window.__ModuleLoader__.load({
 		function turnHeaderLabel(metrics) {
 			if (!metrics) return "";
 			var parts = [];
-			if (metrics.durationMs !== undefined) parts.push("耗时" + formatTurnDuration(metrics.durationMs));
-			if (metrics.tokens !== undefined) parts.push("消耗" + metrics.tokens + "token");
-			if (metrics.tokensPerSecond !== undefined) parts.push(formatTokPerSec(metrics.tokensPerSecond) + "tok/s");
-			if (metrics.cacheHitPercent !== undefined) parts.push("缓存命中" + metrics.cacheHitPercent + "%");
-			return parts.join("，");
+			if (metrics.durationMs !== undefined) {
+				if (LOCALE === "zh") parts.push("耗时" + formatTurnDuration(metrics.durationMs));
+				else parts.push(formatTurnDuration(metrics.durationMs));
+			}
+			if (metrics.tokens !== undefined) {
+				if (LOCALE === "zh") parts.push("消耗" + metrics.tokens + "token");
+				else parts.push(metrics.tokens + " tokens");
+			}
+			if (metrics.tokensPerSecond !== undefined) {
+				if (LOCALE === "zh") parts.push(formatTokPerSec(metrics.tokensPerSecond) + "tok/s");
+				else parts.push(formatTokPerSec(metrics.tokensPerSecond) + " tok/s");
+			}
+			if (metrics.cacheHitPercent !== undefined) {
+				if (LOCALE === "zh") parts.push("缓存命中" + metrics.cacheHitPercent + "%");
+				else parts.push("cache hit " + metrics.cacheHitPercent + "%");
+			}
+			return parts.join(LOCALE === "zh" ? "，" : ", ");
 		}
 
 		// ---- 自行实现的 tool.call.toolview 分发（替代内置 renderSlot） ----
@@ -437,8 +499,8 @@ window.__ModuleLoader__.load({
 			var count = props.count;
 			var open = props.open;
 			var onToggle = props.onToggle;
-			// label 可选：大组头传指标文案；缺省用"运行了 N 条命令"。
-			var label = props.label || (CONFIG.headerPrefix + " " + count + " " + CONFIG.headerSuffix);
+			// label 可选：大组头传指标文案；缺省用"运行了 N 条命令"（多语言）。
+			var label = props.label || (_T("headerPrefix") + " " + count + " " + _T("headerSuffix"));
 			// danger：组内有执行失败的命令时标题标红。
 			var danger = props.danger === true;
 			var titleClass = "ccg-header-title" + (danger ? " ccg-header-danger" : "");
@@ -492,9 +554,9 @@ window.__ModuleLoader__.load({
 				setGroupOpen(sessionId, group.leaderKey, !open);
 			};
 			// 组内有失败命令时：标题标红，并在"运行了 N 条命令"后追加失败数。
-			var label = CONFIG.headerPrefix + " " + group.count + " " + CONFIG.headerSuffix;
+			var label = _T("headerPrefix") + " " + group.count + " " + _T("headerSuffix");
 			if (group.failures > 0) {
-				label += "——" + group.failures + CONFIG.failureSuffix;
+				label += "——" + group.failures + _T("failureSuffix");
 			}
 			return react.createElement(
 				"div",
@@ -546,7 +608,7 @@ window.__ModuleLoader__.load({
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnExpanded);
 				};
-				var turnLabel = turnHeaderLabel(metrics) || (CONFIG.headerPrefix + " " + fold.toolCount + " " + CONFIG.headerSuffix);
+				var turnLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
@@ -640,7 +702,7 @@ window.__ModuleLoader__.load({
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnExpanded);
 				};
-				var turnLabel = turnHeaderLabel(metrics) || (CONFIG.headerPrefix + " " + fold.toolCount + " " + CONFIG.headerSuffix);
+				var turnLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },

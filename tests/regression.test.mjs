@@ -23,7 +23,8 @@ const dom = new JSDOM('<!DOCTYPE html><html><head></head><body><div id="root"></
 })
 globalThis.window = dom.window
 globalThis.document = dom.window.document
-Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true })
+// 固定界面语言为简体中文（client.js 按 navigator.language(s) 检测；文案断言按中文）。
+Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const { test: T, exports: pluginExports, React } = loadPlugin({ window: dom.window })
