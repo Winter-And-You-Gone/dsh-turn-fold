@@ -24,7 +24,7 @@ jobs:
         run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
       - run: node --check index.js
       - run: node --check client.js
-      - run: npm run check
+      - run: node verify-fix.mjs
       - run: npm pack --dry-run
       - run: npm publish
 

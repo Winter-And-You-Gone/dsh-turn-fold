@@ -20,5 +20,5 @@ jobs:
       - run: node --check index.js
       - run: node --check client.js
       - run: node --check verify-fix.mjs
-      - run: npm run check
+      - run: node verify-fix.mjs
       - run: npm pack --dry-run
