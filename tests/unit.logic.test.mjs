@@ -461,80 +461,83 @@ describe('英文界面（en）', () => {
 })
 
 // ─────────────────────────── projectLiveTokens / turnDisplayMetrics ───────────────────────────
-// 运行中"消耗token"外推增长：真实 usage 只在请求完成时到达，两次之间按观测速率
-// 持续增长；新数据到达时校正为真实值。缓存按 turn 记忆，测试间需清理。
-describe('projectLiveTokens / turnDisplayMetrics（消耗token 外推增长）', () => {
+// 运行中"消耗token"动画增长：真实 usage 只在请求完成时到达，两次之间在真实基线之上
+// 叠加动画偏移——偏移按实际 tick 次数推进（+1/+11 交替：个位每 tick +1、十位每 2
+// tick +1；tick 间隔 = liveTickMs × 随机数 0.5~1，节奏不规律）；新数据到达只校正
+// 基线、偏移继续累计（数字只增不减）。缓存按 turn 记忆，测试间需清理。
+describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）', () => {
   // 缓存按 key（sessionId::turn）记忆，测试间需清理
   const k = (n) => `sess::${n}`
+  // 动画偏移 = tickCount%10 + floor(tickCount/2)*10（+1/+11 交替）
+  const offset = (t) => (t % 10) + Math.floor(t / 2) * 10
 
-  it('首次调用：初始化缓存并返回真实值（不外推）', () => {
+  it('首次调用：初始化缓存并返回真实值（动画偏移从 0 起算，且不推进 tick）', () => {
     T.liveTokenCache.clear()
+    const base = T.liveTickState.index
     assert.equal(T.projectLiveTokens(k(21), 450, 60, 100000, 12), 450)
+    assert.equal(T.liveTickState.index, base, '纯调用不应推进 tick')
   })
 
-  it('无新数据：按默认速率外推增长（tps 不可用 → CONFIG.liveTokenRate）', () => {
+  it('无新数据：按 +1/+11 交替节奏持续增长（个位每 tick +1、十位每 2 tick +1）', () => {
     T.liveTokenCache.clear()
-    T.projectLiveTokens(k(22), 450, 60, 100000, undefined) // 初始化：rate = 默认 30
-    // 2 秒后无新数据 → 450 + 30*2 = 510
-    assert.equal(T.projectLiveTokens(k(22), 450, 60, 102000, undefined), 510)
-    // 再 1 秒 → 540
-    assert.equal(T.projectLiveTokens(k(22), 450, 60, 103000, undefined), 540)
+    const base = T.liveTickState.index
+    T.projectLiveTokens(k(22), 450, 60, 100000, undefined) // 初始化：动画偏移从 0 起
+    // 1 个 tick → +1；5 个 tick → +25（十位已动 2 次）
+    T.liveTickState.index = base + 1
+    assert.equal(T.projectLiveTokens(k(22), 450, 60, 100000, undefined), 450 + offset(1))
+    T.liveTickState.index = base + 5
+    assert.equal(T.projectLiveTokens(k(22), 450, 60, 100000, undefined), 450 + offset(5))
+    // 10 个 tick → +50（十位动了 5 次、个位回到 0）
+    T.liveTickState.index = base + 10
+    assert.equal(T.projectLiveTokens(k(22), 450, 60, 100000, undefined), 450 + offset(10))
   })
 
-  it('无新数据：初始化速率优先用实时 tps', () => {
+  it('新数据到达：校正基线为真实值，动画偏移继续累计不回退', () => {
     T.liveTokenCache.clear()
-    T.projectLiveTokens(k(23), 450, 60, 100000, 40)
-    assert.equal(T.projectLiveTokens(k(23), 450, 60, 102000, 40), 530) // 450 + 40*2
-  })
-
-  it('新数据到达：校正为真实值，并按输出增量重新估算速率', () => {
-    T.liveTokenCache.clear()
-    T.projectLiveTokens(k(24), 450, 60, 100000, 30) // 初始化 rate=30
-    // 10 秒后真实值到达：output 60 → 110（+50），dt=10s → 新速率 = 5
-    assert.equal(T.projectLiveTokens(k(24), 1000, 110, 110000, 30), 1000)
-    // 之后无新数据：1000 + 5*3 = 1015
-    assert.equal(T.projectLiveTokens(k(24), 1000, 110, 113000, 30), 1015)
-  })
-
-  it('速率上限：输出增量过大时 rate 截断到 CONFIG.liveTokenRateMax', () => {
-    T.liveTokenCache.clear()
-    T.projectLiveTokens(k(25), 100, 10, 100000, 30)
-    // 2 秒后 output +1200 → 速率 600/s → 截断到 300/s（上限）
-    assert.equal(T.projectLiveTokens(k(25), 1300, 1210, 102000, 30), 1300)
-    // 1 秒后外推：1300 + 300 = 1600（未截断的话会是 1300+600=1900）
-    assert.equal(T.projectLiveTokens(k(25), 1300, 1210, 103000, 30), 1600)
+    const base = T.liveTickState.index
+    T.projectLiveTokens(k(24), 450, 60, 100000, 30) // 初始化：animBaseTick = base
+    // 5 个 tick 后真实值到达：基线校正为 1000，偏移照常累计 → 1000 + 25
+    T.liveTickState.index = base + 5
+    assert.equal(T.projectLiveTokens(k(24), 1000, 110, 100000, 30), 1000 + offset(5))
+    // 再 2 个 tick（无新数据）：1000 + 37
+    T.liveTickState.index = base + 7
+    assert.equal(T.projectLiveTokens(k(24), 1000, 110, 100000, 30), 1000 + offset(7))
   })
 
   it('缓存 key 含 sessionId：不同会话同 turn 号互不串扰', () => {
     T.liveTokenCache.clear()
+    const base = T.liveTickState.index
     T.projectLiveTokens('sA::13', 450, 60, 100000, 30)
     T.projectLiveTokens('sB::13', 100, 10, 100000, 30)
-    // 各按自己的基线外推
-    assert.equal(T.projectLiveTokens('sA::13', 450, 60, 102000, 30), 510) // 450+60
-    assert.equal(T.projectLiveTokens('sB::13', 100, 10, 102000, 30), 160) // 100+60
+    // 各按自己的基线 + 偏移增长
+    T.liveTickState.index = base + 3
+    assert.equal(T.projectLiveTokens('sA::13', 450, 60, 100000, 30), 450 + offset(3))
+    assert.equal(T.projectLiveTokens('sB::13', 100, 10, 100000, 30), 100 + offset(3))
   })
 
-  it('turnDisplayMetrics：运行中且 liveNow 存在才外推；closed / 无 liveNow / 无 tokens 原样返回', () => {
+  it('turnDisplayMetrics：运行中且 liveNow 存在才增长；closed / 无 liveNow / 无 tokens 原样返回', () => {
     T.liveTokenCache.clear()
+    const base = T.liveTickState.index
     const m = { durationMs: 5000, tokens: 450, outputTokens: 60, tokensPerSecond: 12, cacheHitPercent: 67 }
     // 首次调用：初始化缓存，返回原对象
     assert.equal(T.turnDisplayMetrics('sess', 26, m, false, 100000), m)
-    // 2 秒后无新数据：tokens 外推为 450 + 12*2 = 474，其余字段不变
-    const second = T.turnDisplayMetrics('sess', 26, m, false, 102000)
+    // 3 个 tick 后无新数据：tokens 增长为 450 + 13 = 463，其余字段不变
+    T.liveTickState.index = base + 3
+    const second = T.turnDisplayMetrics('sess', 26, m, false, 100000)
     assert.notEqual(second, m)
-    assert.equal(second.tokens, 474)
+    assert.equal(second.tokens, 450 + offset(3))
     assert.equal(second.durationMs, 5000)
     assert.equal(second.outputTokens, 60)
     assert.equal(second.tokensPerSecond, 12)
     assert.equal(second.cacheHitPercent, 67)
-    // closed：原样返回（不调用外推）
-    assert.equal(T.turnDisplayMetrics('sess', 26, m, true, 102000), m)
+    // closed：原样返回（不再增长）
+    assert.equal(T.turnDisplayMetrics('sess', 26, m, true, 100000), m)
     // liveNow undefined：原样返回
     assert.equal(T.turnDisplayMetrics('sess', 26, m, false, undefined), m)
     // 无 tokens：原样返回
     const noTokens = { durationMs: 1000 }
-    assert.equal(T.turnDisplayMetrics('sess', 26, noTokens, false, 102000), noTokens)
+    assert.equal(T.turnDisplayMetrics('sess', 26, noTokens, false, 100000), noTokens)
     // metrics 为空：原样返回
-    assert.equal(T.turnDisplayMetrics('sess', 26, null, false, 102000), null)
+    assert.equal(T.turnDisplayMetrics('sess', 26, null, false, 100000), null)
   })
 })

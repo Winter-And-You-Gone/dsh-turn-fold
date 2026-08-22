@@ -203,7 +203,17 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
 })
 
 describe('运行中的回合：大组头从回复开始出现 + 实时指标 + 分隔线', () => {
+  // 冻结时钟：运行中"消耗token"在真实基线上叠加动画偏移（每 tick +1/+11 交替，
+  // tick 由随机间隔定时器驱动）。冻结 Date.now 后 liveNow 恒定，并把直播 tick 间隔
+  // 临时拉到极大（测试期间定时器绝不触发），偏移恒为 0，token 文案保持确定的 450，
+  // 断言不依赖测试执行耗时。
+  const realDateNow = Date.now
+  const realLiveTickMs = T.CONFIG.liveTickMs
+  let frozenNow = 0
   beforeEach(() => {
+    frozenNow = Date.now()
+    Date.now = () => frozenNow
+    T.CONFIG.liveTickMs = 1e9 // 测试期间直播 tick 不触发
     T.turnOverrides.clear() // 模块级状态，避免测试间污染
     T.overrides.clear()
     T.liveTokenCache.clear()
@@ -215,6 +225,8 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     T.turnOverrides.clear()
     T.overrides.clear()
     T.liveTokenCache.clear()
+    T.CONFIG.liveTickMs = realLiveTickMs
+    Date.now = realDateNow
   })
 
   it('回复开始即渲染大组头：组头 + 分隔线 + 内容全部可见（默认展开）', () => {
@@ -230,7 +242,8 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
   it('大组头文案实时显示耗时/token（token 累计确定，耗时随秒表走动）', () => {
     const title = container.querySelector('.ccg-header .ccg-title')
     assert.ok(title)
-    // token 累计 = 130 + 260 + 60 = 450、缓存命中 67% 为确定值；
+    // token 累计 = 130 + 260 + 60 = 450、缓存命中 67% 为确定值（本 describe 冻结了
+    // Date.now，运行中 token 的动画偏移恒为 0，不会把 450 推高）；
     // 耗时 ≈ 5 秒（秒数不确定）、tok/s = 60/耗时 实时估算（秒数不确定）。
     // 滚轮数字是视觉装饰（DOM 含 0-9 数字条），完整文案在 sr-only 文本上。
     const sr = title.querySelector('.ccg-sr-only')

@@ -4,11 +4,13 @@
 //   1. Think 块保持内置默认（收起、点击展开），不做任何改动。
 //   2. 工具调用按 Think 段级分组：下一个 Think 出现后自动折叠成段级组头；运行中保持展开。
 //   3. 大组头在 agent 回复开始就出现（运行中默认展开，回复在其下逐条加载），
-//      组头实时显示本轮耗时/token/tok/s/缓存命中率——耗时每秒刷新、token 随流式
-//      usage 事件更新、tok/s 按已输出 token 实时估算；真实 usage 只在请求完成时
-//      到达，"消耗token"在两次到达之间按观测速率持续外推增长（新数据到达时校正
-//      为真实值）；数值变化带"滚轮/里程表"式逐位滚动动画（每位数字独立滚动，
-//      350ms 回弹缓动）；组头下方常驻一条水平分隔线（收起/展开都显示）。
+//      组头实时显示本轮耗时/token/tok/s/缓存命中率——直播指标按随机间隔刷新
+//      （CONFIG.liveTickMs × 随机数 0.5~1，默认 125~250ms）：耗时秒数走动、tok/s
+//      按已输出 token 实时估算；真实 usage 只在请求完成时到达，"消耗token"在两次
+//      到达之间按固定动画节奏持续增长（+1/+11 交替：个位每 tick +1、十位每 2 tick
+//      +1，tick 间隔随机、节奏不规律），真实值到达时只校正基线（数字只增不减）；
+//      数值变化带"滚轮/里程表"式逐位滚动动画（每位数字独立滚动，变化快时用短动画、
+//      慢速变化用 350ms 回弹缓动）；组头下方常驻一条水平分隔线（收起/展开都显示）。
 //   4. 回合结束后，整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头并
 //      默认收起，只保留最终总结正文；非正常结束的回合带状态标签（已停止 / 已中断）。
 //   5. 点击组头可手动展开/折叠；展开带平滑过渡动画（高度展开 + 淡入 + 微位移，280ms），
@@ -43,10 +45,15 @@ window.__ModuleLoader__.load({
 			headerPrefix: "运行了",
 			headerSuffix: "条命令",
 			failureSuffix: "条执行失败",
-			// 运行中大组头"消耗token"数字的外推参数：真实 usage 只在请求完成时到达，
-			// 两次到达之间按观测速率持续增长，保持"实时消耗"的观感。
-			liveTokenRate: 30,       // 默认增长速率（tok/s；尚无观测数据时使用）
-			liveTokenRateMax: 300    // 观测速率上限（tok/s；防单次大跳变导致外推暴涨）
+			// 运行中大组头直播指标的刷新间隔基准（毫秒）：耗时秒数、"消耗token"增长
+			// 动画都按此频率刷新。"消耗token"在真实 usage 之间按固定节奏增长——偏移
+			// 按 +1/+11 交替循环推进（个位每 tick +1、十位每 2 tick +1），营造
+			// "一直在消耗"的观感；真实 usage 到达时只校正基线、偏移不回退。
+			// 调小更"活跃"（渲染更频繁），调大更省资源。
+			liveTickMs: 250,
+			// 刷新间隔抖动比例：实际间隔 = liveTickMs × 随机数（liveTickJitter ~ 1），
+			// 让数字跳动节奏不规律（时快时慢），更像真实的生成速率而不是节拍器。
+			liveTickJitter: 0.5
 		};
 
 		// ---- 多语言支持 ----
@@ -227,34 +234,40 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		// ---- 实时秒表（回合运行中，大组头"耗时"每秒刷新） ----
-		// token 等指标随会话快照自然更新（流式 usage 事件触发重渲染）；只有"耗时"
-		// 需要时钟驱动：运行中回合的 turnTimings 只有 startTime，没有 endTime。
-		// 共享一个模块级定时器：有组件订阅才启动，全部退订即停止。
+		// ---- 实时直播时钟（回合运行中，大组头指标按随机间隔刷新） ----
+		// 运行中回合的 turnTimings 只有 startTime，没有 endTime：耗时秒数需要时钟
+		// 驱动，"消耗token"的持续增长动画同样依赖这个时钟（每 tick 前进 1）。
+		// 间隔 = liveTickMs × 随机数（liveTickJitter ~ 1），数字跳动节奏不规律。
+		// 共享一个模块级定时器（递归 setTimeout）：有组件订阅才启动，全部退订即停止。
 		var tickListeners = new Set();
 		var tickVersion = 0;
 		var tickTimer = null;
+		var liveTickState = { index: 0 };
+		function scheduleTick() {
+			var delay = CONFIG.liveTickMs * (CONFIG.liveTickJitter + (1 - CONFIG.liveTickJitter) * Math.random());
+			tickTimer = setTimeout(function () {
+				liveTickState.index++;
+				tickVersion++;
+				var fns = [];
+				tickListeners.forEach(function (fn) { fns.push(fn); });
+				for (var i = 0; i < fns.length; i++) fns[i]();
+				scheduleTick();
+			}, delay);
+		}
 		function subscribeTicks(fn) {
 			tickListeners.add(fn);
-			if (tickTimer === null) {
-				tickTimer = setInterval(function () {
-					tickVersion++;
-					var fns = [];
-					tickListeners.forEach(function (fn) { fns.push(fn); });
-					for (var i = 0; i < fns.length; i++) fns[i]();
-				}, 1000);
-			}
+			if (tickTimer === null) scheduleTick();
 			return function () {
 				tickListeners.delete(fn);
 				if (tickListeners.size === 0 && tickTimer !== null) {
-					clearInterval(tickTimer);
+					clearTimeout(tickTimer);
 					tickTimer = null;
 				}
 			};
 		}
 		function subscribeNothing() { return function () {}; }
 		function getTickVersion() { return tickVersion; }
-		/** 运行中：每秒返回新版本号驱动重渲染，返回实时 Date.now()；结束后订阅空源、不再刷新。 */
+		/** 运行中：每次直播 tick（间隔随机）返回新版本号驱动重渲染，返回实时 Date.now()；结束后订阅空源、不再刷新。 */
 		function useLiveNow(active) {
 			useSyncExternalStore(active ? subscribeTicks : subscribeNothing, getTickVersion);
 			return active ? Date.now() : undefined;
@@ -498,51 +511,38 @@ window.__ModuleLoader__.load({
 				durationMs: durationMs,
 				// 消耗 = 计费输入（uncached + cacheRead + cacheWrite）+ 输出
 				tokens: hasUsage ? (billedInput + output) : undefined,
-				// 输出 token 累计：外推增长速率用它估算（输入随请求一次性跳变，不适合当速率）
+				// 输出 token 累计（tok/s 实时估算用）
 				outputTokens: hasUsage ? output : undefined,
 				tokensPerSecond: tokensPerSecond,
 				cacheHitPercent: hasUsage && billedInput > 0 ? Math.round(cacheRead / billedInput * 100) : undefined
 			};
 		}
 
-		// ---- 运行中"消耗token"的外推增长 ----
+		// ---- 运行中"消耗token"的持续增长动画 ----
 		// 真实 usage（assistant/chunk 的 usage 块）只在每个请求完成时到达，两次到达
-		// 之间（思考/工具执行期间）数字会停住不动。为保持"实时消耗"的观感，按观测到
-		// 的生成速率持续外推增长；新 usage 到达时立即校正为真实值（可能回跳，属预期）。
-		// 速率取"输出 token 增量 / 时间间隔"（输入随请求一次性跳变，不适合当速率），
-		// 上限见 CONFIG.liveTokenRateMax；尚无观测数据时用实时 tps，再退化为
-		// CONFIG.liveTokenRate 默认速率。缓存按 sessionId+turn 记忆（跨会话不串），
-		// 跨渲染共享。
+		// 之间（思考/工具执行期间）数字会停住不动。为营造"一直在消耗"的观感，在真实
+		// 基线之上叠加一个纯展示用的动画偏移：偏移按实际 tick 次数推进，**+1/+11 交替**
+		// 循环（个位每 tick +1、十位每 2 tick +1、更高位随进位自然走动），永不回退；
+		// tick 间隔 = liveTickMs × 随机数（liveTickJitter ~ 1），数字跳动节奏不规律。
+		// 真实 usage 到达时只把基线校正为真实值（偏移继续累计，数字只增不减）。
+		// 缓存按 sessionId+turn 记忆（跨会话不串）、跨渲染共享。
+		// （outputTokens / tps / now 参数保留仅为兼容旧调用与测试签名，动画不再使用。）
 		var liveTokenCache = new Map();
 		function projectLiveTokens(key, realTokens, outputTokens, now, tps) {
-			if (key === undefined || typeof realTokens !== "number" || typeof now !== "number") return realTokens;
+			if (key === undefined || typeof realTokens !== "number") return realTokens;
 			var c = liveTokenCache.get(key);
 			if (!c) {
-				var initRate = (typeof tps === "number" && tps > 0) ? tps : CONFIG.liveTokenRate;
-				liveTokenCache.set(key, {
-					lastTokens: realTokens,
-					lastOutput: typeof outputTokens === "number" ? outputTokens : 0,
-					lastAt: now,
-					rate: initRate
-				});
+				liveTokenCache.set(key, { lastTokens: realTokens, animBaseTick: liveTickState.index });
 				return realTokens;
 			}
-			if (realTokens !== c.lastTokens) {
-				// 新真实数据到达：校正基线，并用输出增量重新估算速率（截断到上限）
-				var dtSec = (now - c.lastAt) / 1000;
-				if (dtSec > 1 && typeof outputTokens === "number" && outputTokens > c.lastOutput) {
-					var rate = (outputTokens - c.lastOutput) / dtSec;
-					if (rate > 0) c.rate = Math.min(rate, CONFIG.liveTokenRateMax);
-				}
-				c.lastTokens = realTokens;
-				c.lastOutput = typeof outputTokens === "number" ? outputTokens : c.lastOutput;
-				c.lastAt = now;
-				return realTokens;
-			}
-			// 无新数据：按速率外推（每秒随 tick 增长）
-			return Math.floor(c.lastTokens + c.rate * ((now - c.lastAt) / 1000));
+			if (realTokens !== c.lastTokens) c.lastTokens = realTokens;
+			// 真实基线 + 动画偏移（+1/+11 交替：个位每 tick +1、十位每 2 tick +1；
+			// tick 间隔随机，节奏不规律）
+			var tickCount = liveTickState.index - c.animBaseTick;
+			var animOffset = (tickCount % 10) + Math.floor(tickCount / 2) * 10;
+			return Math.floor(c.lastTokens) + animOffset;
 		}
-		/** 大组头展示指标：运行中把"消耗token"按观测速率外推增长（真实 usage 到达时校正）。 */
+		/** 大组头展示指标：运行中把"消耗token"按动画节奏持续增长（真实 usage 到达时校正基线）。 */
 		function turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow) {
 			if (!metrics || closed || typeof metrics.tokens !== "number" || typeof liveNow !== "number" || turn === undefined) return metrics;
 			var projected = projectLiveTokens(sessionId + "::" + turn, metrics.tokens, metrics.outputTokens, liveNow, metrics.tokensPerSecond);
@@ -782,8 +782,11 @@ window.__ModuleLoader__.load({
 		// ---- 滚轮数字（大组头直播指标的逐位滚动动画） ----
 		// 每个数位是一个 1ch 宽、1em 高的视窗（overflow:hidden），内部竖排 0-9
 		// （flex column，每格恰好 1em）；数值变化时用 Web Animations API 从旧数位
-		// 滚到新数位（350ms + 轻微回弹缓动），呈现"滚轮/里程表"效果——耗时每秒
-		// 变化一次，token/tok/s/缓存命中随流式数据到达而变化。首次挂载从 0 滚到
+		// 滚到新数位（回弹缓动），呈现"滚轮/里程表"效果——耗时秒数每秒变化一次，
+		// token 个位每个刷新周期 +1（十位每 2 个周期 +1）、tok/s/缓存命中随流式数据
+		// 到达而变化。动画时长按变化频率自适应：距上次变化不足 2 个基准周期说明
+		// 数字在快速滚动（如 token 个位），用短于最小间隔的动画保证每拍完整走完、
+		// 不抖动；慢速变化（如耗时秒数）保持 350ms 回弹滚动。首次挂载从 0 滚到
 		// 当前值（计数感）；prefers-reduced-motion 或环境无 WAAPI（如 jsdom）时
 		// 直接定位、无动画。
 		function RollDigit(props) {
@@ -791,11 +794,15 @@ window.__ModuleLoader__.load({
 			var stripRef = react.useRef(null);
 			var animRef = react.useRef(null);
 			var prevRef = react.useRef(0);
+			var lastChangeRef = react.useRef(0);
 			react.useEffect(function () {
 				var el = stripRef.current;
 				if (!el) return undefined;
 				var prev = prevRef.current;
 				prevRef.current = digit;
+				var nowMs = (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now();
+				var sinceLast = lastChangeRef.current ? nowMs - lastChangeRef.current : 1e9;
+				lastChangeRef.current = nowMs;
 				var target = "translateY(" + (-digit * 10) + "%)";
 				var reduced = false;
 				try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
@@ -804,12 +811,15 @@ window.__ModuleLoader__.load({
 					return undefined;
 				}
 				if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
+				// 快速连续变化（<2 个基准周期）用短动画：时长取最小间隔（liveTickMs×jitter）
+				// 的 0.8 倍，保证节奏最快时每拍也能完整走完、不抖动
+				var dur = sinceLast < CONFIG.liveTickMs * 2 ? Math.max(40, Math.round(CONFIG.liveTickMs * CONFIG.liveTickJitter * 0.8)) : 350;
 				var anim = el.animate(
 					[
 						{ transform: "translateY(" + (-prev * 10) + "%)" },
 						{ transform: target }
 					],
-					{ duration: 350, easing: "cubic-bezier(.34,1.56,.64,1)" }
+					{ duration: dur, easing: "cubic-bezier(.34,1.56,.64,1)" }
 				);
 				animRef.current = anim;
 				anim.onfinish = function () { animRef.current = null; };
@@ -991,7 +1001,7 @@ window.__ModuleLoader__.load({
 			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
 			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
-			// 运行中展示指标：消耗token 在无新 usage 时按观测速率外推增长，真实值到达时校正
+			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
 
 			// 兜底：找不到自己的节点时，原样委托内置渲染（补齐 renderSlot），绝不白屏。
@@ -1054,7 +1064,7 @@ window.__ModuleLoader__.load({
 			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
 			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
-			// 运行中展示指标：消耗token 在无新 usage 时按观测速率外推增长，真实值到达时校正
+			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
 
 			// 无法安全定位组头（回合内无任何中间节点）/ 节点在折叠作用域之外（用户消息上方）：
@@ -1114,7 +1124,7 @@ window.__ModuleLoader__.load({
 			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
 			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
-			// 运行中展示指标：消耗token 在无新 usage 时按观测速率外推增长，真实值到达时校正
+			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
 
 			// 无法安全定位组头（回合内无任何中间节点）/ 折叠作用域之外（用户消息上方）的

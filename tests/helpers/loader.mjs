@@ -38,6 +38,7 @@ const TEST_EXPORTS = [
   'useGroupOverride',
   'useLiveNow',
   'liveTokenCache',
+  'liveTickState',
   'turnOverrides',
   'overrides',
   'hiddenMarker',
