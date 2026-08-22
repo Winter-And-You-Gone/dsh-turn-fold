@@ -134,9 +134,31 @@ Remove-Item "$env:DSH_HOME\profiles\node_modules\dsh-turn-fold" -Force   # remov
 # Manually remove the corresponding insert block from cordis.patch.yml
 ```
 
+## Testing
+
+```sh
+npm install        # first time: installs jsdom / react / react-dom (devDependencies)
+npm test           # node --test runs the whole suite under tests/
+npm run check      # syntax check client.js / index.js
+```
+
+The test suite (`tests/`) loads the real `client.js` directly (via `__ModuleLoader__`
+injection + `__test` export, no copy-paste drift) and is layered in four parts:
+
+| File | Coverage |
+| --- | --- |
+| `unit.logic.test.mjs` | Pure functions: `computeGroup` segment grouping, `computeTurnFold` whole-turn fold, `computeTurnMetrics` / `turnHeaderLabel` metrics label, `turnNumber`; includes every historical verify-fix scenario plus real session data (TURN13) |
+| `unit.render.test.mjs` | React rendering: initial collapse → click big header to expand → collapse again; `useHostDescription` kit-hook passthrough during builtin delegated rendering; slot registration contract (inject declaration) |
+| `unit.css.test.mjs` | CSS `:has()` hiding rules take effect on a real DOM (including the expand → collapse round trip) |
+| `regression.test.mjs` | Historical bug regressions: node-object replacement (Bug1), missing inject crash/abdicate (Bug2), no-tool-call turns also fold (v0.2.3), fold scope never crosses the user message (v0.2.2), manual segment expand/collapse |
+
+> In sandboxed environments that cannot spawn child processes (e.g. Windows
+> sandbox), `--test-isolation=none` is required (already built into `npm test`);
+> it also works on regular Linux/macOS CI (Node ≥ 22.9).
+
 ## CI and release
 
-GitHub Actions runs syntax checks, the `verify-fix.mjs` verification, and an
+GitHub Actions runs syntax checks, the full `npm test` suite and an
 `npm pack --dry-run` preflight for every pull request and every push to `main`.
 Pushing a `v*` tag publishes to npm automatically (OIDC Trusted Publishing, no
 long-lived token) and creates a GitHub Release.

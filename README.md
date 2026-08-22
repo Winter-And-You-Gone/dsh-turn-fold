@@ -142,9 +142,30 @@ Remove-Item "$env:DSH_HOME\profiles\node_modules\dsh-turn-fold" -Force   # 删 J
 # 手动删掉 cordis.patch.yml 里对应的 insert 块
 ```
 
+## 测试
+
+```sh
+npm install        # 首次：安装 jsdom / react / react-dom（devDependencies）
+npm test           # node --test 运行 tests/ 下的全部测试
+npm run check      # 语法检查 client.js / index.js
+```
+
+测试套件（`tests/`）直接加载真实 `client.js`（经 `__ModuleLoader__` 注入 + `__test`
+导出，无复制粘贴漂移），分四层：
+
+| 文件 | 覆盖 |
+| --- | --- |
+| `unit.logic.test.mjs` | 纯函数：`computeGroup` 段级分组、`computeTurnFold` 整回合折叠、`computeTurnMetrics` / `turnHeaderLabel` 指标文案、`turnNumber` 定位；含历史 verify-fix 的全部场景与真实会话数据（TURN13） |
+| `unit.render.test.mjs` | React 渲染：初始折叠 → 点击大组头展开 → 再收起 的完整交互；内置组件委托渲染时 `useHostDescription` 等 kit hook 的透传；条目注册契约（inject 声明） |
+| `unit.css.test.mjs` | CSS `:has()` 隐藏规则在真实 DOM 上的生效（含"展开→收起"往返） |
+| `regression.test.mjs` | 历史 bug 回归：节点对象替换（Bug1）、inject 缺失崩溃/abdicate（Bug2）、无工具调用回合折叠（v0.2.3）、折叠作用域不越过用户消息（v0.2.2）、段级分组手动展开/收起 |
+
+> 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
+> `npm test` 中内置）；普通 Linux/macOS CI 同样可用该参数（Node ≥ 22.9）。
+
 ## CI 与发布
 
-GitHub Actions 会在每次 PR / push 到 `main` 时自动运行语法检查、`verify-fix.mjs` 校验和
+GitHub Actions 会在每次 PR / push 到 `main` 时自动运行语法检查、`npm test` 全套测试和
 `npm pack --dry-run` 打包预检；推送 `v*` tag 时自动发布到 npm（OIDC Trusted Publishing，
 无需长期 token）并创建 GitHub Release。
 
