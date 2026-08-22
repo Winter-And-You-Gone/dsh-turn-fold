@@ -4,8 +4,12 @@
 //   1. Think 块保持内置默认（收起、点击展开），不做任何改动。
 //   2. 工具调用按 Think 段级分组：下一个 Think 出现后自动折叠成段级组头；运行中保持展开。
 //   3. 回合结束后，整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头，
-//      大组头显示本轮耗时/token/tok/s/缓存命中率；最终总结消息只显示正文。
-//   4. 点击组头可手动展开/折叠。
+//      大组头显示本轮耗时/token/tok/s/缓存命中率，非正常结束的回合带状态标签
+//      （已停止 / 已中断）；最终总结消息只显示正文。
+//   4. 点击组头可手动展开/折叠；展开带平滑过渡动画（高度展开 + 淡入 + 微位移，280ms），
+//      收起带收缩动画（200ms）后卸载内容；尊重 prefers-reduced-motion。
+//   5. 界面文案自动适配中英文（navigator.language(s) 含 zh 即中文），
+//      组头带 aria-label / aria-expanded，键盘可操作（Enter / Space）。
 //
 // 实现方式：
 //   - 用 priority:-1 覆盖（shadow）内置的 conversation.chat.node 渲染器：
@@ -111,6 +115,11 @@ window.__ModuleLoader__.load({
 				".ccg-group-root{display:flex;flex-direction:column}",
 				/* 展开时组头与内容之间留 8px（折叠时组头独立成行，间距即官方 16px） */
 				".ccg-group-root[data-ccg-open] .ccg-header{margin-bottom:8px}",
+				/* 折叠内容容器：height/opacity/transform 全部由 FoldClip 用
+				   Web Animations API（element.animate）显式驱动关键帧动画播放，
+				   CSS 只负责裁切。不依赖 CSS transition 起始帧 / interpolate-size。 */
+				".ccg-fold-clip{overflow:hidden}",
+				".ccg-fold-body{min-width:0;min-height:0}",
 				/* 官方 DisclosureRow 组头微调：标题 400、可省略号（大组头指标文案可能较长）、chevron 用 label-secondary */
 				".ccg-header-title{font-weight:400;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 				/* 组内有执行失败命令时标题标红（与官方错误色 token 一致） */
@@ -523,6 +532,127 @@ window.__ModuleLoader__.load({
 			return react.createElement("span", { "data-ccg-hidden": "true", style: { display: "none" } });
 		}
 
+		// ---- 折叠内容过渡动画包装器 ----
+		// 折叠时内容不挂载（保持 DOM 干净）；展开时测量内容高度，用
+		// Web Animations API（element.animate）显式播放 height 0→Npx + 淡入 + 微位移
+		// （280ms）；收起时播放收缩动画（200ms）后卸载——不依赖 CSS transition
+		// 起始帧，浏览器强制播放关键帧动画。prefers-reduced-motion 时跳过动画。
+		function FoldClip(props) {
+			var open = props.open;
+			// 注意：官方 DisclosureRow 只在展开时渲染 children，所以本组件
+			// 首次挂载时 open 往往已是 true。初始状态必须固定为"折叠态"
+			// （不挂载、高度 0、prev=false），否则 open&&!prev 永远为 false，
+			// 展开动画分支永不执行，内容直接显示（瞬间展开）。
+			var mountedState = react.useState(false);
+			var mounted = mountedState[0];
+			var setMounted = mountedState[1];
+			var heightState = react.useState("0px");
+			var height = heightState[0];
+			var setHeight = heightState[1];
+			var elRef = react.useRef(null);
+			var animRef = react.useRef(null);
+			var prevOpenRef = react.useRef(false);
+			react.useEffect(function () {
+				var prev = prevOpenRef.current;
+				prevOpenRef.current = open;
+				if (open && !prev) {
+					// 从折叠切到展开：挂载（height:0, opacity:0），用 setTimeout(fn,0)
+					// 确保 React 18 的异步批处理先提交 mounted=true 渲染（DOM 挂载），
+					// 再测量内容高度并播放 WAAPI 动画。rAF 可能在 React 提交之前执行
+					// 导致 elRef.current 为 null，所以用 setTimeout 取代 rAF。
+					setMounted(true);
+					setHeight("0px");
+					var timer = setTimeout(function () {
+						var el = elRef.current;
+						if (!el) return;
+						// 测量内容高度：优先读 .ccg-fold-body 的 offsetHeight（body 不受
+						// clip 的 height:0 + overflow:hidden 裁切影响）。
+						var body = el.firstElementChild;
+						var target = Math.max(0, body ? body.offsetHeight : el.scrollHeight);
+						if (target <= 0) { setHeight("auto"); return; }
+						// 检查 prefers-reduced-motion
+						var reduced = false;
+						try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+						if (reduced || typeof el.animate !== "function") {
+							setHeight(target + "px");
+							return;
+						}
+						var anim = el.animate(
+							[
+								{ height: "0px", opacity: 0, transform: "translateY(-4px)" },
+								{ height: target + "px", opacity: 1, transform: "translateY(0)" }
+							],
+							{ duration: 280, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" }
+						);
+						animRef.current = anim;
+						anim.onfinish = function () {
+							animRef.current = null;
+							// commitStyles：把动画终态（68px / opacity:1 / translateY(0)）
+							// 写入元素内联样式，再 cancel 动画——否则 fill:forwards 被
+							// cancel 移除后样式回退到 height:0px，造成"回弹"闪烁。
+							try { anim.commitStyles(); } catch (e) {}
+							try { anim.cancel(); } catch (e) {}
+							setHeight(target + "px");
+						};
+					}, 0);
+					return function () { clearTimeout(timer); if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; } };
+				}
+				if (!open) {
+					// 收起：播放收缩动画（高度→0 + 淡出 + 下移），完成后卸载内容；
+					// 无 WAAPI / prefers-reduced-motion / 无元素时直接卸载。
+					var el = elRef.current;
+					var reduced = false;
+					try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+					if (el && mounted && typeof el.animate === "function" && !reduced) {
+						// 当前高度：优先从 state 读（"68px"）；auto/0px 时重新测量
+						var cur = parseInt(height, 10);
+						if (isNaN(cur) || cur <= 0) {
+							cur = Math.max(0, el.firstElementChild ? el.firstElementChild.offsetHeight : el.scrollHeight);
+						}
+						if (cur > 0) {
+							// 取消仍在播放的展开动画（如有）
+							if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
+							var anim = el.animate(
+								[
+									{ height: cur + "px", opacity: 1, transform: "translateY(0)" },
+									{ height: "0px", opacity: 0, transform: "translateY(-4px)" }
+								],
+								{ duration: 200, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" }
+							);
+							animRef.current = anim;
+							anim.onfinish = function () {
+								animRef.current = null;
+								try { anim.commitStyles(); } catch (e) {}
+								try { anim.cancel(); } catch (e) {}
+								setHeight("0px");
+								setMounted(false);
+							};
+							return function () {
+								if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
+							};
+						}
+					}
+					setHeight("0px");
+					setMounted(false);
+				}
+				// 初始即展开（open 从未变过）：保持 auto/1，无动画。
+			}, [open]);
+			if (!mounted) return null;
+			return react.createElement(
+				"div",
+				{
+					ref: elRef,
+					className: "ccg-fold-clip",
+					style: { height: height, opacity: height === "0px" ? 0 : 1 }
+				},
+				react.createElement(
+					"div",
+					{ className: "ccg-fold-body" },
+					props.children
+				)
+			);
+		}
+
 		// ---- 组头组件 ----
 		// 优先用官方 DisclosureRow（24px 行高、16px 前导、14px 官方 chevron、14px/24px 标题），
 		// 与 Think / 工具卡片的折叠行样式一致；平台原语缺失时回退到自带兜底行。
@@ -541,6 +671,10 @@ window.__ModuleLoader__.load({
 			var ariaLabel = isTurn
 				? (open ? _T("ariaTurnExpanded") : _T("ariaTurn"))
 				: (open ? _T("ariaGroupExpanded") : _T("ariaGroup"));
+			// DisclosureRow 只在 open 时渲染 children（open && children），且
+			// keepContentWhenOpen 只作用于 collapsedContent。因此 FoldClip 不能
+			// 放在 children 里（收起瞬间会被卸载，收起动画无法播放）——由调用方
+			// 渲染在 GroupHeader 之后，挂载生命周期完全由 FoldClip 自己控制。
 			if (DisclosureRow && IconChevronDownOutline14 && IconChevronRightOutline14) {
 				return react.createElement(
 					DisclosureRow,
@@ -558,8 +692,7 @@ window.__ModuleLoader__.load({
 						previewChevron: false,
 						onToggle: onToggle,
 						"aria-label": ariaLabel
-					},
-					props.children
+					}
 				);
 			}
 			return react.createElement(
@@ -577,8 +710,7 @@ window.__ModuleLoader__.load({
 					}
 				},
 				react.createElement("span", { className: "ccg-chevron" }, "›"),
-				react.createElement("span", { className: "ccg-title" + (danger ? " ccg-header-danger" : "") }, label),
-				open ? props.children : null
+				react.createElement("span", { className: "ccg-title" + (danger ? " ccg-header-danger" : "") }, label)
 			);
 		}
 
@@ -601,9 +733,9 @@ window.__ModuleLoader__.load({
 				{ className: "ccg-group-root", "data-ccg-count": String(group.count), "data-ccg-open": open ? "true" : undefined },
 				react.createElement(
 					GroupHeader,
-					{ count: group.count, open: open, onToggle: toggle, label: label, danger: group.failures > 0, isTurn: false },
-					open ? renderBuiltinToolCall(props) : null
-				)
+					{ count: group.count, open: open, onToggle: toggle, label: label, danger: group.failures > 0, isTurn: false }
+				),
+				react.createElement(FoldClip, { open: open }, renderBuiltinToolCall(props))
 			);
 		}
 
@@ -641,8 +773,8 @@ window.__ModuleLoader__.load({
 					// 成员：折叠时隐藏；展开大组头后显示自己的段级内容。
 					return turnExpanded ? renderSegment(props, group, open, sessionId) : hiddenMarker();
 				}
-				// 组头节点：渲染大组头（文案 = 本回合性能指标，无数据则退回"运行了 N 条命令"）；
-				// 展开时其下接自己的段级内容。
+				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签，无数据则退回
+				// "运行了 N 条命令"）；展开时其下接自己的段级内容。
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnExpanded);
 				};
@@ -653,9 +785,9 @@ window.__ModuleLoader__.load({
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
 					react.createElement(
 						GroupHeader,
-						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true },
-						turnExpanded ? renderSegment(props, group, open, sessionId) : null
-					)
+						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true }
+					),
+					react.createElement(FoldClip, { open: turnExpanded }, renderSegment(props, group, open, sessionId))
 				);
 			}
 
@@ -698,7 +830,7 @@ window.__ModuleLoader__.load({
 				// 中间 Think 节点：折叠时隐藏；展开大组头后显示自己的 Think 行。
 				return turnExpanded ? renderBuiltinAssistant(props) : hiddenMarker();
 			}
-			// 组头节点：渲染大组头（文案 = 本回合性能指标）；展开时其下接自己的内容（Think 行）。
+			// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；展开时其下接自己的内容（Think 行）。
 			var toggleTurn = function () {
 				setTurnOpen(sessionId, fold.turn, !turnExpanded);
 			};
@@ -709,9 +841,9 @@ window.__ModuleLoader__.load({
 				{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
 				react.createElement(
 					GroupHeader,
-					{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true },
-					turnExpanded ? renderBuiltinAssistant(props) : null
-				)
+					{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true }
+				),
+				react.createElement(FoldClip, { open: turnExpanded }, renderBuiltinAssistant(props))
 			);
 		}
 
@@ -738,7 +870,7 @@ window.__ModuleLoader__.load({
 				return renderBuiltinContext(props);
 			}
 			if (fold.isTurnHeader) {
-				// 组头节点：渲染大组头（文案 = 本回合性能指标）；展开时其下接自己的内容（上下文注入行）。
+				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；展开时其下接自己的内容（上下文注入行）。
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnExpanded);
 				};
@@ -749,9 +881,9 @@ window.__ModuleLoader__.load({
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
 					react.createElement(
 						GroupHeader,
-						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true },
-						turnExpanded ? renderBuiltinContext(props) : null
-					)
+						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true }
+					),
+					react.createElement(FoldClip, { open: turnExpanded }, renderBuiltinContext(props))
 				);
 			}
 			return turnExpanded ? renderBuiltinContext(props) : hiddenMarker();
