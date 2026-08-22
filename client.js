@@ -697,6 +697,11 @@ window.__ModuleLoader__.load({
 			var heightState = react.useState("0px");
 			var height = heightState[0];
 			var setHeight = heightState[1];
+			// visible：内容是否可见。展开动画期间由 el.style 手动控制 opacity，
+			// 结束后置 true（React 接管）；挂载测量阶段保持 false 掩盖内容。
+			var visibleState = react.useState(false);
+			var visible = visibleState[0];
+			var setVisible = visibleState[1];
 			var elRef = react.useRef(null);
 			var animRef = react.useRef(null);
 			var prevOpenRef = react.useRef(false);
@@ -704,49 +709,68 @@ window.__ModuleLoader__.load({
 				var prev = prevOpenRef.current;
 				prevOpenRef.current = open;
 				// 直播模式（回合运行中）：内容常驻且高度自适应，不裁切不断增长的流式内容。
-				// 展开/收起动画都由常规分支处理；直播模式只在 open 时跳过测量和动画。
 				if (live && open) {
 					setMounted(true);
 					setHeight("auto");
+					setVisible(true);
 					return undefined;
 				}
 				if (open && !prev) {
-					// 从折叠切到展开：挂载（height:0, opacity:0），用 setTimeout(fn,0)
-					// 确保 React 18 的异步批处理先提交 mounted=true 渲染（DOM 挂载），
-					// 再启动手动 rAF 展开动画。
+					// 从折叠切到展开。关键：先用 height:auto 完整渲染（opacity:0
+					// 掩盖），让浏览器完成全部布局/懒渲染，稳定测量到【真实高度】
+					// 后再收起播放动画——之前"先隐藏再测量"时，内容在 height:0
+					// 裁切下不会完整渲染，测量值只有前几行，动画永远覆盖不全。
 					setMounted(true);
-					setHeight("0px");
+					setHeight("auto");
+					setVisible(false);
 					var rafId = null;
 					var timer = setTimeout(function () {
 						var el = elRef.current;
 						if (!el) return;
-						// 检查 prefers-reduced-motion
 						var reduced = false;
 						try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
-						if (reduced) { setHeight("auto"); return; }
-						// 手动 rAF 展开动画（easeOutQuint，280ms）：
-						//   每帧重新测量内容高度，动画目标实时跟随内容增长——内容
-						//   挂载后可能还要若干帧才完成布局（内置组件异步渲染/字体/
-						//   图片加载），固定目标高度的动画会"只展开一部分、剩余
-						//   瞬间跳出"；逐帧跟随则永远平滑。
-						//   动画结束把 height 设为 auto，彻底放开、绝不裁切。
-						var start = null;
-						var DURATION = 280;
-						rafId = raf(function frame(t) {
-							if (start === null) start = t;
-							var p = Math.min(1, (t - start) / DURATION);
-							var e = 1 - Math.pow(1 - p, 5); // easeOutQuint
+						if (reduced) { setVisible(true); return; }
+						var measureH = function () {
 							var body = el.firstElementChild;
-							var h = Math.max(0, body ? body.offsetHeight : el.scrollHeight);
-							el.style.height = Math.round(e * h) + "px";
-							el.style.opacity = String(e);
-							el.style.transform = "translateY(" + (-4 * (1 - e)) + "px)";
-							if (p < 1) {
-								rafId = raf(frame);
-							} else {
-								setHeight("auto");
+							return Math.max(0, body ? body.offsetHeight : el.scrollHeight);
+						};
+						// 稳定测量（内容可见状态，连续 2 帧相同或最多 30 帧 ≈500ms）
+						var prevH = -1;
+						var stableFrames = 0;
+						var totalFrames = 0;
+						var fullH = 0;
+						function measureLoop() {
+							var h = measureH();
+							totalFrames++;
+							if (h === prevH) { stableFrames++; } else { stableFrames = 0; prevH = h; }
+							if (h > fullH) fullH = h;
+							if (stableFrames < 2 && totalFrames < 30) {
+								rafId = raf(measureLoop);
+								return;
 							}
-						});
+							if (fullH <= 0) { setVisible(true); return; }
+							// 测量完成：立即收起（opacity:0 掩盖，无闪烁），播放 0→fullH 动画
+							el.style.height = "0px";
+							el.style.opacity = "0";
+							el.style.transform = "translateY(-4px)";
+							var start = null;
+							var DURATION = 280;
+							rafId = raf(function frame(t) {
+								if (start === null) start = t;
+								var p = Math.min(1, (t - start) / DURATION);
+								var e = 1 - Math.pow(1 - p, 5); // easeOutQuint
+								el.style.height = Math.round(e * fullH) + "px";
+								el.style.opacity = String(e);
+								el.style.transform = "translateY(" + (-4 * (1 - e)) + "px)";
+								if (p < 1) {
+									rafId = raf(frame);
+								} else {
+									setVisible(true);
+									setHeight("auto");
+								}
+							});
+						}
+						rafId = raf(measureLoop);
 					}, 0);
 					return function () {
 						clearTimeout(timer);
@@ -762,12 +786,8 @@ window.__ModuleLoader__.load({
 					try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
 					if (el && mounted && typeof el.animate === "function" && !reduced) {
 						// 当前高度：优先从 state 读（"68px"）；auto/0px 时重新测量
-						var cur = parseInt(height, 10);
-						if (isNaN(cur) || cur <= 0) {
-							cur = Math.max(0, el.firstElementChild ? el.firstElementChild.offsetHeight : el.scrollHeight);
-						}
+						var cur = height === "auto" ? Math.max(0, el.firstElementChild ? el.firstElementChild.offsetHeight : el.scrollHeight) : (parseInt(height, 10) || 0);
 						if (cur > 0) {
-							// 取消仍在播放的展开动画（如有）
 							if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
 							var anim = el.animate(
 								[
@@ -800,7 +820,7 @@ window.__ModuleLoader__.load({
 				{
 					ref: elRef,
 					className: "ccg-fold-clip",
-					style: { height: height, opacity: height === "0px" ? 0 : 1 }
+					style: { height: height, opacity: visible ? 1 : 0 }
 				},
 				react.createElement(
 					"div",
