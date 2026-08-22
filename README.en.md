@@ -68,6 +68,8 @@ Before/after collapse (left: all tool calls expanded, listed one by one; right: 
   interval: they stay visible as-is, never participate in the fold, and are never used as the header anchor — so the big
   header can never fold content sitting above the user message;
 - **Final summary shows only body**: after the turn ends, Think lines inside the final summary message are hidden too;
+- **Status labels**: turns that ended abnormally (user-stopped / interrupted) get a status prefix on the big header,
+  e.g. `Stopped | 5m 12s, ...`; normally completed turns show no extra label;
 - **Single items are not grouped**: when there is only **1** command between two Think blocks, no segment-level header is applied and the command card is always rendered as-is; at turn end it is folded into the big header, and returns to normal once expanded.
 
 ### Screenshots
@@ -80,6 +82,9 @@ After the turn ends, the whole turn collapses into one big header with metrics, 
 
 - **Group header = official style**: the header reuses the official `DisclosureRow` primitive (`@deepseek-ai/dsh-client-ui-primitives`) — 24px row height, 16px leading, official 14px chevron (right when collapsed / down when expanded), 14px/24px title, pixel-identical to the Think / tool-card collapse rows;
 - **Compact spacing**: a collapsed group takes one row (24px); folded member nodes are `display:none` entirely, leaving no residual blank rows, so spacing matches official messages exactly (column's 16px rhythm) no matter how much is collapsed.
+- **Transition animations**: expanding smoothly grows the content from 0 to its measured height (JS-measured, driven by the Web Animations API) with a fade-in and a slight upward shift (280ms); collapsing plays a shrink animation (200ms) before unmounting the content; animations are disabled automatically when the system prefers reduced motion.
+- **Localization**: UI text follows the browser language — Simplified Chinese or English.
+- **Accessibility**: headers expose `aria-label` / `aria-expanded` and are keyboard-operable (Enter / Space to toggle).
 
 ## Installation
 
