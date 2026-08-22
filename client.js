@@ -179,7 +179,7 @@ window.__ModuleLoader__.load({
 			if (!order || !nodes || !ourNode) return null;
 			var ourIdx = -1;
 			for (var i = 0; i < order.length; i++) {
-				if (nodes.get(order[i]) === ourNode) { ourIdx = i; break; }
+				if (order[i] === ourNode.key) { ourIdx = i; break; }
 			}
 			if (ourIdx === -1) return null;
 			var start = ourIdx, end = ourIdx;
@@ -245,7 +245,7 @@ window.__ModuleLoader__.load({
 			var keys = locations.getTurn(turn) || [];
 			var ourKey = null;
 			for (var i = 0; i < keys.length; i++) {
-				if (nodes.get(keys[i]) === ourNode) { ourKey = keys[i]; break; }
+				if (keys[i] === ourNode.key) { ourKey = keys[i]; break; }
 			}
 			var finalAssistantKey = null;
 			var toolCount = 0;
@@ -384,6 +384,7 @@ window.__ModuleLoader__.load({
 			if (kit.useProjection) props.useProjection = kit.useProjection;
 			if (kit.useWorkspaces) props.useWorkspaces = kit.useWorkspaces;
 			if (kit.t) props.t = kit.t;
+			if (kit.useHostDescription) props.useHostDescription = kit.useHostDescription;
 			for (var k in owner) if (Object.prototype.hasOwnProperty.call(owner, k)) props[k] = owner[k];
 			return react.createElement(Comp, props);
 		}
@@ -398,7 +399,8 @@ window.__ModuleLoader__.load({
 				useSessions: props.useSessions,
 				useProjection: props.useProjection,
 				useWorkspaces: props.useWorkspaces,
-				t: props.t
+				t: props.t,
+				useHostDescription: props.useHostDescription
 			};
 			var customRenderSlot = function (key, owner, options) {
 				if (key !== "tool.call.toolview") return options && options.fallback ? options.fallback : null;
@@ -532,7 +534,9 @@ window.__ModuleLoader__.load({
 
 			// 回合已结束 → 整回合折叠成一个大组头（段级组头不再各自显示）。
 			// 折叠作用域之外（用户消息上方）的节点不参与整回合折叠。
-			if (fold && fold.closed && fold.toolCount > 0 && fold.foldable && !fold.outsideScope) {
+			// 判定只看"是否存在可折叠的中间节点"（foldable），不要求本回合必须有
+			// 工具调用：仅上下文注入/思考的纯问答回合同样收成一个大组头。
+			if (fold && fold.closed && fold.foldable && !fold.outsideScope) {
 				if (!fold.isTurnHeader) {
 					// 成员：折叠时隐藏；展开大组头后显示自己的段级内容。
 					return turnExpanded ? renderSegment(props, group, open, sessionId) : hiddenMarker();
@@ -575,9 +579,10 @@ window.__ModuleLoader__.load({
 			var turnExpanded = useTurnExpanded(sessionId, turn);
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings); }, [turn, nodes, locations, turnTimings]);
 
-			// 未到回合结束 / 本回合无可折叠内容 / 无法安全定位最终消息 /
+			// 未到回合结束 / 无法安全定位最终消息或组头（回合内无任何中间节点）/
 			// 节点在折叠作用域之外（用户消息上方）：原样委托内置渲染。
-			if (!fold || !fold.closed || fold.toolCount === 0 || !fold.foldable || fold.outsideScope) {
+			// 不要求本回合必须有工具调用——仅上下文注入/思考的回合同样折叠。
+			if (!fold || !fold.closed || !fold.foldable || fold.outsideScope) {
 				return renderBuiltinAssistant(props);
 			}
 			if (fold.isFinalAssistant) {
@@ -626,7 +631,8 @@ window.__ModuleLoader__.load({
 
 			// 未折叠：原样渲染；折叠时作为成员隐藏，展开大组头后恢复。
 			// 折叠作用域之外（用户消息上方）的上下文行不参与折叠，始终原样渲染。
-			if (!fold || !fold.closed || fold.toolCount === 0 || !fold.foldable || fold.outsideScope) {
+			// 不要求本回合必须有工具调用——仅上下文注入/思考的回合同样折叠。
+			if (!fold || !fold.closed || !fold.foldable || fold.outsideScope) {
 				return renderBuiltinContext(props);
 			}
 			if (fold.isTurnHeader) {
@@ -649,16 +655,28 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- Cordis 插件入口 ----
-		exports.inject = ["slots"];
+		// 关键：委托渲染内置组件时，内置组件（ToolCallTree 等）依赖由"条目自身
+		// inject 声明"提供的 hook（如 useHostDescription，来自 connection 服务的
+		// hostDescription 可观察源）。我们的条目必须声明同样的 inject，否则手动
+		// createElement 内置组件会因缺少这些 hook 而崩溃，SlotErrorBoundary 会把
+		// 我们的条目"abdicate"（踢出槽位），折叠随即永久失效。
+		exports.inject = ["slots", "connection"];
 		exports.apply = function (ctx) {
-			ctx.inject(["slots"], function (scope) {
+			ctx.inject(["slots", "connection"], function (scope) {
 				slotsService = scope.slots;
+				var connection = scope.connection;
+				// 与内置 tool-call 条目一致的 inject：把 connection.hostDescription
+				// 以 useHostDescription 形式注入组件 props，委托渲染时原样透传。
+				var hostDescriptionInject = function () {
+					return { hooks: { hostDescription: connection.hostDescription } };
+				};
 				scope.slots.inject("conversation.chat.node", function () {
 					return scope.slots.register({
 						name: "conversation.chat.node",
 						key: "tool-call",
 						priority: -1,
-						locale: "conversation"
+						locale: "conversation",
+						inject: hostDescriptionInject
 					}, GroupedToolCallView);
 				});
 				scope.slots.inject("conversation.chat.node", function () {
@@ -666,7 +684,8 @@ window.__ModuleLoader__.load({
 						name: "conversation.chat.node",
 						key: "assistant-step",
 						priority: -1,
-						locale: "conversation"
+						locale: "conversation",
+						inject: hostDescriptionInject
 					}, GroupedAssistantView);
 				});
 				scope.slots.inject("conversation.chat.node", function () {
@@ -674,7 +693,8 @@ window.__ModuleLoader__.load({
 						name: "conversation.chat.node",
 						key: "context",
 						priority: -1,
-						locale: "conversation"
+						locale: "conversation",
+						inject: hostDescriptionInject
 					}, GroupedContextView);
 				});
 			});
