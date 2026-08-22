@@ -129,11 +129,14 @@ window.__ModuleLoader__.load({
 				   上下留白（上 4px / 下 8px）。 */
 				".ccg-group-root[data-ccg-turn][data-ccg-open] .ccg-header{margin-bottom:0}",
 				".ccg-turn-divider{height:1px;flex:none;background:var(--dsw-alias-line-secondary,#d1d5db);margin:4px 0 8px}",
-				/* 折叠内容容器：height/opacity/transform 全部由 FoldClip 用
-				   Web Animations API（element.animate）显式驱动关键帧动画播放，
-				   CSS 只负责裁切。不依赖 CSS transition 起始帧 / interpolate-size。 */
-				".ccg-fold-clip{overflow:hidden}",
-				".ccg-fold-body{min-width:0;min-height:0}",
+				/* 折叠内容容器：grid 轨道 0fr→1fr 过渡（无需测量——1fr 轨道自动等于
+				   内容完整高度，内容多少就展开多少；曲线/时长为本插件自有，与
+				   常见的 grid 0fr 方案参数不同）。折叠态 opacity 0 淡入。 */
+				".ccg-fold-clip{display:grid;grid-template-rows:0fr;min-width:0;max-width:100%;opacity:0;transition:grid-template-rows .28s cubic-bezier(.22,1,.36,1),opacity .2s ease-out}",
+				".ccg-fold-clip.ccg-fold-clip-open{grid-template-rows:1fr;opacity:1}",
+				".ccg-fold-body{min-width:0;min-height:0;overflow:hidden}",
+				".ccg-fold-clip.ccg-fold-clip-open .ccg-fold-body{overflow:visible}",
+				"@media (prefers-reduced-motion: reduce){.ccg-fold-clip{transition:none!important}}",
 				/* 大组头展开时，非第一个段的成员节点不经过 FoldClip 高度动画，
 				   用淡入+微位移入场动画避免"瞬间出现"（.22s ease-out） */
 				"@keyframes ccg-member-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}",
@@ -676,11 +679,12 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 折叠内容过渡动画包装器 ----
-		// 折叠时内容不挂载（保持 DOM 干净）；展开时用手动 rAF 动画（每帧重新测量
-		// 内容高度、动画目标实时跟随，easeOutQuint 280ms，高度+淡入+微位移），
-		// 结束 height:auto 完全放开；收起用 Web Animations API 播放收缩动画
-		// （200ms）后卸载。不依赖 CSS transition 起始帧；prefers-reduced-motion
-		// 时跳过动画。
+		// 折叠时内容不挂载（保持 DOM 干净）；展开时挂载内容（grid 0fr 折叠态），
+		// 双 rAF 确保折叠态被样式计算（过渡的起始帧），再加 open class 播放
+		// grid 轨道 0fr→1fr 过渡（280ms + 淡入）——1fr 轨道自动等于内容完整
+		// 高度，无需 JS 测量，内容无论何时渲染/增长都完整展开；
+		// 收起时移除 open class（1fr→0fr 过渡），支持 CSS 过渡的环境延迟卸载
+		// （动画播完再卸载），否则（jsdom/reduced-motion）立即卸载。
 		// rAF 兜底：jsdom/非浏览器环境没有 window.requestAnimationFrame 时用 setTimeout。
 		var raf = (typeof window !== "undefined" && window.requestAnimationFrame)
 			? window.requestAnimationFrame.bind(window)
@@ -693,150 +697,79 @@ window.__ModuleLoader__.load({
 			var live = props.live === true;
 			// 注意：官方 DisclosureRow 只在展开时渲染 children，所以本组件
 			// 首次挂载时 open 往往已是 true。初始状态必须固定为"折叠态"
-			// （不挂载、高度 0、prev=false），否则 open&&!prev 永远为 false，
-			// 展开动画分支永不执行，内容直接显示（瞬间展开）。
+			// （不挂载、无 open class、prev=false），否则展开动画分支永不执行。
 			var mountedState = react.useState(false);
 			var mounted = mountedState[0];
 			var setMounted = mountedState[1];
-			var heightState = react.useState("0px");
-			var height = heightState[0];
-			var setHeight = heightState[1];
-			// visible：内容是否可见。展开动画期间由 el.style 手动控制 opacity，
-			// 结束后置 true（React 接管）；挂载测量阶段保持 false 掩盖内容。
-			var visibleState = react.useState(false);
-			var visible = visibleState[0];
-			var setVisible = visibleState[1];
+			var expandedState = react.useState(false);
+			var expanded = expandedState[0];
+			var setExpanded = expandedState[1];
 			var elRef = react.useRef(null);
-			var animRef = react.useRef(null);
 			var prevOpenRef = react.useRef(false);
+			var rafRef = react.useRef(null);
+			var timerRef = react.useRef(null);
 			react.useEffect(function () {
 				var prev = prevOpenRef.current;
 				prevOpenRef.current = open;
-				// 直播模式（回合运行中）：内容常驻且高度自适应，不裁切不断增长的流式内容。
+				// 直播模式（回合运行中）：内容常驻、直接展开（轨道 1fr 自适应流式增长）。
 				if (live && open) {
 					setMounted(true);
-					setHeight("auto");
-					setVisible(true);
+					setExpanded(true);
 					return undefined;
 				}
 				if (open && !prev) {
-					// 从折叠切到展开。关键：先用 height:auto 完整渲染（opacity:0
-					// 掩盖），让浏览器完成全部布局/懒渲染，稳定测量到【真实高度】
-					// 后再收起播放动画——之前"先隐藏再测量"时，内容在 height:0
-					// 裁切下不会完整渲染，测量值只有前几行，动画永远覆盖不全。
+					// 展开：挂载内容（grid 0fr 折叠态，opacity 0）→ 双 rAF 确保
+					// 折叠态被样式计算 → 加 open class 播放 0fr→1fr 轨道过渡。
 					setMounted(true);
-					setHeight("auto");
-					setVisible(false);
-					// 【调试 v6】展开流程日志
-					if (typeof console !== "undefined" && console.log) console.log("[dsh-turn-fold] expand: mount full-render (opacity:0)");
-					var rafId = null;
-					var timer = setTimeout(function () {
-						var el = elRef.current;
-						if (!el) return;
-						var reduced = false;
-						try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
-						if (reduced) { setVisible(true); return; }
-						var measureH = function () {
-							var body = el.firstElementChild;
-							return Math.max(0, body ? body.offsetHeight : el.scrollHeight);
-						};
-						// 稳定测量（内容可见状态，连续 2 帧相同或最多 30 帧 ≈500ms）
-						var prevH = -1;
-						var stableFrames = 0;
-						var totalFrames = 0;
-						var fullH = 0;
-						function measureLoop() {
-							var h = measureH();
-							totalFrames++;
-							if (h === prevH) { stableFrames++; } else { stableFrames = 0; prevH = h; }
-							if (h > fullH) fullH = h;
-							if (typeof console !== "undefined" && console.log && totalFrames <= 6) {
-								console.log("[dsh-turn-fold] measure frame " + totalFrames + ": h=" + h);
-							}
-							if (stableFrames < 2 && totalFrames < 30) {
-								rafId = raf(measureLoop);
-								return;
-							}
-							if (typeof console !== "undefined" && console.log) console.log("[dsh-turn-fold] measured fullH=" + fullH + " after " + totalFrames + " frames (stable " + stableFrames + ")");
-							if (fullH <= 0) { setVisible(true); return; }
-							// 测量完成：立即收起（opacity:0 掩盖，无闪烁），播放 0→fullH 动画
-							el.style.height = "0px";
-							el.style.opacity = "0";
-							el.style.transform = "translateY(-4px)";
-							var start = null;
-							var DURATION = 280;
-							var frameCount = 0;
-							rafId = raf(function frame(t) {
-								if (start === null) start = t;
-								var p = Math.min(1, (t - start) / DURATION);
-								var e = 1 - Math.pow(1 - p, 5); // easeOutQuint
-								el.style.height = Math.round(e * fullH) + "px";
-								el.style.opacity = String(e);
-								el.style.transform = "translateY(" + (-4 * (1 - e)) + "px)";
-								frameCount++;
-								if (typeof console !== "undefined" && console.log && (frameCount % 6 === 1 || p >= 1)) {
-									console.log("[dsh-turn-fold] anim frame " + frameCount + ": p=" + p.toFixed(2) + " h=" + Math.round(e * fullH));
-								}
-								if (p < 1) {
-									rafId = raf(frame);
-								} else {
-									if (typeof console !== "undefined" && console.log) console.log("[dsh-turn-fold] expand done: h=" + Math.round(e * fullH) + " → auto");
-									setVisible(true);
-									setHeight("auto");
-								}
-							});
-						}
-						rafId = raf(measureLoop);
-					}, 0);
+					setExpanded(false);
+					if (timerRef.current !== null) { clearTimeout(timerRef.current); timerRef.current = null; }
+					if (rafRef.current !== null) { caf(rafRef.current); rafRef.current = null; }
+					rafRef.current = raf(function () {
+						rafRef.current = raf(function () {
+							rafRef.current = null;
+							setExpanded(true);
+						});
+					});
 					return function () {
-						clearTimeout(timer);
-						if (rafId !== null) caf(rafId);
-						if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
+						if (rafRef.current !== null) { caf(rafRef.current); rafRef.current = null; }
 					};
 				}
 				if (!open) {
-					// 收起：播放收缩动画（高度→0 + 淡出 + 下移），完成后卸载内容；
-					// 无 WAAPI / prefers-reduced-motion / 无元素时直接卸载。
+					// 收起：移除 open class（1fr→0fr 过渡）。若环境实际支持 CSS
+					// 过渡（getComputedStyle 的 transitionDuration 非 0）且未开启
+					// reduced-motion，动画播完再卸载；否则立即卸载。
 					var el = elRef.current;
-					var reduced = false;
-					try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
-					if (el && mounted && typeof el.animate === "function" && !reduced) {
-						// 当前高度：优先从 state 读（"68px"）；auto/0px 时重新测量
-						var cur = height === "auto" ? Math.max(0, el.firstElementChild ? el.firstElementChild.offsetHeight : el.scrollHeight) : (parseInt(height, 10) || 0);
-						if (cur > 0) {
-							if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
-							var anim = el.animate(
-								[
-									{ height: cur + "px", opacity: 1, transform: "translateY(0)" },
-									{ height: "0px", opacity: 0, transform: "translateY(-4px)" }
-								],
-								{ duration: 200, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" }
-							);
-							animRef.current = anim;
-							anim.onfinish = function () {
-								animRef.current = null;
-								try { anim.commitStyles(); } catch (e) {}
-								try { anim.cancel(); } catch (e) {}
-								setHeight("0px");
-								setMounted(false);
-							};
-							return function () {
-								if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
-							};
+					setExpanded(false);
+					if (rafRef.current !== null) { caf(rafRef.current); rafRef.current = null; }
+					if (timerRef.current !== null) { clearTimeout(timerRef.current); timerRef.current = null; }
+					if (el && mounted) {
+						var reduced = false;
+						try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+						var dur = "0s";
+						try { dur = typeof window !== "undefined" && window.getComputedStyle ? window.getComputedStyle(el).transitionDuration : "0s"; } catch (e) {}
+						var hasTransition = !reduced && typeof dur === "string" && dur.length > 0 && dur.split(",")[0].trim() !== "0s";
+						if (hasTransition) {
+							// 等过渡结束再卸载（收起动画期间内容保留在 DOM）
+							timerRef.current = setTimeout(function () { timerRef.current = null; setMounted(false); }, 340);
+						} else {
+							setMounted(false);
 						}
+					} else {
+						setMounted(false);
 					}
-					setHeight("0px");
-					setMounted(false);
+					return function () {
+						if (timerRef.current !== null) { clearTimeout(timerRef.current); timerRef.current = null; }
+					};
 				}
-				// 初始即展开（open 从未变过）：保持 auto/1，无动画。
+				// 初始即展开（open 从未变过）：直接展开。
+				setExpanded(true);
 			}, [open]);
 			if (!mounted) return null;
 			return react.createElement(
 				"div",
 				{
 					ref: elRef,
-					className: "ccg-fold-clip",
-					style: { height: height, opacity: visible ? 1 : 0 }
+					className: "ccg-fold-clip" + (expanded ? " ccg-fold-clip-open" : "")
 				},
 				react.createElement(
 					"div",
