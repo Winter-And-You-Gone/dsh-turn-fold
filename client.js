@@ -324,6 +324,27 @@ window.__ModuleLoader__.load({
 				headerKey = key;
 				break;
 			}
+			// ---- 回合结束状态检测（completed / stopped / interrupted）----
+			// 优先从 turnEnds 的 Map 形态读取详因（reason/stopReason）；
+			// 否则从最终 assistant-step 的 stopReason/finishReason 推断。
+			// 取不到任何信号时按正常完成处理，绝不误报。
+			var turnStatus = "completed";
+			if (turnEnds && typeof turnEnds.get === "function") {
+				var endInfo = turnEnds.get(turn);
+				if (endInfo) {
+					var reason = endInfo.reason || endInfo.stopReason || "";
+					if (reason === "stopped" || reason === "cancelled") turnStatus = "stopped";
+					else if (reason === "interrupted" || reason === "error" || reason === "maxTokens" || reason === "length") turnStatus = "interrupted";
+				}
+			}
+			if (turnStatus === "completed" && finalAssistantKey) {
+				var finalNode = nodes.get(finalAssistantKey);
+				if (finalNode && finalNode.data) {
+					var stopReason = finalNode.data.stopReason || finalNode.data.finishReason || finalNode.data.reason;
+					if (stopReason === "length" || stopReason === "max_tokens" || stopReason === "content_filter") turnStatus = "interrupted";
+					else if (stopReason === "stopped" || stopReason === "cancelled") turnStatus = "stopped";
+				}
+			}
 			return {
 				turn: turn,
 				closed: closed,
@@ -332,6 +353,7 @@ window.__ModuleLoader__.load({
 				finalAssistantKey: finalAssistantKey,
 				ourKey: ourKey,
 				outsideScope: outsideScope,
+				turnStatus: turnStatus,
 				// 只有能同时定位到"自己的 key"、"最终总结消息"和"作用域内的组头"
 				// 时才允许折叠：否则（比如 turn/end 与最终消息索引的瞬时竞态，
 				// 或回合内没有任何位于用户消息之后的中间节点）绝不能隐藏任何内容。
@@ -422,6 +444,15 @@ window.__ModuleLoader__.load({
 				else parts.push("cache hit " + metrics.cacheHitPercent + "%");
 			}
 			return parts.join(LOCALE === "zh" ? "，" : ", ");
+		}
+
+		// ---- 回合状态标签 ----
+		/** 非完成状态的回合在大组头前置状态文本（如"已停止 | 耗时…"）。 */
+		function turnLabelWithStatus(baseLabel, turnStatus) {
+			if (!turnStatus || turnStatus === "completed") return baseLabel;
+			var key = "status" + turnStatus.charAt(0).toUpperCase() + turnStatus.slice(1);
+			var text = _T(key);
+			return text ? (text + " | " + baseLabel) : baseLabel;
 		}
 
 		// ---- 自行实现的 tool.call.toolview 分发（替代内置 renderSlot） ----
@@ -608,7 +639,8 @@ window.__ModuleLoader__.load({
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnExpanded);
 				};
-				var turnLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var baseLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var turnLabel = turnLabelWithStatus(baseLabel, fold.turnStatus);
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
@@ -663,7 +695,8 @@ window.__ModuleLoader__.load({
 			var toggleTurn = function () {
 				setTurnOpen(sessionId, fold.turn, !turnExpanded);
 			};
-			var turnLabel = turnHeaderLabel(metrics) || (CONFIG.headerPrefix + " " + fold.toolCount + " " + CONFIG.headerSuffix);
+			var baseLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+			var turnLabel = turnLabelWithStatus(baseLabel, fold.turnStatus);
 			return react.createElement(
 				"div",
 				{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
@@ -702,7 +735,8 @@ window.__ModuleLoader__.load({
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnExpanded);
 				};
-				var turnLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var baseLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var turnLabel = turnLabelWithStatus(baseLabel, fold.turnStatus);
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
