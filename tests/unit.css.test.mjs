@@ -31,6 +31,21 @@ describe('CSS 折叠隐藏规则', () => {
     assert.match(css, /\[data-ccg-turn-folded\] \[data-variant="think"\]\{display:none\}/)
   })
 
+  it('注入的 style 标签包含大组头分隔线规则（组头与内容之间的水平细线）', () => {
+    const tag = document.querySelector('style[data-plugin-css="dsh-turn-fold/style"]')
+    const css = tag.textContent
+    assert.match(css, /\.ccg-turn-divider\{height:1px/, '分隔线应为 1px 水平细线')
+    assert.match(css, /\.ccg-group-root\[data-ccg-turn\]\[data-ccg-open\] \.ccg-header\{margin-bottom:0\}/, '大组头展开时组头底距由分隔线接管')
+  })
+
+  it('注入的 style 标签包含滚轮数字规则与 sr-only 规则', () => {
+    const tag = document.querySelector('style[data-plugin-css="dsh-turn-fold/style"]')
+    const css = tag.textContent
+    assert.match(css, /\.ccg-roll-cell\{display:inline-block;width:1ch;height:1em;overflow:hidden/, '数位视窗应裁切为 1ch×1em')
+    assert.match(css, /\.ccg-roll-strip\{display:flex;flex-direction:column\}/, '数字条竖排 0-9')
+    assert.match(css, /\.ccg-sr-only\{position:absolute;width:1px;height:1px/, 'sr-only 完整文案应视觉隐藏')
+  })
+
   it('成员含 hidden 标记 → flowItem display:none（收起状态）', () => {
     const el = makeFlowItem(document, 'tool-call', '<span data-ccg-hidden="true" style="display:none"></span>')
     document.body.appendChild(el)

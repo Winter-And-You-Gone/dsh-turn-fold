@@ -8,7 +8,7 @@ import { createRequire } from 'node:module'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { loadPlugin } from './helpers/loader.mjs'
-import { createSessionStore, makeUseSession } from './helpers/store.mjs'
+import { createSessionStore, makeUseSession, userNode, asNode, toolNode, buildSnapshot } from './helpers/store.mjs'
 import { TURN13 } from './helpers/fixtures.mjs'
 
 const require = createRequire(import.meta.url)
@@ -90,7 +90,7 @@ const injectedHooks = (() => {
 // ── 渲染工具 ──
 let root = null
 let container = null
-function mount(snapshot, sessionId = 'sess-1') {
+function mount(snapshot = TURN13, sessionId = 'sess-1') {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -100,14 +100,14 @@ function mount(snapshot, sessionId = 'sess-1') {
   act(() => {
     root.render(
       React.createElement('div', null,
-        TURN13.chat.order
+        snapshot.chat.order
           .filter((k) => {
-            const n = TURN13.chat.nodes.get(k)
+            const n = snapshot.chat.nodes.get(k)
             return n.kind !== 'user' && n.kind !== 'turn-tail'
           })
           .map((k) => {
-            const node = TURN13.chat.nodes.get(k)
-            const Comp = node.kind === 'tool-call' ? T.GroupedToolCallView : T.GroupedAssistantView
+            const node = snapshot.chat.nodes.get(k)
+            const Comp = node.kind === 'tool-call' ? T.GroupedToolCallView : node.kind === 'context' ? T.GroupedContextView : T.GroupedAssistantView
             return React.createElement(Comp, { key: k, ...propsFor(node) })
           }),
       ),
@@ -129,6 +129,18 @@ function counts() {
   }
 }
 
+// ── 运行中回合 fixture：user → as(流式) → tool(运行中) → as(流式) ──
+// turnEnds 为空（回合未结束）、turnTimings 只有 startTime（无 endTime）。
+const RUNNING = buildSnapshot(
+  [
+    userNode('u-run', 100),
+    asNode('as-run-1', 200, { step: 1, status: 'running', usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 } }),
+    toolNode('tc-run', 300, { running: true, step: 1 }),
+    asNode('as-run-2', 400, { step: 2, status: 'running', usage: { inputTokens: 30, outputTokens: 10, cacheReadTokens: 60 } }),
+  ],
+  { turnEnds: new Map(), turnTimings: new Map([[13, { startTime: Date.now() - 5000 }]]) },
+)
+
 describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真实结构）', () => {
   beforeEach(() => {
     T.turnOverrides.clear() // 模块级状态，避免测试间污染
@@ -145,6 +157,7 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
   it('初始状态：只渲染大组头 + 最终总结，所有成员带隐藏标记', () => {
     const c = counts()
     assert.equal(c.headers, 1, '应恰好一个大组头')
+    assert.ok(container.querySelector('.ccg-turn-divider'), '已结束回合收起状态下分隔线也常驻显示')
     assert.equal(c.cards, 0, '工具卡片应全部隐藏')
     assert.equal(c.assistants, 1, '最终总结消息保持可见')
     assert.equal(c.hidden, 7, '4 个工具 + 3 个中间 Think 共 7 个成员应带隐藏标记')
@@ -186,6 +199,130 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
     const title = container.querySelector('.ccg-header .ccg-title')
     assert.ok(title)
     assert.equal(title.textContent, '耗时22分34秒，消耗370202token，144tok/s，缓存命中94%')
+  })
+})
+
+describe('运行中的回合：大组头从回复开始出现 + 实时指标 + 分隔线', () => {
+  beforeEach(() => {
+    T.turnOverrides.clear() // 模块级状态，避免测试间污染
+    T.overrides.clear()
+    T.liveTokenCache.clear()
+    mount(RUNNING)
+  })
+  afterEach(() => {
+    act(() => root.unmount())
+    document.body.innerHTML = ''
+    T.turnOverrides.clear()
+    T.overrides.clear()
+    T.liveTokenCache.clear()
+  })
+
+  it('回复开始即渲染大组头：组头 + 分隔线 + 内容全部可见（默认展开）', () => {
+    const c = counts()
+    assert.equal(c.headers, 1, '运行中应恰好一个大组头')
+    assert.ok(container.querySelector('.ccg-turn-divider'), '大组头与内容之间应有分隔线')
+    assert.ok(container.querySelector('.ccg-group-root[data-ccg-turn][data-ccg-open="true"]'), '运行中默认展开')
+    assert.equal(c.cards, 1, '运行中的工具调用应可见（回复逐条加载）')
+    assert.equal(c.assistants, 2, '组头自身内容(as-run-1) + 流式消息(as-run-2) 应可见')
+    assert.equal(c.hidden, 0)
+  })
+
+  it('大组头文案实时显示耗时/token（token 累计确定，耗时随秒表走动）', () => {
+    const title = container.querySelector('.ccg-header .ccg-title')
+    assert.ok(title)
+    // token 累计 = 130 + 260 + 60 = 450、缓存命中 67% 为确定值；
+    // 耗时 ≈ 5 秒（秒数不确定）、tok/s = 60/耗时 实时估算（秒数不确定）。
+    // 滚轮数字是视觉装饰（DOM 含 0-9 数字条），完整文案在 sr-only 文本上。
+    const sr = title.querySelector('.ccg-sr-only')
+    assert.ok(sr, '滚轮文案应有 sr-only 最终文本')
+    assert.match(sr.textContent, /^耗时\d+秒，消耗450token，\d+(\.\d+)?tok\/s，缓存命中67%$/)
+  })
+
+  it('点击大组头收起：成员隐藏、分隔线常驻；再点展开恢复', () => {
+    clickHeader()
+    let c = counts()
+    assert.equal(c.headers, 1)
+    assert.equal(c.cards, 0, '收起后工具调用隐藏')
+    assert.equal(c.assistants, 0, '收起后组头内容与流式消息都隐藏')
+    assert.equal(c.hidden, 2, '成员 as-run-2 / tc-run 带隐藏标记')
+    assert.ok(container.querySelector('.ccg-turn-divider'), '收起后分隔线仍常驻显示')
+    clickHeader()
+    c = counts()
+    assert.ok(container.querySelector('.ccg-turn-divider'), '展开后分隔线仍在')
+    assert.equal(c.cards, 1)
+    assert.equal(c.assistants, 2)
+    assert.equal(c.hidden, 0)
+  })
+})
+
+describe('滚轮数字（RollDigit / AnimatedLabel / 大组头 live 文案）', () => {
+  let rroot = null
+  let rcontainer = null
+  function mountNode(el) {
+    rcontainer = document.createElement('div')
+    document.body.appendChild(rcontainer)
+    rroot = createRoot(rcontainer)
+    act(() => { rroot.render(el) })
+  }
+  function rerender(el) {
+    act(() => { rroot.render(el) })
+  }
+  afterEach(() => {
+    act(() => rroot?.unmount())
+    document.body.innerHTML = ''
+    T.turnOverrides.clear()
+    T.overrides.clear()
+  })
+
+  it('RollDigit：每位数一个视窗，内部竖排 0-9，按 data-digit 定位（jsdom 无 WAAPI → 静态 transform）', () => {
+    mountNode(React.createElement(T.RollDigit, { digit: 5 }))
+    const cell = rcontainer.querySelector('.ccg-roll-cell')
+    assert.ok(cell, '应有滚轮视窗')
+    assert.equal(cell.dataset.digit, '5')
+    const strip = cell.querySelector('.ccg-roll-strip')
+    assert.ok(strip)
+    assert.equal(strip.children.length, 10, '数字条应含 0-9')
+    assert.equal(strip.children[9].textContent, '9')
+    // translateY(-k*10%)：strip 高 10em，10% = 1em = 一个数位
+    assert.equal(strip.style.transform, 'translateY(-50%)')
+  })
+
+  it('RollDigit：数值变化后 transform 更新（滚动到新数位）', () => {
+    mountNode(React.createElement(T.RollDigit, { digit: 5 }))
+    rerender(React.createElement(T.RollDigit, { digit: 7 }))
+    const strip = rcontainer.querySelector('.ccg-roll-strip')
+    assert.equal(strip.style.transform, 'translateY(-70%)')
+  })
+
+  it('AnimatedLabel：数字拆成逐位滚轮、文字原样，sr-only 保留完整最终文案', () => {
+    mountNode(React.createElement(T.AnimatedLabel, { label: '耗时5秒，消耗450token，12tok/s，缓存命中67%' }))
+    const cells = rcontainer.querySelectorAll('.ccg-roll-cell')
+    // 数字 5 / 4 5 0 / 1 2 / 6 7 = 8 个数位
+    assert.equal(cells.length, 8)
+    assert.deepEqual([...cells].map((c) => c.dataset.digit), ['5', '4', '5', '0', '1', '2', '6', '7'])
+    const sr = rcontainer.querySelector('.ccg-sr-only')
+    assert.ok(sr, '应有 sr-only 完整文案')
+    assert.equal(sr.textContent, '耗时5秒，消耗450token，12tok/s，缓存命中67%')
+  })
+
+  it('AnimatedLabel：数值更新只滚动对应数位（9→10 进位时新增高位）', () => {
+    const el = (label) => React.createElement(T.AnimatedLabel, { label })
+    mountNode(el('耗时9秒'))
+    rerender(el('耗时10秒'))
+    const cells = rcontainer.querySelectorAll('.ccg-roll-cell')
+    assert.deepEqual([...cells].map((c) => c.dataset.digit), ['1', '0'])
+    const strips = rcontainer.querySelectorAll('.ccg-roll-strip')
+    assert.equal(strips[0].style.transform, 'translateY(-10%)')
+    assert.equal(strips[1].style.transform, 'translateY(0%)')
+  })
+
+  it('GroupHeader live=true：标题数字渲染滚轮；live=false（或缺省）：纯文本', () => {
+    const h = (live) => React.createElement(T.GroupHeader, { count: 0, open: true, onToggle: () => {}, label: '耗时5秒，消耗450token', isTurn: true, live })
+    mountNode(h(true))
+    assert.equal(rcontainer.querySelectorAll('.ccg-roll-cell').length, 4)
+    rerender(h(false))
+    assert.equal(rcontainer.querySelectorAll('.ccg-roll-cell').length, 0, '非直播回退纯文本')
+    assert.equal(rcontainer.querySelector('.ccg-title').textContent, '耗时5秒，消耗450token')
   })
 })
 

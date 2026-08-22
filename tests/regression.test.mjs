@@ -171,7 +171,7 @@ describe('回归 v0.2.2：折叠作用域不越过用户消息', () => {
 })
 
 describe('段级分组：手动展开/收起', () => {
-  it('连续工具调用组：leader 渲染段组头，点击展开/收起成员（回合未结束时）', () => {
+  it('连续工具调用组：运行中渲染大组头 + 段级组头；段级组头展开/收起成员，大组头收起整回合', () => {
     T.turnOverrides.clear()
     T.overrides.clear()
     const nodes = [
@@ -183,22 +183,34 @@ describe('段级分组：手动展开/收起', () => {
       asNode('as2', 400),
       asNode('final', 500),
     ]
-    // 回合未结束（turnEnds 为空）→ 段级分组生效，不套大组头
+    // 回合进行中（turnEnds 为空）→ 大组头从回复开始出现（默认展开），段级组头在其下方
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    mount(s)
-    const segHeaders = [...container.querySelectorAll('.ccg-header')].filter((h) => !h.closest('[data-ccg-turn]'))
-    assert.equal(segHeaders.length, 1, '应有一个段级组头')
-    assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '组内两个非 leader 成员隐藏')
-    // 点击段级组头展开
-    act(() => { segHeaders[0].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-    assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 0, '展开后成员可见')
-    // 再点收起
-    act(() => { segHeaders[0].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-    assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '收起后成员重新隐藏')
-    act(() => root.unmount())
-    document.body.innerHTML = ''
-    T.turnOverrides.clear()
-    T.overrides.clear()
+    try {
+      mount(s)
+      const turnHeader = container.querySelector('.ccg-group-root[data-ccg-turn] > .ccg-header')
+      assert.ok(turnHeader, '运行中应渲染大组头')
+      const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
+      assert.ok(segHeader, '段级组头应作为独立 flowItem 渲染在大组头下方')
+      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '组内两个非 leader 成员隐藏')
+      // 点击段级组头展开
+      act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 0, '展开后成员可见')
+      assert.equal(container.querySelectorAll('.mock-tool-card').length, 3, '3 个工具卡片可见')
+      // 再点收起
+      act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '收起后成员重新隐藏')
+      // 点击大组头收起整回合：段级组头随成员隐藏，只剩大组头
+      act(() => { turnHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+      assert.equal(container.querySelectorAll('.ccg-header').length, 1, '只剩大组头')
+      assert.equal(container.querySelectorAll('.mock-assistant').length, 0, '大组头收起后中间 Think 隐藏')
+      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 5, 'tc1/tc2/tc3/as2/final 全部带隐藏标记')
+    } finally {
+      act(() => root.unmount())
+      document.body.innerHTML = ''
+      T.turnOverrides.clear()
+      T.overrides.clear()
+      T.liveTokenCache.clear()
+    }
   })
 
   it('单条命令不套段级组头（count=1 原样渲染）', () => {

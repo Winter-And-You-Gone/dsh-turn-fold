@@ -1,9 +1,9 @@
 {
   "name": "dsh-turn-fold",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "type": "module",
   "main": "index.js",
-  "description": "DeepSeek Harness 纯插件（只负责折叠）：工具调用按 Think 段级分组自动折叠；回合结束后整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头，大组头显示本轮耗时/token/tok/s/缓存命中率指标，最终总结只显示正文。不改 DSH 源码。",
+  "description": "DeepSeek Harness 纯插件（只负责折叠）：工具调用按 Think 段级分组自动折叠；大组头在 agent 回复开始就出现并实时显示耗时/token/tok/s/缓存命中率（组头与内容之间有分隔线）；回合结束后整回合收成一个大组头，最终总结只显示正文。不改 DSH 源码。",
   "license": "MIT",
   "repository": {
     "type": "git",

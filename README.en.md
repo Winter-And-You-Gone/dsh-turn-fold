@@ -8,8 +8,9 @@
 
 A **pure plugin** for DeepSeek Harness (DSH) that only handles **collapsing**:
 1. **Segment-level auto-collapse**: tool calls are grouped by Think; once the next Think appears, the group automatically collapses into a segment-level group header (Think blocks keep their built-in defaults and only act as group boundaries).
-2. **Whole-turn collapse**: after a reply finishes, all Think blocks + tool calls + context injections of that turn collapse into **one big group header**, which shows the turn's duration / tokens / tok/s / cache-hit rate; only the final summary text stays visible.
-3. **Manual expand/collapse**: click a group header to toggle.
+2. **Live big header**: the big group header appears as soon as the agent's reply starts, with the reply loading line by line below it; the header shows duration / tokens / tok/s / cache-hit rate in real time, separated from the content by a divider line.
+3. **Whole-turn collapse**: after a reply finishes, all Think blocks + tool calls + context injections of that turn collapse into **one big group header** (collapsed by default); only the final summary text stays visible.
+4. **Manual expand/collapse**: click a group header to toggle.
 
 **Does not modify any `@deepseek-ai/dsh-*` source code.**
 
@@ -50,17 +51,24 @@ Before/after collapse (left: all tool calls expanded, listed one by one; right: 
   </tr>
 </table>
 
-## Feature 2: Collapse the whole turn into one big header
+## Feature 2: Live big header + collapse the whole turn into one big header
 
 ```
 [User message]
-[▸ 5m12s, 12345 tokens, 34 tok/s, 80% cache hit]   ← one big group header
+[▸ 5m12s, 12345 tokens, 34 tok/s, 80% cache hit]   ← big header, appears at reply start
+─────────────────────────────────────────────      ← divider line
+[Think / tool calls loading one by one…]            ← expanded by default while running
 [Final summary body]                                ← no Think lines, only body
 [duration · token footer]                           ← official turn-tail
 ```
 
-- After a turn **finishes** (final summary output, turn end), all Think blocks, tool calls and context injections of that turn
-  auto-collapse into **one big group header**, keeping only the final summary message and the official duration/token footer visible;
+- **The big header appears at reply start**: as soon as the first piece of the agent's reply shows up, the big header appears at the top of the turn, expanded by default, with Think blocks / tool calls loading below the divider line — no more waiting until the turn ends to see the metrics;
+- **Metrics update in real time**: **duration ticks every second** (timed from the turn's `turn/start`), **tokens accumulate live** as streaming `usage` events arrive, tok/s is estimated live from output tokens / elapsed time, and the cache-hit rate is computed live from usage; once the turn ends, everything switches to the official authoritative values (turn-tail tok/s, exact `turn/end` duration);
+- **"Tokens consumed" keeps growing by extrapolation**: real `usage` only arrives when a request completes, so between two arrivals the number would stall — while running, it keeps growing continuously at the observed generation rate (output-token delta / time interval; default 30 tok/s, capped at 300 tok/s via `CONFIG.liveTokenRate*`) to preserve the "consuming live" feel; when new usage arrives the number snaps to the real value (a small step back is expected);
+- **Odometer-style digit animation**: while the turn is running, each digit of the changing numbers rolls to its new value independently (odometer/slot-wheel effect, 350ms springy easing; the duration rolls every second, tokens/tok/s/cache-hit roll as data arrives) — every digit is its own 1ch-wide window with a vertical 0-9 strip, like a counting drum; a visually hidden sr-only copy keeps the full label readable for screen readers, and the animation degrades to static digits when the system prefers reduced motion;
+- **Divider always below the header**: a 1px horizontal line always sits below the big header text (`.ccg-turn-divider`, colored with the official `--dsw-alias-line-secondary` token, adapting to light/dark themes) — **visible in both collapsed and expanded states**, acting as the visual boundary between the header and the content when expanded;
+- After a turn **finishes** (final summary output, turn end), the big header auto-collapses: all Think blocks, tool calls and context injections of that turn
+  collapse into **one big group header**, keeping only the final summary message and the official duration/token footer visible (turns the user expanded manually stay expanded);
 - **The big header shows this turn's metrics**: `duration (xh xm xs, or just m s under 1 hour, or just s under 1 minute), N tokens, N tok/s, cache hit NN%`; missing items are omitted automatically, and only when all are missing does it fall back to "Ran N commands";
 - Click the big header to expand/collapse the whole turn; when reopening a historical session, completed turns stay collapsed as well;
 - **The fold never crosses the user message**: the big header only folds content between the user message and the agent's reply.
@@ -81,8 +89,10 @@ After the turn ends, the whole turn collapses into one big header with metrics, 
 ## Component styles & spacing
 
 - **Group header = official style**: the header reuses the official `DisclosureRow` primitive (`@deepseek-ai/dsh-client-ui-primitives`) — 24px row height, 16px leading, official 14px chevron (right when collapsed / down when expanded), 14px/24px title, pixel-identical to the Think / tool-card collapse rows;
+- **Big header divider**: a 1px horizontal divider line (`.ccg-turn-divider`, colored with the official `--dsw-alias-line-secondary` token) always renders below the big header text — visible in both collapsed and expanded states, with 4px / 8px spacing above and below;
 - **Compact spacing**: a collapsed group takes one row (24px); folded member nodes are `display:none` entirely, leaving no residual blank rows, so spacing matches official messages exactly (column's 16px rhythm) no matter how much is collapsed.
-- **Transition animations**: expanding smoothly grows the content from 0 to its measured height (JS-measured, driven by the Web Animations API) with a fade-in and a slight upward shift (280ms); collapsing plays a shrink animation (200ms) before unmounting the content; animations are disabled automatically when the system prefers reduced motion.
+- **Transition animations**: expanding smoothly grows the content from 0 to its measured height (JS-measured, driven by the Web Animations API) with a fade-in and a slight upward shift (280ms); collapsing plays a shrink animation (200ms) before unmounting the content; animations are disabled automatically when the system prefers reduced motion. During a running turn, the content stays in "live mode" (height auto, no clipping of growing streaming content).
+- **Odometer digits**: while running, the big header's numbers (duration/tokens/tok/s/cache-hit) are split into 1ch-wide rolling windows per digit, rolling to new values on change (350ms springy easing); after the turn ends the label falls back to plain text.
 - **Localization**: UI text follows the browser language — Simplified Chinese or English.
 - **Accessibility**: headers expose `aria-label` / `aria-expanded` and are keyboard-operable (Enter / Space to toggle).
 
@@ -195,7 +205,7 @@ git push --follow-tags
 - The DSH session UI is assembled from Cordis plugins + a Slot system; each block of the chat stream is dispatched to its renderer by type through `conversation.chat.node` (keyed slot).
 - The slot registry officially supports **overriding at different priorities** (`register at a different priority to shadow it, lowest renders`). This plugin uses `priority: -1` to shadow the built-in `tool-call` / `assistant-step` / `context` renderers.
 - When expanded, it uses `ctx.slots.entries('conversation.chat.node')` to grab the built-in component references for **delegated rendering**, so tool cards / Think lines / context injections keep exactly the built-in content and styles.
-- Whole-turn collapse determines turn completion via the session snapshot's `turnEnds` (driven by turn/end events), uses `chat.locations.getTurn()` to compute the header/members/final message, then hides member flowItems with CSS `:has()`.
+- Whole-turn collapse determines turn completion via the session snapshot's `turnEnds` (driven by turn/end events), uses `chat.locations.getTurn()` to compute the header/members/final message, then hides member flowItems with CSS `:has()`. While a turn is running, `turnTimings` (the `turn/start` event provides `startTime`) marks it as started, so the big header appears immediately: duration ticks in real time via a per-second clock (`Date.now()`), tokens accumulate live from streaming `usage` events (the `usage` chunk of `assistant/chunk`), and all metrics switch to authoritative values after `turn/end`.
 
 ## Notes
 

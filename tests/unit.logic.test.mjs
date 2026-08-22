@@ -122,6 +122,54 @@ describe('computeGroup（段级分组）', () => {
 
 // ─────────────────────────── computeTurnFold ───────────────────────────
 describe('computeTurnFold（整回合折叠）', () => {
+  it('运行中：finalAssistantKey 为 null，第一条中间节点即组头，foldable=true', () => {
+    // 回合进行中（turnEnds 为空）：大组头应从回复开始就出现——
+    // 当前流式 assistant-step 不作为"最终总结"豁免，第一条中间节点就是组头。
+    const nodes = [
+      userNode('u-run', 100),
+      asNode('as-run-1', 200, { status: 'running' }),
+      toolNode('tc-run', 300, { running: true }),
+      asNode('as-run-2', 400, { status: 'running' }),
+    ]
+    const s = buildSnapshot(nodes, {
+      turnEnds: new Map(),
+      turnTimings: new Map([[13, { startTime: 100000 }]]),
+    })
+    const h = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-run-1'))
+    assert.equal(h.closed, false)
+    assert.equal(h.finalAssistantKey, null, '运行中没有最终总结')
+    assert.equal(h.headerKey, 'as-run-1')
+    assert.equal(h.isTurnHeader, true)
+    assert.equal(h.foldable, true, '运行中只要存在作用域内中间节点即可折叠')
+    // 其余节点都是成员（非组头、非最终）
+    for (const key of ['tc-run', 'as-run-2']) {
+      const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get(key))
+      assert.equal(f.isTurnHeader, false, `${key} 不是组头`)
+      assert.equal(f.isFinalAssistant, false, `${key} 不是最终消息`)
+      assert.equal(f.foldable, true, `${key} 参与折叠`)
+    }
+  })
+
+  it('运行中单条消息：该消息自身即组头（回复开始即出现大组头）', () => {
+    const nodes = [userNode('u-solo', 100), asNode('as-solo', 200, { status: 'running' })]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-solo'))
+    assert.equal(f.closed, false)
+    assert.equal(f.isTurnHeader, true)
+    assert.equal(f.foldable, true)
+  })
+
+  it('回合结束后：finalAssistantKey 恢复为最后一条 assistant-step（单条消息回合不再折叠）', () => {
+    const nodes = [userNode('u-solo', 100), asNode('as-solo', 200)]
+    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 300]]) })
+    const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-solo'))
+    assert.equal(f.closed, true)
+    assert.equal(f.finalAssistantKey, 'as-solo')
+    assert.equal(f.isFinalAssistant, true)
+    assert.equal(f.foldable, false, '单条消息回合没有中间节点可折叠')
+  })
+
+
   it('turnNumber：step/turn 定位返回回合号；unresolved/session 返回 undefined', () => {
     const s = buildSnapshot([userNode('u', 1)], { turnEnds: new Map([[13, 2]]) })
     assert.equal(T.turnNumber(s.chat.nodes.get('u')), 13)
@@ -274,6 +322,55 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     assert.equal(empty, null)
   })
 
+  it('运行中（liveNow）：耗时按 now-startTime 实时计算、token 累计、tok/s 实时估算、缓存命中实时', () => {
+    // 回合进行中：turnTimings 只有 startTime（无 endTime），liveNow 由每秒秒表提供。
+    const nodes = [
+      userNode('u-live', 100),
+      asNode('as-live-1', 200, { status: 'running', usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 } }),
+      toolNode('tc-live', 300, { running: true }),
+      asNode('as-live-2', 400, { status: 'running', usage: { inputTokens: 30, outputTokens: 10, cacheReadTokens: 60 } }),
+    ]
+    const s = buildSnapshot(nodes, {
+      turnEnds: new Map(),
+      turnTimings: new Map([[13, { startTime: 100000 }]]),
+    })
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 105000)
+    // 耗时 = 105000 - 100000 = 5000ms；token = (100+30) + (200+60) + (50+10) = 450
+    // tok/s = 60 / 5 = 12；缓存命中 = round(260 / 390 * 100) = 67
+    assert.equal(m.durationMs, 5000)
+    assert.equal(m.tokens, 450)
+    assert.equal(m.tokensPerSecond, 12)
+    assert.equal(m.cacheHitPercent, 67)
+    assert.equal(T.turnHeaderLabel(m), '耗时5秒，消耗450token，12tok/s，缓存命中67%')
+  })
+
+  it('运行中：无 liveNow（回合已结束）时耗时取 endTime，不产生实时 tok/s', () => {
+    const nodes = [
+      userNode('u-settled', 100),
+      asNode('as-s-1', 200, { usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 } }),
+      asNode('as-s-2', 400, { usage: { inputTokens: 30, outputTokens: 10, cacheReadTokens: 60 } }),
+    ]
+    const s = buildSnapshot(nodes, {
+      turnEnds: new Map([[13, 500]]),
+      turnTimings: new Map([[13, { startTime: 100000, endTime: 105000 }]]),
+    })
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
+    assert.equal(m.durationMs, 5000)
+    assert.equal(m.tokens, 450)
+    // 无 turn-tail 且未传 liveNow → 不估算 tok/s（保持既有行为）
+    assert.equal(m.tokensPerSecond, undefined)
+  })
+
+  it('运行中：耗时不足 1 秒或尚无输出时不显示实时 tok/s（避免瞬时巨大速率）', () => {
+    const nodes = [userNode('u-fast', 100), asNode('as-fast', 200, { status: 'running', usage: { inputTokens: 10, outputTokens: 0, cacheReadTokens: 0 } })]
+    const s = buildSnapshot(nodes, { turnEnds: new Map(), turnTimings: new Map([[13, { startTime: 100000 }]]) })
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 100500)
+    assert.equal(m.durationMs, 500)
+    assert.equal(m.tokens, 10)
+    assert.equal(m.tokensPerSecond, undefined)
+    assert.equal(T.turnHeaderLabel(m), '耗时0秒，消耗10token，缓存命中0%')
+  })
+
   it('缺耗时但有 token → 文案省略耗时项', () => {
     assert.equal(T.turnHeaderLabel({ tokens: 100 }), '消耗100token')
   })
@@ -312,5 +409,84 @@ describe('英文界面（en）', () => {
     assert.equal(T2.formatTurnDuration(3661000), '1h 1m 1s')
     assert.equal(T2.turnHeaderLabel(TURN13_METRICS), '22m 34s, 370202 tokens, 144 tok/s, cache hit 94%')
     assert.equal(T2.turnHeaderLabel({ tokens: 100 }), '100 tokens')
+  })
+})
+
+// ─────────────────────────── projectLiveTokens / turnDisplayMetrics ───────────────────────────
+// 运行中"消耗token"外推增长：真实 usage 只在请求完成时到达，两次之间按观测速率
+// 持续增长；新数据到达时校正为真实值。缓存按 turn 记忆，测试间需清理。
+describe('projectLiveTokens / turnDisplayMetrics（消耗token 外推增长）', () => {
+  // 缓存按 key（sessionId::turn）记忆，测试间需清理
+  const k = (n) => `sess::${n}`
+
+  it('首次调用：初始化缓存并返回真实值（不外推）', () => {
+    T.liveTokenCache.clear()
+    assert.equal(T.projectLiveTokens(k(21), 450, 60, 100000, 12), 450)
+  })
+
+  it('无新数据：按默认速率外推增长（tps 不可用 → CONFIG.liveTokenRate）', () => {
+    T.liveTokenCache.clear()
+    T.projectLiveTokens(k(22), 450, 60, 100000, undefined) // 初始化：rate = 默认 30
+    // 2 秒后无新数据 → 450 + 30*2 = 510
+    assert.equal(T.projectLiveTokens(k(22), 450, 60, 102000, undefined), 510)
+    // 再 1 秒 → 540
+    assert.equal(T.projectLiveTokens(k(22), 450, 60, 103000, undefined), 540)
+  })
+
+  it('无新数据：初始化速率优先用实时 tps', () => {
+    T.liveTokenCache.clear()
+    T.projectLiveTokens(k(23), 450, 60, 100000, 40)
+    assert.equal(T.projectLiveTokens(k(23), 450, 60, 102000, 40), 530) // 450 + 40*2
+  })
+
+  it('新数据到达：校正为真实值，并按输出增量重新估算速率', () => {
+    T.liveTokenCache.clear()
+    T.projectLiveTokens(k(24), 450, 60, 100000, 30) // 初始化 rate=30
+    // 10 秒后真实值到达：output 60 → 110（+50），dt=10s → 新速率 = 5
+    assert.equal(T.projectLiveTokens(k(24), 1000, 110, 110000, 30), 1000)
+    // 之后无新数据：1000 + 5*3 = 1015
+    assert.equal(T.projectLiveTokens(k(24), 1000, 110, 113000, 30), 1015)
+  })
+
+  it('速率上限：输出增量过大时 rate 截断到 CONFIG.liveTokenRateMax', () => {
+    T.liveTokenCache.clear()
+    T.projectLiveTokens(k(25), 100, 10, 100000, 30)
+    // 2 秒后 output +1200 → 速率 600/s → 截断到 300/s（上限）
+    assert.equal(T.projectLiveTokens(k(25), 1300, 1210, 102000, 30), 1300)
+    // 1 秒后外推：1300 + 300 = 1600（未截断的话会是 1300+600=1900）
+    assert.equal(T.projectLiveTokens(k(25), 1300, 1210, 103000, 30), 1600)
+  })
+
+  it('缓存 key 含 sessionId：不同会话同 turn 号互不串扰', () => {
+    T.liveTokenCache.clear()
+    T.projectLiveTokens('sA::13', 450, 60, 100000, 30)
+    T.projectLiveTokens('sB::13', 100, 10, 100000, 30)
+    // 各按自己的基线外推
+    assert.equal(T.projectLiveTokens('sA::13', 450, 60, 102000, 30), 510) // 450+60
+    assert.equal(T.projectLiveTokens('sB::13', 100, 10, 102000, 30), 160) // 100+60
+  })
+
+  it('turnDisplayMetrics：运行中且 liveNow 存在才外推；closed / 无 liveNow / 无 tokens 原样返回', () => {
+    T.liveTokenCache.clear()
+    const m = { durationMs: 5000, tokens: 450, outputTokens: 60, tokensPerSecond: 12, cacheHitPercent: 67 }
+    // 首次调用：初始化缓存，返回原对象
+    assert.equal(T.turnDisplayMetrics('sess', 26, m, false, 100000), m)
+    // 2 秒后无新数据：tokens 外推为 450 + 12*2 = 474，其余字段不变
+    const second = T.turnDisplayMetrics('sess', 26, m, false, 102000)
+    assert.notEqual(second, m)
+    assert.equal(second.tokens, 474)
+    assert.equal(second.durationMs, 5000)
+    assert.equal(second.outputTokens, 60)
+    assert.equal(second.tokensPerSecond, 12)
+    assert.equal(second.cacheHitPercent, 67)
+    // closed：原样返回（不调用外推）
+    assert.equal(T.turnDisplayMetrics('sess', 26, m, true, 102000), m)
+    // liveNow undefined：原样返回
+    assert.equal(T.turnDisplayMetrics('sess', 26, m, false, undefined), m)
+    // 无 tokens：原样返回
+    const noTokens = { durationMs: 1000 }
+    assert.equal(T.turnDisplayMetrics('sess', 26, noTokens, false, 102000), noTokens)
+    // metrics 为空：原样返回
+    assert.equal(T.turnDisplayMetrics('sess', 26, null, false, 102000), null)
   })
 })

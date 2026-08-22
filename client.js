@@ -3,12 +3,17 @@
 // 行为：
 //   1. Think 块保持内置默认（收起、点击展开），不做任何改动。
 //   2. 工具调用按 Think 段级分组：下一个 Think 出现后自动折叠成段级组头；运行中保持展开。
-//   3. 回合结束后，整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头，
-//      大组头显示本轮耗时/token/tok/s/缓存命中率，非正常结束的回合带状态标签
-//      （已停止 / 已中断）；最终总结消息只显示正文。
-//   4. 点击组头可手动展开/折叠；展开带平滑过渡动画（高度展开 + 淡入 + 微位移，280ms），
+//   3. 大组头在 agent 回复开始就出现（运行中默认展开，回复在其下逐条加载），
+//      组头实时显示本轮耗时/token/tok/s/缓存命中率——耗时每秒刷新、token 随流式
+//      usage 事件更新、tok/s 按已输出 token 实时估算；真实 usage 只在请求完成时
+//      到达，"消耗token"在两次到达之间按观测速率持续外推增长（新数据到达时校正
+//      为真实值）；数值变化带"滚轮/里程表"式逐位滚动动画（每位数字独立滚动，
+//      350ms 回弹缓动）；组头下方常驻一条水平分隔线（收起/展开都显示）。
+//   4. 回合结束后，整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头并
+//      默认收起，只保留最终总结正文；非正常结束的回合带状态标签（已停止 / 已中断）。
+//   5. 点击组头可手动展开/折叠；展开带平滑过渡动画（高度展开 + 淡入 + 微位移，280ms），
 //      收起带收缩动画（200ms）后卸载内容；尊重 prefers-reduced-motion。
-//   5. 界面文案自动适配中英文（navigator.language(s) 含 zh 即中文），
+//   6. 界面文案自动适配中英文（navigator.language(s) 含 zh 即中文），
 //      组头带 aria-label / aria-expanded，键盘可操作（Enter / Space）。
 //
 // 实现方式：
@@ -37,7 +42,11 @@ window.__ModuleLoader__.load({
 			// 组头文案："运行了 N 条命令"；组内有失败命令时追加"——M条执行失败"
 			headerPrefix: "运行了",
 			headerSuffix: "条命令",
-			failureSuffix: "条执行失败"
+			failureSuffix: "条执行失败",
+			// 运行中大组头"消耗token"数字的外推参数：真实 usage 只在请求完成时到达，
+			// 两次到达之间按观测速率持续增长，保持"实时消耗"的观感。
+			liveTokenRate: 30,       // 默认增长速率（tok/s；尚无观测数据时使用）
+			liveTokenRateMax: 300    // 观测速率上限（tok/s；防单次大跳变导致外推暴涨）
 		};
 
 		// ---- 多语言支持 ----
@@ -115,6 +124,11 @@ window.__ModuleLoader__.load({
 				".ccg-group-root{display:flex;flex-direction:column}",
 				/* 展开时组头与内容之间留 8px（折叠时组头独立成行，间距即官方 16px） */
 				".ccg-group-root[data-ccg-open] .ccg-header{margin-bottom:8px}",
+				/* 大组头组头下方常驻 1px 分隔线（收起/展开都显示，参考图：组头文字
+				   下方的水平细线）。段级组头保持原 8px 间距；大组头由分隔线自带
+				   上下留白（上 4px / 下 8px）。 */
+				".ccg-group-root[data-ccg-turn][data-ccg-open] .ccg-header{margin-bottom:0}",
+				".ccg-turn-divider{height:1px;flex:none;background:var(--dsw-alias-line-secondary,#d1d5db);margin:4px 0 8px}",
 				/* 折叠内容容器：height/opacity/transform 全部由 FoldClip 用
 				   Web Animations API（element.animate）显式驱动关键帧动画播放，
 				   CSS 只负责裁切。不依赖 CSS transition 起始帧 / interpolate-size。 */
@@ -139,7 +153,14 @@ window.__ModuleLoader__.load({
 				"[data-chat-flow-kind]:empty{display:none}",
 				/* 最终总结消息：回合结束后隐藏其内部 Think 行（官方 ReasoningRow 根节点带
 				   data-variant="think"），只显示正文 —— 符合"只显示最终结果"的语义 */
-				"[data-ccg-turn-folded] [data-variant=\"think\"]{display:none}"
+				"[data-ccg-turn-folded] [data-variant=\"think\"]{display:none}",
+				/* 滚轮数字（大组头直播指标）：每位数 1ch 宽视窗，竖排 0-9 用 transform
+				   滚动，呈现里程表/滚轮式变化。文字部分保持原样内联。 */
+				".ccg-roll-cell{display:inline-block;width:1ch;height:1em;overflow:hidden;vertical-align:-0.15em;text-align:center}",
+				".ccg-roll-strip{display:flex;flex-direction:column}",
+				".ccg-roll-strip .ccg-roll-d{flex:none;width:1ch;height:1em;line-height:1em;text-align:center}",
+				".ccg-roll-text{display:inline}",
+				".ccg-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
@@ -172,7 +193,8 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 整回合折叠状态（模块级；按 sessionId+turn 记忆） ----
-		// 回合结束后整回合收成一个大组头，默认折叠；点击大组头展开/收起。
+		// 回合进行中：大组头在回复开始就出现，默认展开；回合结束后整回合收成一个
+		// 大组头，默认折叠；点击大组头展开/收起。手动选择永久记忆（三态：null=未干预）。
 		var turnOverrides = new Map();
 		var turnOverrideListeners = new Set();
 		function turnKeyOf(sessionId, turn) { return sessionId + "::turn:" + turn; }
@@ -189,13 +211,46 @@ window.__ModuleLoader__.load({
 			if (open === undefined) turnOverrides.delete(k); else turnOverrides.set(k, open);
 			notifyTurnOverrides();
 		}
-		/** 回合折叠状态：false = 折叠（默认）；true = 已手动展开。 */
-		function useTurnExpanded(sessionId, turn) {
+		/** 回合折叠手动选择：null = 未手动干预（跟随自动规则：运行中展开、结束后折叠）。 */
+		function useTurnOverride(sessionId, turn) {
 			return useSyncExternalStore(subscribeTurnOverrides, function () {
-				if (turn === undefined) return false;
+				if (turn === undefined) return null;
 				var v = turnOverrides.get(turnKeyOf(sessionId, turn));
-				return v === undefined ? false : v;
+				return v === undefined ? null : v;
 			});
+		}
+
+		// ---- 实时秒表（回合运行中，大组头"耗时"每秒刷新） ----
+		// token 等指标随会话快照自然更新（流式 usage 事件触发重渲染）；只有"耗时"
+		// 需要时钟驱动：运行中回合的 turnTimings 只有 startTime，没有 endTime。
+		// 共享一个模块级定时器：有组件订阅才启动，全部退订即停止。
+		var tickListeners = new Set();
+		var tickVersion = 0;
+		var tickTimer = null;
+		function subscribeTicks(fn) {
+			tickListeners.add(fn);
+			if (tickTimer === null) {
+				tickTimer = setInterval(function () {
+					tickVersion++;
+					var fns = [];
+					tickListeners.forEach(function (fn) { fns.push(fn); });
+					for (var i = 0; i < fns.length; i++) fns[i]();
+				}, 1000);
+			}
+			return function () {
+				tickListeners.delete(fn);
+				if (tickListeners.size === 0 && tickTimer !== null) {
+					clearInterval(tickTimer);
+					tickTimer = null;
+				}
+			};
+		}
+		function subscribeNothing() { return function () {}; }
+		function getTickVersion() { return tickVersion; }
+		/** 运行中：每秒返回新版本号驱动重渲染，返回实时 Date.now()；结束后订阅空源、不再刷新。 */
+		function useLiveNow(active) {
+			useSyncExternalStore(active ? subscribeTicks : subscribeNothing, getTickVersion);
+			return active ? Date.now() : undefined;
 		}
 
 		// ---- 委托渲染：取内置组件引用 ----
@@ -281,11 +336,14 @@ window.__ModuleLoader__.load({
 			return (loc.kind === "turn" || loc.kind === "step") ? loc.turn.turn : undefined;
 		}
 		/**
-		 * 计算"整回合折叠"信息：回合结束后，把本回合所有 Think + 工具调用收成一个大组头，
-		 * 只保留最终总结消息（+官方 turn-tail 脚注）可见。
+		 * 计算"整回合折叠"信息：把本回合所有 Think + 工具调用 + 上下文注入收成一个大组头。
+		 * 运行中的回合同样成立（大组头在回复开始就出现、默认展开），只保留最终总结消息
+		 * （+官方 turn-tail 脚注）可见发生在回合结束后（默认收起）。
 		 *   - closed：回合是否已结束（turnEnds 里有记录，turn/end 事件驱动）。
 		 *   - toolCount：回合内工具调用总数（大组头文案"运行了 N 条命令"的 N）。
-		 *   - finalAssistantKey：回合内最后一条 assistant-step（最终总结，绝不折叠）。
+		 *   - finalAssistantKey：回合结束后回合内最后一条 assistant-step（最终总结，绝不
+		 *     折叠）；运行中的回合为 null——当前流式消息只是"最后一条中间节点"，同样可以
+		 *     作为大组头锚点，保证大组头从回复第一条内容起就出现。
 		 *   - headerKey：回合内第一条"中间节点"（tool-call / context / 非最终 assistant-step），由它渲染大组头。
 		 */
 		function computeTurnFold(order, nodes, locations, turnEnds, ourNode) {
@@ -306,6 +364,9 @@ window.__ModuleLoader__.load({
 				if (n.kind === "assistant-step") finalAssistantKey = keys[j];
 				else if (n.kind === "tool-call") toolCount++;
 			}
+			// 运行中的回合没有"最终总结"：最后一条 assistant-step 只是当前流式消息，
+			// 它同样可以作为大组头锚点（回复开始即出现大组头），不豁免于组头候选。
+			if (!closed) finalAssistantKey = null;
 			// 折叠作用域 = (最后一个 user 节点, 当前 agent 回合]：
 			// DSH 会把上下文注入（source 非 user 的 user/message 事件，如批准
 			// 策略 / 权限 / skills 提醒）排到用户首条消息之前（anchorSeq 更小）。
@@ -363,24 +424,31 @@ window.__ModuleLoader__.load({
 				ourKey: ourKey,
 				outsideScope: outsideScope,
 				turnStatus: turnStatus,
-				// 只有能同时定位到"自己的 key"、"最终总结消息"和"作用域内的组头"
-				// 时才允许折叠：否则（比如 turn/end 与最终消息索引的瞬时竞态，
-				// 或回合内没有任何位于用户消息之后的中间节点）绝不能隐藏任何内容。
-				foldable: ourKey !== null && finalAssistantKey !== null && headerKey !== null,
+				// 只有能同时定位到"自己的 key"和"作用域内的组头"时才允许折叠。
+				// 运行中：finalAssistantKey 为 null（当前流式消息也是组头候选），
+				// 只要 headerKey 存在即可折叠。回合结束后额外要求 finalAssistantKey
+				// 存在，避免 turn/end 与最终消息索引的瞬时竞态导致最终消息被误隐藏。
+				foldable: ourKey !== null && headerKey !== null && (closed ? finalAssistantKey !== null : true),
 				isTurnHeader: ourKey !== null && ourKey === headerKey,
-				isFinalAssistant: ourKey !== null && ourKey === finalAssistantKey
+				isFinalAssistant: ourKey !== null && finalAssistantKey !== null && ourKey === finalAssistantKey
 			};
 		}
 
 		// ---- 回合性能指标（大组头文案） ----
-		/** 汇总本回合的耗时 / 消耗 token / tok/s / 缓存命中率。 */
-		function computeTurnMetrics(turn, nodes, locations, turnTimings) {
+		/** 汇总本回合的耗时 / 消耗 token / tok/s / 缓存命中率。
+		 *  @param {number|undefined} liveNow - 运行中回合传 Date.now() 用于实时耗时计算；
+		 *    回合结束后传 undefined，耗时从 turnTimings 的 endTime 精确计算。 */
+		function computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow) {
 			if (turn === undefined || !nodes || !locations || !turnTimings) return null;
 			var keys = locations.getTurn(turn) || [];
 			var durationMs;
 			var timing = turnTimings.get(turn);
-			if (timing && typeof timing.startTime === "number" && typeof timing.endTime === "number") {
-				durationMs = Math.max(0, timing.endTime - timing.startTime);
+			if (timing && typeof timing.startTime === "number") {
+				// 运行中：endTime 缺失时用 liveNow 补足（实时耗时）
+				var endTime = typeof timing.endTime === "number" ? timing.endTime : liveNow;
+				if (typeof endTime === "number") {
+					durationMs = Math.max(0, endTime - timing.startTime);
+				}
 			}
 			var input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
 			var tokensPerSecond;
@@ -399,13 +467,72 @@ window.__ModuleLoader__.load({
 			}
 			var billedInput = input + cacheRead + cacheWrite;
 			var hasUsage = billedInput > 0 || output > 0;
+			// 运行中（liveNow 存在）且官方 turn-tail 未给出 tok/s 时：
+			// 按"已输出 token / 已耗时"实时估算（耗时 >=1s 且已有输出才显示，避免
+			// 开场瞬间的巨大瞬时速率；回合结束后由 turn-tail 的权威值覆盖）。
+			if (tokensPerSecond === undefined && typeof liveNow === "number" && durationMs !== undefined && durationMs >= 1000 && output > 0) {
+				tokensPerSecond = output / (durationMs / 1000);
+			}
 			if (durationMs === undefined && !hasUsage && tokensPerSecond === undefined) return null;
 			return {
 				durationMs: durationMs,
 				// 消耗 = 计费输入（uncached + cacheRead + cacheWrite）+ 输出
 				tokens: hasUsage ? (billedInput + output) : undefined,
+				// 输出 token 累计：外推增长速率用它估算（输入随请求一次性跳变，不适合当速率）
+				outputTokens: hasUsage ? output : undefined,
 				tokensPerSecond: tokensPerSecond,
 				cacheHitPercent: hasUsage && billedInput > 0 ? Math.round(cacheRead / billedInput * 100) : undefined
+			};
+		}
+
+		// ---- 运行中"消耗token"的外推增长 ----
+		// 真实 usage（assistant/chunk 的 usage 块）只在每个请求完成时到达，两次到达
+		// 之间（思考/工具执行期间）数字会停住不动。为保持"实时消耗"的观感，按观测到
+		// 的生成速率持续外推增长；新 usage 到达时立即校正为真实值（可能回跳，属预期）。
+		// 速率取"输出 token 增量 / 时间间隔"（输入随请求一次性跳变，不适合当速率），
+		// 上限见 CONFIG.liveTokenRateMax；尚无观测数据时用实时 tps，再退化为
+		// CONFIG.liveTokenRate 默认速率。缓存按 sessionId+turn 记忆（跨会话不串），
+		// 跨渲染共享。
+		var liveTokenCache = new Map();
+		function projectLiveTokens(key, realTokens, outputTokens, now, tps) {
+			if (key === undefined || typeof realTokens !== "number" || typeof now !== "number") return realTokens;
+			var c = liveTokenCache.get(key);
+			if (!c) {
+				var initRate = (typeof tps === "number" && tps > 0) ? tps : CONFIG.liveTokenRate;
+				liveTokenCache.set(key, {
+					lastTokens: realTokens,
+					lastOutput: typeof outputTokens === "number" ? outputTokens : 0,
+					lastAt: now,
+					rate: initRate
+				});
+				return realTokens;
+			}
+			if (realTokens !== c.lastTokens) {
+				// 新真实数据到达：校正基线，并用输出增量重新估算速率（截断到上限）
+				var dtSec = (now - c.lastAt) / 1000;
+				if (dtSec > 1 && typeof outputTokens === "number" && outputTokens > c.lastOutput) {
+					var rate = (outputTokens - c.lastOutput) / dtSec;
+					if (rate > 0) c.rate = Math.min(rate, CONFIG.liveTokenRateMax);
+				}
+				c.lastTokens = realTokens;
+				c.lastOutput = typeof outputTokens === "number" ? outputTokens : c.lastOutput;
+				c.lastAt = now;
+				return realTokens;
+			}
+			// 无新数据：按速率外推（每秒随 tick 增长）
+			return Math.floor(c.lastTokens + c.rate * ((now - c.lastAt) / 1000));
+		}
+		/** 大组头展示指标：运行中把"消耗token"按观测速率外推增长（真实 usage 到达时校正）。 */
+		function turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow) {
+			if (!metrics || closed || typeof metrics.tokens !== "number" || typeof liveNow !== "number" || turn === undefined) return metrics;
+			var projected = projectLiveTokens(sessionId + "::" + turn, metrics.tokens, metrics.outputTokens, liveNow, metrics.tokensPerSecond);
+			if (projected === metrics.tokens) return metrics;
+			return {
+				durationMs: metrics.durationMs,
+				tokens: projected,
+				outputTokens: metrics.outputTokens,
+				tokensPerSecond: metrics.tokensPerSecond,
+				cacheHitPercent: metrics.cacheHitPercent
 			};
 		}
 		/** 耗时格式化：中英文各自的单位写法；>=1 小时 → "x时x分x秒" / "xh xm xs"。 */
@@ -539,6 +666,7 @@ window.__ModuleLoader__.load({
 		// 起始帧，浏览器强制播放关键帧动画。prefers-reduced-motion 时跳过动画。
 		function FoldClip(props) {
 			var open = props.open;
+			var live = props.live === true;
 			// 注意：官方 DisclosureRow 只在展开时渲染 children，所以本组件
 			// 首次挂载时 open 往往已是 true。初始状态必须固定为"折叠态"
 			// （不挂载、高度 0、prev=false），否则 open&&!prev 永远为 false，
@@ -555,6 +683,13 @@ window.__ModuleLoader__.load({
 			react.useEffect(function () {
 				var prev = prevOpenRef.current;
 				prevOpenRef.current = open;
+				// 直播模式（回合运行中）：内容常驻且高度自适应，不裁切不断增长的流式内容。
+				// 展开/收起动画都由常规分支处理；直播模式只在 open 时跳过测量和动画。
+				if (live && open) {
+					setMounted(true);
+					setHeight("auto");
+					return undefined;
+				}
 				if (open && !prev) {
 					// 从折叠切到展开：挂载（height:0, opacity:0），用 setTimeout(fn,0)
 					// 确保 React 18 的异步批处理先提交 mounted=true 渲染（DOM 挂载），
@@ -653,10 +788,108 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		// ---- 滚轮数字（大组头直播指标的逐位滚动动画） ----
+		// 每个数位是一个 1ch 宽、1em 高的视窗（overflow:hidden），内部竖排 0-9
+		// （flex column，每格恰好 1em）；数值变化时用 Web Animations API 从旧数位
+		// 滚到新数位（350ms + 轻微回弹缓动），呈现"滚轮/里程表"效果——耗时每秒
+		// 变化一次，token/tok/s/缓存命中随流式数据到达而变化。首次挂载从 0 滚到
+		// 当前值（计数感）；prefers-reduced-motion 或环境无 WAAPI（如 jsdom）时
+		// 直接定位、无动画。
+		function RollDigit(props) {
+			var digit = props.digit;
+			var stripRef = react.useRef(null);
+			var animRef = react.useRef(null);
+			var prevRef = react.useRef(0);
+			react.useEffect(function () {
+				var el = stripRef.current;
+				if (!el) return undefined;
+				var prev = prevRef.current;
+				prevRef.current = digit;
+				var target = "translateY(" + (-digit * 10) + "%)";
+				var reduced = false;
+				try { reduced = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+				if (reduced || prev === digit || typeof el.animate !== "function") {
+					el.style.transform = target;
+					return undefined;
+				}
+				if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
+				var anim = el.animate(
+					[
+						{ transform: "translateY(" + (-prev * 10) + "%)" },
+						{ transform: target }
+					],
+					{ duration: 350, easing: "cubic-bezier(.34,1.56,.64,1)" }
+				);
+				animRef.current = anim;
+				anim.onfinish = function () { animRef.current = null; };
+				return function () {
+					if (animRef.current) { try { animRef.current.cancel(); } catch (e) {} animRef.current = null; }
+				};
+			}, [digit]);
+			var kids = [];
+			for (var d = 0; d < 10; d++) {
+				kids.push(react.createElement("span", { key: d, className: "ccg-roll-d" }, String(d)));
+			}
+			return react.createElement(
+				"div",
+				{ className: "ccg-roll-cell", "data-digit": String(digit) },
+				react.createElement(
+					"div",
+					{
+						ref: stripRef,
+						className: "ccg-roll-strip",
+						style: { transform: "translateY(" + (-digit * 10) + "%)" }
+					},
+					kids
+				)
+			);
+		}
+
+		// ---- 直播指标文案：数字部分渲染成逐位滚轮，其余文字原样 ----
+		// 文本段与数字段分别计数做稳定 key：某段指标（如缓存命中）中途出现时，
+		// 只让新数字挂载滚动，已显示的数值不重滚。
+		function AnimatedLabel(props) {
+			var label = props.label;
+			var kids = [];
+			var re = /(\d+(?:\.\d+)?)/g;
+			var last = 0;
+			var m;
+			var textIdx = 0;
+			var numIdx = 0;
+			while ((m = re.exec(label)) !== null) {
+				if (m.index > last) {
+					kids.push(react.createElement("span", { key: "t" + textIdx++, className: "ccg-roll-text" }, label.slice(last, m.index)));
+				}
+				var digits = [];
+				for (var i = 0; i < m[1].length; i++) {
+					var ch = m[1].charAt(i);
+					if (ch >= "0" && ch <= "9") {
+						digits.push(react.createElement(RollDigit, { key: "d" + i, digit: Number(ch) }));
+					} else {
+						digits.push(react.createElement("span", { key: "d" + i, className: "ccg-roll-text" }, ch));
+					}
+				}
+				kids.push(react.createElement("span", { key: "n" + numIdx++, className: "ccg-roll-num", "aria-hidden": "true" }, digits));
+				last = re.lastIndex;
+			}
+			if (last < label.length) {
+				kids.push(react.createElement("span", { key: "t" + textIdx++, className: "ccg-roll-text" }, label.slice(last)));
+			}
+			// 滚动窗口（0-9 数字条）只是视觉装饰：数字段 aria-hidden；
+			// 完整最终文案放在 sr-only 文本里，读屏/断言拿到的是最终值。
+			return react.createElement(
+				"span",
+				{ className: "ccg-roll-label" },
+				react.createElement("span", { className: "ccg-sr-only" }, label),
+				kids
+			);
+		}
+
 		// ---- 组头组件 ----
 		// 优先用官方 DisclosureRow（24px 行高、16px 前导、14px 官方 chevron、14px/24px 标题），
 		// 与 Think / 工具卡片的折叠行样式一致；平台原语缺失时回退到自带兜底行。
 		// 无障碍：两种路径都带 aria-label / aria-expanded，键盘可操作。
+		// live：运行中的大组头——标题里的数字用滚轮动画逐位滚动；回合结束后纯文本。
 		function GroupHeader(props) {
 			var count = props.count;
 			var open = props.open;
@@ -667,6 +900,10 @@ window.__ModuleLoader__.load({
 			var danger = props.danger === true;
 			// isTurn：大组头（整回合折叠）用回合语义的无障碍标签。
 			var isTurn = props.isTurn === true;
+			// live：运行中的大组头数值实时变化，用滚轮动画渲染（DisclosureRow 的
+			// title 直接作为 children 渲染，传 React 元素即可）。
+			var live = props.live === true;
+			var titleContent = live ? react.createElement(AnimatedLabel, { label: label }) : label;
 			var titleClass = "ccg-header-title" + (danger ? " ccg-header-danger" : "");
 			var ariaLabel = isTurn
 				? (open ? _T("ariaTurnExpanded") : _T("ariaTurn"))
@@ -685,7 +922,7 @@ window.__ModuleLoader__.load({
 						chevronClassName: "ccg-header-chevron",
 						// 收起：官方右向 chevron（14px）；展开：DisclosureRow 内建的下向 chevron（14px）
 						icon: react.createElement(IconChevronRightOutline14, { size: 14 }),
-						title: label,
+						title: titleContent,
 						open: open,
 						expandable: true,
 						expandOnRowClick: true,
@@ -710,7 +947,7 @@ window.__ModuleLoader__.load({
 					}
 				},
 				react.createElement("span", { className: "ccg-chevron" }, "›"),
-				react.createElement("span", { className: "ccg-title" + (danger ? " ccg-header-danger" : "") }, label)
+				react.createElement("span", { className: "ccg-title" + (danger ? " ccg-header-danger" : "") }, titleContent)
 			);
 		}
 
@@ -755,8 +992,15 @@ window.__ModuleLoader__.load({
 			var leaderKey = group ? group.leaderKey : "";
 			var manual = useGroupOverride(sessionId, leaderKey);
 			var turn = fold ? fold.turn : undefined;
-			var turnExpanded = useTurnExpanded(sessionId, turn);
-			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings); }, [turn, nodes, locations, turnTimings]);
+			var turnOverride = useTurnOverride(sessionId, turn);
+			// 运行中：大组头默认展开（回复逐条加载、指标实时刷新）；回合结束后默认收起。
+			// 只有大组头节点需要实时秒表（成员不渲染组头）。
+			var closed = fold ? fold.closed : true;
+			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
+			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
+			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
+			// 运行中展示指标：消耗token 在无新 usage 时按观测速率外推增长，真实值到达时校正
+			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
 
 			// 兜底：找不到自己的节点时，原样委托内置渲染（补齐 renderSlot），绝不白屏。
 			if (!group) return renderBuiltinToolCall(props);
@@ -764,30 +1008,33 @@ window.__ModuleLoader__.load({
 			// 有效展开状态 = 手动选择优先；否则跟随自动规则。
 			var open = manual === null ? !group.autoCollapsed : manual;
 
-			// 回合已结束 → 整回合折叠成一个大组头（段级组头不再各自显示）。
+			// 整回合折叠成一个大组头（段级组头不再各自显示）：回合进行中同样成立——
+			// 大组头在 agent 回复开始就出现（默认展开），组头实时显示耗时/token 指标。
 			// 折叠作用域之外（用户消息上方）的节点不参与整回合折叠。
 			// 判定只看"是否存在可折叠的中间节点"（foldable），不要求本回合必须有
 			// 工具调用：仅上下文注入/思考的纯问答回合同样收成一个大组头。
-			if (fold && fold.closed && fold.foldable && !fold.outsideScope) {
+			if (fold && fold.foldable && !fold.outsideScope) {
+				var turnOpen = turnOverride === null ? !closed : turnOverride;
 				if (!fold.isTurnHeader) {
-					// 成员：折叠时隐藏；展开大组头后显示自己的段级内容。
-					return turnExpanded ? renderSegment(props, group, open, sessionId) : hiddenMarker();
+					// 成员：大组头展开时显示自己的段级内容；收起时隐藏（整行 display:none）。
+					return turnOpen ? renderSegment(props, group, open, sessionId) : hiddenMarker();
 				}
 				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签，无数据则退回
-				// "运行了 N 条命令"）；展开时其下接自己的段级内容。
+				// "运行了 N 条命令"）；组头下方常驻分隔线（收起/展开都显示），其下接自己的段级内容。
 				var toggleTurn = function () {
-					setTurnOpen(sessionId, fold.turn, !turnExpanded);
+					setTurnOpen(sessionId, fold.turn, !turnOpen);
 				};
-				var baseLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var baseLabel = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 				var turnLabel = turnLabelWithStatus(baseLabel, fold.turnStatus);
 				return react.createElement(
 					"div",
-					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
+					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
 					react.createElement(
 						GroupHeader,
-						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true }
+						{ label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed }
 					),
-					react.createElement(FoldClip, { open: turnExpanded }, renderSegment(props, group, open, sessionId))
+					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
+					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderSegment(props, group, open, sessionId))
 				);
 			}
 
@@ -796,8 +1043,8 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 助手节点（Think / 最终消息）：整回合折叠支持 ----
-		// 回合结束后，除最终总结消息外的所有 assistant-step（即 Think 行）都收进大组头；
-		// 运行中 / 未折叠时原样委托内置渲染，行为与官方完全一致。
+		// 回合进行中：大组头在回复开始就出现，默认展开，内容原样流式加载；
+		// 回合结束后，除最终总结消息外的所有 assistant-step（即 Think 行）都收进大组头。
 		function GroupedAssistantView(props) {
 			var node = props.node;
 			var useSession = props.useSession;
@@ -809,17 +1056,23 @@ window.__ModuleLoader__.load({
 			var turnTimings = useSession(function (s) { return s.turnTimings; });
 			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node); }, [order, nodes, locations, turnEnds, node]);
 			var turn = fold ? fold.turn : undefined;
-			var turnExpanded = useTurnExpanded(sessionId, turn);
-			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings); }, [turn, nodes, locations, turnTimings]);
+			var turnOverride = useTurnOverride(sessionId, turn);
+			var closed = fold ? fold.closed : true;
+			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
+			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
+			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
+			// 运行中展示指标：消耗token 在无新 usage 时按观测速率外推增长，真实值到达时校正
+			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
 
-			// 未到回合结束 / 无法安全定位最终消息或组头（回合内无任何中间节点）/
-			// 节点在折叠作用域之外（用户消息上方）：原样委托内置渲染。
-			// 不要求本回合必须有工具调用——仅上下文注入/思考的回合同样折叠。
-			if (!fold || !fold.closed || !fold.foldable || fold.outsideScope) {
+			// 无法安全定位组头（回合内无任何中间节点）/ 节点在折叠作用域之外（用户消息上方）：
+			// 原样委托内置渲染。不要求本回合必须有工具调用——仅上下文注入/思考的回合同样折叠。
+			if (!fold || !fold.foldable || fold.outsideScope) {
 				return renderBuiltinAssistant(props);
 			}
+			var turnOpen = turnOverride === null ? !closed : turnOverride;
 			if (fold.isFinalAssistant) {
-				// 最终总结消息保持可见，但回合结束后隐藏其内部的 Think 行（"只显示最终结果"）。
+				// 最终总结消息保持可见；回合结束后隐藏其内部的 Think 行（"只显示最终结果"）。
+				// 运行中（isFinalAssistant 恒为 false）不会走到这里，流式 Think 保持内置行为。
 				return react.createElement(
 					"div",
 					{ "data-ccg-turn-folded": "true", style: { display: "contents" } },
@@ -827,23 +1080,25 @@ window.__ModuleLoader__.load({
 				);
 			}
 			if (!fold.isTurnHeader) {
-				// 中间 Think 节点：折叠时隐藏；展开大组头后显示自己的 Think 行。
-				return turnExpanded ? renderBuiltinAssistant(props) : hiddenMarker();
+				// 中间 Think 节点：大组头展开时显示自己的 Think 行；收起时隐藏。
+				return turnOpen ? renderBuiltinAssistant(props) : hiddenMarker();
 			}
-			// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；展开时其下接自己的内容（Think 行）。
+			// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；组头下方常驻
+			// 分隔线（收起/展开都显示），其下接自己的内容（Think 行）。
 			var toggleTurn = function () {
-				setTurnOpen(sessionId, fold.turn, !turnExpanded);
+				setTurnOpen(sessionId, fold.turn, !turnOpen);
 			};
-			var baseLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
-			var turnLabel = turnLabelWithStatus(baseLabel, fold.turnStatus);
+			var baseLabel = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+			var turnLabel = closed ? turnLabelWithStatus(baseLabel, fold.turnStatus) : baseLabel;
 			return react.createElement(
 				"div",
-				{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
+				{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
 				react.createElement(
 					GroupHeader,
-					{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true }
+					{ label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed }
 				),
-				react.createElement(FoldClip, { open: turnExpanded }, renderBuiltinAssistant(props))
+				react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
+				react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinAssistant(props))
 			);
 		}
 
@@ -860,33 +1115,41 @@ window.__ModuleLoader__.load({
 			var turnTimings = useSession(function (s) { return s.turnTimings; });
 			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node); }, [order, nodes, locations, turnEnds, node]);
 			var turn = fold ? fold.turn : undefined;
-			var turnExpanded = useTurnExpanded(sessionId, turn);
-			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings); }, [turn, nodes, locations, turnTimings]);
+			var turnOverride = useTurnOverride(sessionId, turn);
+			var closed = fold ? fold.closed : true;
+			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
+			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
+			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
+			// 运行中展示指标：消耗token 在无新 usage 时按观测速率外推增长，真实值到达时校正
+			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
 
-			// 未折叠：原样渲染；折叠时作为成员隐藏，展开大组头后恢复。
-			// 折叠作用域之外（用户消息上方）的上下文行不参与折叠，始终原样渲染。
-			// 不要求本回合必须有工具调用——仅上下文注入/思考的回合同样折叠。
-			if (!fold || !fold.closed || !fold.foldable || fold.outsideScope) {
+			// 无法安全定位组头（回合内无任何中间节点）/ 折叠作用域之外（用户消息上方）的
+			// 上下文行不参与折叠，始终原样渲染。不要求本回合必须有工具调用——仅上下文
+			// 注入/思考的回合同样折叠。
+			if (!fold || !fold.foldable || fold.outsideScope) {
 				return renderBuiltinContext(props);
 			}
+			var turnOpen = turnOverride === null ? !closed : turnOverride;
 			if (fold.isTurnHeader) {
-				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；展开时其下接自己的内容（上下文注入行）。
+				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；组头下方常驻
+				// 分隔线（收起/展开都显示），其下接自己的内容（上下文注入行）。
 				var toggleTurn = function () {
-					setTurnOpen(sessionId, fold.turn, !turnExpanded);
+					setTurnOpen(sessionId, fold.turn, !turnOpen);
 				};
-				var baseLabel = turnHeaderLabel(metrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var baseLabel = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 				var turnLabel = turnLabelWithStatus(baseLabel, fold.turnStatus);
 				return react.createElement(
 					"div",
-					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnExpanded ? "true" : undefined, "data-ccg-turn": "true" },
+					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
 					react.createElement(
 						GroupHeader,
-						{ label: turnLabel, count: fold.toolCount, open: turnExpanded, onToggle: toggleTurn, isTurn: true }
+						{ label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed }
 					),
-					react.createElement(FoldClip, { open: turnExpanded }, renderBuiltinContext(props))
+					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
+					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinContext(props))
 				);
 			}
-			return turnExpanded ? renderBuiltinContext(props) : hiddenMarker();
+			return turnOpen ? renderBuiltinContext(props) : hiddenMarker();
 		}
 
 		// ---- Cordis 插件入口 ----
