@@ -13,7 +13,8 @@
     "node": ">=20.3"
   },
   "scripts": {
-    "check": "node verify-fix.mjs"
+    "check": "node --check client.js && node --check index.js",
+    "test": "node --test --test-isolation=none \"tests/*.test.mjs\""
   },
   "keywords": [
     "deepseek-harness",
@@ -45,5 +46,10 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./package.json": "./package.json"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }
