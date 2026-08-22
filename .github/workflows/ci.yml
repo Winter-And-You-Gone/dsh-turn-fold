@@ -17,8 +17,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+      - run: npm install --no-audit --no-fund
       - run: node --check index.js
       - run: node --check client.js
-      - run: node --check verify-fix.mjs
-      - run: node verify-fix.mjs
+      - run: npm run check
+      - run: npm test
       - run: npm pack --dry-run
