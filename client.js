@@ -666,22 +666,15 @@ window.__ModuleLoader__.load({
 			}
 			var input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
 			var tokensPerSecond;
-			var ttftMs;
 			for (var i = 0; i < keys.length; i++) {
 				var n = nodes.get(keys[i]);
 				if (!n) continue;
-				if (n.kind === "assistant-step") {
-					// TTFT（首字延迟）：取本回合第一个有 timing 的 assistant-step
-					if (ttftMs === undefined && n.timing && typeof n.timing.stepStartTime === "number" && typeof n.timing.firstTokenTime === "number") {
-						ttftMs = Math.max(0, n.timing.firstTokenTime - n.timing.stepStartTime);
-					}
-					if (n.data && n.data.usage) {
-						var u = n.data.usage;
-						if (typeof u.inputTokens === "number" && isFinite(u.inputTokens)) input += u.inputTokens;
-						if (typeof u.outputTokens === "number" && isFinite(u.outputTokens)) output += u.outputTokens;
-						if (typeof u.cacheReadTokens === "number" && isFinite(u.cacheReadTokens)) cacheRead += u.cacheReadTokens;
-						if (typeof u.cacheWriteTokens === "number" && isFinite(u.cacheWriteTokens)) cacheWrite += u.cacheWriteTokens;
-					}
+				if (n.kind === "assistant-step" && n.data && n.data.usage) {
+					var u = n.data.usage;
+					if (typeof u.inputTokens === "number" && isFinite(u.inputTokens)) input += u.inputTokens;
+					if (typeof u.outputTokens === "number" && isFinite(u.outputTokens)) output += u.outputTokens;
+					if (typeof u.cacheReadTokens === "number" && isFinite(u.cacheReadTokens)) cacheRead += u.cacheReadTokens;
+					if (typeof u.cacheWriteTokens === "number" && isFinite(u.cacheWriteTokens)) cacheWrite += u.cacheWriteTokens;
 				} else if (n.kind === "turn-tail" && n.data && typeof n.data.tokensPerSecond === "number") {
 					tokensPerSecond = n.data.tokensPerSecond;
 				}
@@ -695,7 +688,7 @@ window.__ModuleLoader__.load({
 				tokensPerSecond = output / (durationMs / 1000);
 			}
 			if (durationMs === undefined && !hasUsage && tokensPerSecond === undefined) return null;
-			var metrics = {
+			return {
 				durationMs: durationMs,
 				// 消耗 = 计费输入（uncached + cacheRead + cacheWrite）+ 输出
 				tokens: hasUsage ? (billedInput + output) : undefined,
@@ -705,9 +698,6 @@ window.__ModuleLoader__.load({
 				// 缓存命中率：固定两位小数（如 "66.67"、"99.99"）
 				cacheHitPercent: hasUsage && billedInput > 0 ? cacheHitPercent(input, cacheRead, cacheWrite) : undefined
 			};
-			// TTFT（首字延迟，毫秒）：官方同口径 firstTokenTime - stepStartTime；无 timing 时不带键
-			if (ttftMs !== undefined) metrics.ttftMs = ttftMs;
-			return metrics;
 		}
 
 		// ---- 运行中"消耗token"的持续增长动画 ----
@@ -794,11 +784,6 @@ window.__ModuleLoader__.load({
 			if (metrics.durationMs !== undefined) {
 				if (LOCALE === "zh") parts.push("耗时" + formatTurnDuration(metrics.durationMs));
 				else parts.push(formatTurnDuration(metrics.durationMs));
-			}
-			if (metrics.ttftMs !== undefined) {
-				// 首字（TTFT）延迟，毫秒整数（官方同口径：firstTokenTime - stepStartTime）
-				if (LOCALE === "zh") parts.push("首字" + metrics.ttftMs + "ms");
-				else parts.push("TTFT " + metrics.ttftMs + "ms");
 			}
 			if (metrics.tokens !== undefined) {
 				if (LOCALE === "zh") parts.push("消耗" + metrics.tokens + "token");
