@@ -241,10 +241,10 @@ window.__ModuleLoader__.load({
 				/* 运行中段组头标题：整行统一 shimmer 高光（官方 TurnStatus "Deep diving..."
 				   同款）——渐变挂在父容器上，整行一个渐变背景 + background-clip:text +
 				   背景位移动画，光泽扫过整个标题。
-				   颜色方案：灰色基调 + 纯白高光（灰→白对比比灰→亮灰明显，动效可见但
-				   观感仍是灰色系）；高光区域加宽（35%~65%）让流动更明显。
+				   颜色方案：基线用 Codex 同款深灰 rgb(104,104,104) + 纯白高光
+				   （对比更明显，动效可见且观感仍是灰色系）；高光区域加宽（35%~65%）。
 				   图标 span 单独恢复颜色（background-clip:text 会把 currentColor 变透明）。 */
-				".ccg-think-title-live{color:transparent;-webkit-text-fill-color:transparent;background:linear-gradient(90deg,var(--dsw-alias-label-secondary,#9ca3af) 0%,var(--dsw-alias-label-secondary,#9ca3af) 35%,#ffffff 50%,var(--dsw-alias-label-secondary,#9ca3af) 65%,var(--dsw-alias-label-secondary,#9ca3af) 100%);background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:1.8s linear infinite ccg-turn-status-shimmer}",
+				".ccg-think-title-live{color:transparent;-webkit-text-fill-color:transparent;background:linear-gradient(90deg,rgb(104,104,104) 0%,rgb(104,104,104) 35%,#ffffff 50%,rgb(104,104,104) 65%,rgb(104,104,104) 100%);background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:1.8s linear infinite ccg-turn-status-shimmer}",
 				".ccg-think-title-live .ccg-think-icon{color:var(--dsw-alias-label-secondary,#9ca3af);-webkit-text-fill-color:var(--dsw-alias-label-secondary,#9ca3af)}",
 				"@keyframes ccg-turn-status-shimmer{to{background-position:0 0}}",
 				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live{background-position:0 0;background-size:100% 100%;animation:none}}",
