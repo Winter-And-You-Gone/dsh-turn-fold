@@ -308,10 +308,13 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     const tcHeader = segHeaders.find(h => h.textContent.includes('运行了 1 条命令'))
     assert.ok(tcHeader, 'tc-run 段组头应存在')
     assert.equal(counts().cards, 0, '默认折叠，工具卡片隐藏')
+    // textBody 始终渲染（段内不含 text 正文，不重复）
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 2, 'as-run-1/2 的 text 正文始终段外渲染')
     act(() => { tcHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     assert.equal(counts().cards, 1, '展开段级折叠后工具卡片可见')
-    // 段展开后段外 text 正文不再渲染（段内官方渲染提供 text 正文，避免重复）
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, 'tc-run 段展开后其段外 text 卸载（as-run-1 段仍折叠）')
+    // 段展开后，段内显示自研 think 完整内容（ccg-think-full），不含 text 正文
+    // textBody 仍存在（与段内 think 不重复）
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 2, '展开后 text 正文仍在段外，不重复')
     act(() => { tcHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     assert.equal(counts().cards, 0, '再点收起后工具卡片隐藏')
   })
@@ -392,6 +395,26 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     const segTitleEl = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header .ccg-title')
     assert.ok(segTitleEl, '段组头标题应存在')
     assert.equal(segTitleEl.textContent.trim(), '思考', '纯 think 段闭合后标题 = 思考（不再是"正在思考 · …"）')
+  })
+
+  it('含 think+text 节点：展开段组头显示 think 完整内容，text 正文段外唯一一份', () => {
+    const thinkTextNode = (key, seq, think, text) => asNode(key, seq, {
+      blocks: [{ kind: 'reasoning', text: think }, { kind: 'text', text }],
+    })
+    const nodes = [userNode('u', 100), thinkTextNode('msg', 200, '第一行思考\n完整思考内容', '这是正文')]
+    mount(buildSnapshot(nodes, { turnEnds: new Map() }))
+    // 段收起：段组头行 + 段外 text 正文（唯一一份）
+    const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
+    assert.ok(segHeader, '段组头应存在')
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, 'text 正文段外唯一一份')
+    assert.equal(container.querySelectorAll('.ccg-think-full').length, 0, '段收起时 think 完整内容不渲染')
+    // 展开段组头：think 完整内容显示，text 正文仍唯一一份（不重复）
+    act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    const thinkFull = container.querySelector('.ccg-think-full')
+    assert.ok(thinkFull, '展开后显示 think 完整内容')
+    assert.ok(thinkFull.textContent.includes('完整思考内容'), 'think 完整内容来自 reasoningText')
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, '展开后 text 正文仍唯一一份，不重复')
+    assert.equal(container.querySelectorAll('.ccg-think-full').length, 1, 'think 完整内容唯一一份')
   })
 
   it('混合段（think + 工具）：段组头标题使用自研 ThinkSummary（带 data-follow-end）', () => {

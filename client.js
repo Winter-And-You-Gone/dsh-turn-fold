@@ -197,7 +197,10 @@ window.__ModuleLoader__.load({
 				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live::after{animation:none}}",
 				/* 含 think+text 节点拆分渲染：段外 text 正文的官方 think 行隐藏
 				   （段外只显示 text 正文，段内展开时官方渲染含完整 think 行） */
-				".ccg-text-only [data-variant=\"think\"]{display:none}"
+				".ccg-text-only [data-variant=\"think\"]{display:none}",
+				/* 段内完整 think 内容（含 think+text 节点拆分渲染时使用）：
+				   参照官方 ReasoningRow 的 thinkBody 样式 */
+				".ccg-think-full{color:var(--dsw-alias-label-tertiary,#9ca3af);white-space:pre-wrap;word-break:break-word;padding:4px 0 4px 22px;font-size:14px;line-height:24px}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
@@ -1276,13 +1279,16 @@ window.__ModuleLoader__.load({
 				);
 			}
 			// think 节点（含 think+text 同一节点）：think 部分收进段级折叠，text 正文在
-			// 段外单独渲染（CSS 隐藏官方 think 行）保持始终可见；段内内容（工具卡片/
-			// think 完整内容）默认折叠，展开时官方整体渲染。
+			// 段外单独渲染（CSS 隐藏官方 think 行）保持始终可见且只渲染一份——段内
+			// 展开时只显示 think 完整内容（自研文本），不含 text 正文，避免两份 text。
 			if (isThinkNode(node) && segGroup) {
-				var segContent = renderBuiltinAssistant(props);
-				// 段外 text 正文：仅在段收起时渲染（段展开时由段内官方渲染提供 text 正文，
-				// 避免重复）。官方整体渲染 + CSS 隐藏 think 行。
-				var textBody = hasText(node) && !segOpen
+				// 段内内容：含 text 节点用自研完整 think 文本（不含 text 正文，防止重复）；
+				// 纯 think 节点用官方渲染（官方 think 行）。
+				var segContent = hasText(node)
+					? react.createElement("div", { className: "ccg-think-full" }, reasoningText(node))
+					: renderBuiltinAssistant(props);
+				// 段外 text 正文：始终渲染（官方整体渲染 + CSS 隐藏 think 行）
+				var textBody = hasText(node)
 					? react.createElement("div", { className: "ccg-text-only" }, renderBuiltinAssistant(props))
 					: null;
 				if (fold.isTurnHeader) {
