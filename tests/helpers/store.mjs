@@ -40,15 +40,17 @@ export function toolNode(key, anchorSeq, { isError = false, running = false, ste
   return makeNode(key, 'tool-call', anchorSeq, { data: { root }, step })
 }
 
-/** assistant-step 节点（含 reasoning 块；可选 usage） */
-export function asNode(key, anchorSeq, { blocks = null, usage = null, step = 1, status = 'settled' } = {}) {
+/** assistant-step 节点（含 reasoning 块；可选 usage / timing） */
+export function asNode(key, anchorSeq, { blocks = null, usage = null, step = 1, status = 'settled', timing = null } = {}) {
   const b = blocks ?? [
     { kind: 'reasoning', text: '思考过程' },
     { kind: 'text', text: '正文' },
   ]
   const data = { status, turn: 13, step, blocks: b }
   if (usage) data.usage = usage
-  return makeNode(key, 'assistant-step', anchorSeq, { data, step })
+  const node = makeNode(key, 'assistant-step', anchorSeq, { data, step })
+  if (timing) node.timing = timing
+  return node
 }
 
 /** user 节点 */

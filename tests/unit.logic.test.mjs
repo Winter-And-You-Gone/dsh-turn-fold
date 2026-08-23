@@ -733,6 +733,38 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     assert.equal(T.turnHeaderLabel(m), '耗时0秒，消耗10token，缓存命中0.00%')
   })
 
+  it('TTFT（首字延迟）：取本回合第一个有 timing 的 assistant-step 的 firstTokenTime - stepStartTime', () => {
+    const nodes = [
+      userNode('u-ttft', 100),
+      // 第一个有 timing 的节点：TTFT = 104200 - 103000 = 1200ms
+      asNode('as-t1', 200, { timing: { stepStartTime: 103000, firstTokenTime: 104200, completedTime: 105000 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0 } }),
+      // 第二个节点也有 timing，但 TTFT 只取第一个
+      asNode('as-t2', 300, { timing: { stepStartTime: 104000, firstTokenTime: 104500, completedTime: 105500 }, usage: { inputTokens: 20, outputTokens: 10, cacheReadTokens: 0 } }),
+    ]
+    const s = buildSnapshot(nodes, {
+      turnEnds: new Map([[13, 600]]),
+      turnTimings: new Map([[13, { startTime: 102000, endTime: 106000 }]]),
+    })
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
+    assert.equal(m.ttftMs, 1200, 'TTFT = 第一个节点 firstTokenTime - stepStartTime')
+    // 文案顺序：耗时 → 首字 → 消耗 token → 缓存命中
+    assert.equal(T.turnHeaderLabel(m), '耗时4秒，首字1200ms，消耗45token，缓存命中0.00%')
+  })
+
+  it('无 timing 数据：不显示首字字段', () => {
+    const nodes = [
+      userNode('u-notiming', 100),
+      asNode('as-nt', 200, { usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0 } }),
+    ]
+    const s = buildSnapshot(nodes, {
+      turnEnds: new Map([[13, 400]]),
+      turnTimings: new Map([[13, { startTime: 100000, endTime: 103000 }]]),
+    })
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
+    assert.equal(m.ttftMs, undefined)
+    assert.equal(T.turnHeaderLabel(m), '耗时3秒，消耗15token，缓存命中0.00%')
+  })
+
   it('缺耗时但有 token → 文案省略耗时项', () => {
     assert.equal(T.turnHeaderLabel({ tokens: 100 }), '消耗100token')
   })
