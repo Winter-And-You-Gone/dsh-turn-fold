@@ -21,6 +21,7 @@ const TEST_EXPORTS = [
   'turnHeaderLabel',
   'segmentLabel',
   'summarizeArgs',
+  'cacheHitPercent',
   'formatTurnDuration',
   'formatTokPerSec',
   'turnNumber',

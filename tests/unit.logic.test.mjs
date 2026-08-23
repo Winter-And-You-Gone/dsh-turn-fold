@@ -698,11 +698,11 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     })
     const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 105000)
     // 耗时 = 105000 - 100000 = 5000ms；token = (100+30) + (200+60) + (50+10) = 450
-    // tok/s = 60 / 5 = 12；缓存命中 = round(260 / 390 * 100) = 67
+    // tok/s = 60 / 5 = 12；缓存命中 = 官方精度算法（260/390 → 67%，字符串）
     assert.equal(m.durationMs, 5000)
     assert.equal(m.tokens, 450)
     assert.equal(m.tokensPerSecond, 12)
-    assert.equal(m.cacheHitPercent, 67)
+    assert.equal(m.cacheHitPercent, '67')
     assert.equal(T.turnHeaderLabel(m), '耗时5秒，消耗450token，12tok/s，缓存命中67%')
   })
 
@@ -735,6 +735,19 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
 
   it('缺耗时但有 token → 文案省略耗时项', () => {
     assert.equal(T.turnHeaderLabel({ tokens: 100 }), '消耗100token')
+  })
+
+  it('缓存命中精度（官方算法）：<100% 返回整数；接近 100% 自动提高小数位', () => {
+    // 完全命中（无未命中输入）：返回 "100"
+    assert.equal(T.cacheHitPercent(0, 500, 0), '100')
+    // 普通命中：整数
+    assert.equal(T.cacheHitPercent(130, 260, 0), '67')
+    // 未命中部分很小（四舍五入整数=100）→ 提高小数位：99.9 级
+    const nearlyFull = T.cacheHitPercent(1, 9990, 0)
+    assert.match(nearlyFull, /^99\.\d+$/, `接近 100% 应带小数位，实际 ${nearlyFull}`)
+    assert.notEqual(nearlyFull, '100', '未完全命中不得显示 100')
+    // 无计费输入：null
+    assert.equal(T.cacheHitPercent(0, 0, 0), null)
   })
 
   it('formatTurnDuration：秒 / 分秒 / 时分秒', () => {
