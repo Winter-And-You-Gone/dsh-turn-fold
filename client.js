@@ -80,9 +80,9 @@ window.__ModuleLoader__.load({
 				ariaGroupExpanded: "折叠本组",
 				ariaTurn: "展开回合",
 				ariaTurnExpanded: "折叠回合",
-				// 段级折叠运行中标题：当前正在执行的工具 / 思考内容
+				// 段级折叠运行中标题：当前正在执行的工具 / 思考内容（间隔由 CSS margin 控制）
 				runningTool: "正在运行",
-				runningThink: "正在思考：",
+				runningThink: "正在思考",
 				// 纯 think 段（无工具调用）闭合后的标题
 				thinkOnly: "思考"
 			},
@@ -98,7 +98,7 @@ window.__ModuleLoader__.load({
 				ariaTurn: "Expand turn",
 				ariaTurnExpanded: "Collapse turn",
 				runningTool: "Running ",
-				runningThink: "Thinking: ",
+				runningThink: "Thinking ",
 				thinkOnly: "Think"
 			}
 		};
@@ -205,9 +205,10 @@ window.__ModuleLoader__.load({
 				   （官方 ReasoningRow 同款 data-follow-end），并带高光扫过动画 */
 				".ccg-think-title{display:inline-flex;align-items:center;min-width:0;max-width:100%}",
 				".ccg-think-prefix{flex:none}",
-				".ccg-think-icon{flex:none;display:inline-flex;align-items:center}",
+				/* 图标与 · 前后统一 4px 间隔：前缀 图标 名称 · 摘要 */
+				".ccg-think-icon{flex:none;display:inline-flex;align-items:center;margin:0 4px}",
 				".ccg-think-name{flex:none;color:var(--dsw-alias-label-primary,#f3f4f6);font-weight:400}",
-				".ccg-think-sep{flex:none;color:var(--dsw-alias-label-tertiary,#9ca3af)}",
+				".ccg-think-sep{flex:none;color:var(--dsw-alias-label-tertiary,#9ca3af);margin:0 4px}",
 				".ccg-think-summary{display:inline-block;min-width:0;max-width:100%;vertical-align:bottom;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 				".ccg-think-summary[data-follow-end]{text-overflow:clip}",
 				".ccg-think-title-live{position:relative}",

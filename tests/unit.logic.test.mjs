@@ -201,7 +201,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
     // 多行 think：运行中摘要取最新一行（官方 ReasoningRow 同款 latestLine）
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在思考：正在分析仓库结构')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在思考正在分析仓库结构')
     // think 内容只有一行时完整显示（溢出交给 CSS ellipsis / 横向滚动跟随）
     const nodes2 = [
       userNode('u', 100),
@@ -209,7 +209,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     const s2 = buildSnapshot(nodes2, { turnEnds: new Map() })
     const g2 = T.computeGroup(s2.chat.order, s2.chat.nodes, s2.chat.nodes.get('th2'))
-    assert.equal(T.segmentLabel(g2, s2.chat.nodes), '正在思考：' + '长'.repeat(80))
+    assert.equal(T.segmentLabel(g2, s2.chat.nodes), '正在思考' + '长'.repeat(80))
   })
 
   it('段闭合（出现下一个 text）：标题 = 运行了 N 条命令（think 不算命令数）', () => {

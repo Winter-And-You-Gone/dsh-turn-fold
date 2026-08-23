@@ -410,7 +410,7 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
       return segHeaders.find(t => t.textContent.includes('正在思考'))
     }
     assert.ok(segTitle(), '混合段应有段组头')
-    assert.ok(segTitle().textContent.includes('正在思考：'), '前缀"正在思考："')
+    assert.ok(segTitle().textContent.includes('正在思考'), '前缀"正在思考"')
     assert.ok(segTitle().textContent.includes('正在验证结果'), '最后一行作为标题摘要')
     // think 摘要元素（自研 ThinkSummary）
     const summary = container.querySelector('.ccg-think-summary')
