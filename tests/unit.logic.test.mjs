@@ -349,6 +349,16 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e2'))
     assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了a.js +2', '从 newStr/oldStr 行数差计算（仅新增）')
+    // str-replace-editor 用 snake_case：old_str / new_str
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('e3', 300, 'str-replace-editor', 'C:\\proj\\b.js', { file_path: 'C:\\proj\\b.js', old_str: 'a\nb\nc', new_str: 'a\nb' }),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e3'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js —1', 'snake_case old_str/new_str 行数差计算（仅删除）')
     // 多个文件编辑：只显示数量+份，不附加行数
     nodes = [
       userNode('u', 100),

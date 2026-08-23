@@ -1178,12 +1178,16 @@ window.__ModuleLoader__.load({
 			if (typeof raw.deletions === "number") removed = raw.deletions;
 			else if (typeof raw.removed === "number") removed = raw.removed;
 			else if (typeof raw["-"] === "number") removed = raw["-"];
-			// 从 newStr/oldStr 行数差计算（edit/write 工具常用）
-			if (added === 0 && removed === 0 && typeof raw.newStr === "string") {
-				var newLines = raw.newStr.split("\n").length;
-				var oldLines = typeof raw.oldStr === "string" ? raw.oldStr.split("\n").length : 0;
-				if (newLines > oldLines) added = newLines - oldLines;
-				if (oldLines > newLines) removed = oldLines - newLines;
+			// 从 newStr/oldStr 行数差计算（edit/write 工具常用，兼容 snake_case：str-replace-editor 用 old_str/new_str）
+			if (added === 0 && removed === 0) {
+				var newContent = typeof raw.newStr === "string" ? raw.newStr : (typeof raw.new_str === "string" ? raw.new_str : null);
+				var oldContent = typeof raw.oldStr === "string" ? raw.oldStr : (typeof raw.old_str === "string" ? raw.old_str : null);
+				if (newContent !== null) {
+					var newLines = newContent.split("\n").length;
+					var oldLines = oldContent !== null ? oldContent.split("\n").length : 0;
+					if (newLines > oldLines) added = newLines - oldLines;
+					if (oldLines > newLines) removed = oldLines - newLines;
+				}
 			}
 			if (added === 0 && removed === 0) return null;
 			var parts = [];
