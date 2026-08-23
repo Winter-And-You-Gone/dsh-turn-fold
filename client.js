@@ -399,17 +399,19 @@ window.__ModuleLoader__.load({
 			}
 			return parts.join("\n");
 		}
-		/** 工具调用信息：名称 / 原始参数 JSON / 是否仍在运行（运行中 root 无 kind）。 */
+		/** 工具调用信息：名称 / 原始参数 JSON / 官方 diff 数据 / 是否仍在运行。
+		 *  官方 diff 视图（dsh-client-ui-tool 的 narrowDiffs）从 call.diffs 读取
+		 *  [{path, oldText, newText}]——与官方展开详情完全一致的数据源。 */
 		function toolCallInfo(node) {
 			var root = node && node.data && node.data.root;
 			if (!root) return null;
 			if ("kind" in root) {
-				// 已结算：root.kind === "tool-result"，call 字段携带 name/argsRaw（兼容旧数据直接放 root 上）
+				// 已结算：root.kind === "tool-result"，call 字段携带 name/argsRaw/diffs（兼容旧数据直接放 root 上）
 				var call = root.call || root;
-				return { name: call.name, argsRaw: call.argsRaw, running: false };
+				return { name: call.name, argsRaw: call.argsRaw, diffs: call.diffs, running: false };
 			}
 			// 运行中（in-flight）：root 就是调用本身
-			return { name: root.name, argsRaw: root.argsRaw, running: true };
+			return { name: root.name, argsRaw: root.argsRaw, diffs: root.diffs, running: true };
 		}
 		/** 参数摘要：取 argsRaw 中最长的字符串值（-m 的正文 / 路径等最有信息量的内容），截断。 */
 		function summarizeArgs(argsRaw, maxLen) {
@@ -1163,10 +1165,24 @@ window.__ModuleLoader__.load({
 			var last = parts[parts.length - 1];
 			return last || null;
 		}
-		/** 从 argsRaw 提取编辑文件的行数变更（{added, removed}，供 edit 类标题显示汇总）。
-		 *  优先取 insertions/deletions 等显式字段；否则从 old/new 内容行数差计算。 */
+		/** 从工具调用提取编辑文件的行数变更（{added, removed}，供 edit 类标题显示汇总）。
+		 *  优先使用官方 diffs 数据（call.diffs 的 oldText/newText——与官方 diff 视图完全
+		 *  一致）；无 diffs 时回退：insertions/deletions 等显式字段，再退化为 old/new
+		 *  内容块行数（兼容全部命名变体）。 */
 		function extractLineChanges(info) {
-			if (!info || !info.argsRaw) return null;
+			if (!info) return null;
+			// 官方 diffs：每个 hunk 的 oldText 行数 = 删除行、newText 行数 = 新增行
+			if (Array.isArray(info.diffs) && info.diffs.length > 0) {
+				var totalAdded = 0, totalRemoved = 0;
+				for (var di = 0; di < info.diffs.length; di++) {
+					var h = info.diffs[di];
+					if (!h) continue;
+					if (typeof h.newText === "string") totalAdded += h.newText.split("\n").length;
+					if (typeof h.oldText === "string") totalRemoved += h.oldText.split("\n").length;
+				}
+				if (totalAdded > 0 || totalRemoved > 0) return { added: totalAdded, removed: totalRemoved };
+			}
+			if (!info.argsRaw) return null;
 			var raw;
 			try { raw = JSON.parse(info.argsRaw); } catch (e) { return null; }
 			if (!raw || typeof raw !== "object") return null;
@@ -1178,7 +1194,7 @@ window.__ModuleLoader__.load({
 			if (typeof raw.deletions === "number") removed = raw.deletions;
 			else if (typeof raw.removed === "number") removed = raw.removed;
 			else if (typeof raw["-"] === "number") removed = raw["-"];
-			// 从 old/new 内容行数差计算（edit 类工具常用，兼容全部命名变体：
+			// 从 old/new 内容块行数统计（edit 类工具常用，兼容全部命名变体：
 			//  camelCase oldStr/newStr、snake_case old_str/new_str、
 			//  DSH edit 工具全拼 old_string/new_string）
 			if (added === 0 && removed === 0) {

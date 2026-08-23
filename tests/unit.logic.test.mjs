@@ -429,6 +429,16 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e7'))
     assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了e.js [ +7 -7 ]', '行数相同但内容不同 → 替换 7 行 +7 -7')
+    // 官方 diffs 数据源（call.diffs 的 oldText/newText）优先于 argsRaw
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      makeNode('e8', 'tool-call', 300, { data: { root: { kind: 'tool-result', callId: 'e8', name: 'edit', argsRaw: JSON.stringify({ file_path: 'C:\\proj\\f.js', old_string: 'x', new_string: 'y' }), diffs: [{ path: 'C:\\proj\\f.js', oldText: 'a\nb\nc\nd\ne\nf\ng', newText: 'A\nB\nC\nD\nE\nF\nG' }], isError: false } } }),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e8'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了f.js [ +7 -7 ]', '官方 diffs 数据优先（与官方 diff 视图一致）')
     // 多个文件编辑：只显示数量+份，不附加行数
     nodes = [
       userNode('u', 100),
