@@ -151,7 +151,9 @@ window.__ModuleLoader__.load({
 				   常见的 grid 0fr 方案参数不同）。折叠态 opacity 0 淡入。 */
 				".ccg-fold-clip{display:grid;grid-template-rows:0fr;min-width:0;max-width:100%;opacity:0;transition:grid-template-rows .28s cubic-bezier(.22,1,.36,1),opacity .2s ease-out}",
 				".ccg-fold-clip.ccg-fold-clip-open{grid-template-rows:1fr;opacity:1}",
-				".ccg-fold-body{min-width:0;min-height:0;overflow:hidden}",
+				/* 折叠内容：flex column + 16px gap——段内命令（工具卡片 / Think 行）之间的
+				   间距与官方聊天流 column 节奏一致 */
+				".ccg-fold-body{display:flex;flex-direction:column;gap:16px;min-width:0;min-height:0;overflow:hidden}",
 				".ccg-fold-clip.ccg-fold-clip-open .ccg-fold-body{overflow:visible}",
 				"@media (prefers-reduced-motion: reduce){.ccg-fold-clip{transition:none!important}}",
 				/* 大组头展开时，非第一个段的成员节点不经过 FoldClip 高度动画，
