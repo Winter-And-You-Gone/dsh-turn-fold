@@ -1163,23 +1163,33 @@ window.__ModuleLoader__.load({
 			var last = parts[parts.length - 1];
 			return last || null;
 		}
-		/** 从 argsRaw 提取编辑文件的行数变更（+xx/−xx，供 edit 类标题显示）。 */
+		/** 从 argsRaw 提取编辑文件的行数变更（+xx/−xx，供 edit 类标题显示）。
+		 *  优先取 insertions/deletions 等显式字段；否则从 newStr/oldStr 的行数差计算。 */
 		function extractLineChanges(info) {
 			if (!info || !info.argsRaw) return null;
 			var raw;
 			try { raw = JSON.parse(info.argsRaw); } catch (e) { return null; }
 			if (!raw || typeof raw !== "object") return null;
 			var added = 0, removed = 0;
+			// 显式字段
 			if (typeof raw.insertions === "number") added = raw.insertions;
 			else if (typeof raw.added === "number") added = raw.added;
 			else if (typeof raw["+"] === "number") added = raw["+"];
-			else if (typeof raw["+"] === "string") added = parseInt(raw["+"], 10) || 0;
 			if (typeof raw.deletions === "number") removed = raw.deletions;
 			else if (typeof raw.removed === "number") removed = raw.removed;
 			else if (typeof raw["-"] === "number") removed = raw["-"];
-			else if (typeof raw["-"] === "string") removed = parseInt(raw["-"], 10) || 0;
+			// 从 newStr/oldStr 行数差计算（edit/write 工具常用）
+			if (added === 0 && removed === 0 && typeof raw.newStr === "string") {
+				var newLines = raw.newStr.split("\n").length;
+				var oldLines = typeof raw.oldStr === "string" ? raw.oldStr.split("\n").length : 0;
+				if (newLines > oldLines) added = newLines - oldLines;
+				if (oldLines > newLines) removed = oldLines - newLines;
+			}
 			if (added === 0 && removed === 0) return null;
-			return "+" + added + " —" + removed;
+			var parts = [];
+			if (added > 0) parts.push("+" + added);
+			if (removed > 0) parts.push("—" + removed);
+			return parts.join(" ");
 		}
 		/** 统计段内工具调用：按分类分组，read/edit 类附带去重后的文件名单及行数变更。 */
 		function classifySegmentTools(group, nodes) {

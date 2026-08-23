@@ -339,6 +339,16 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     let s = buildSnapshot(nodes, { turnEnds: new Map() })
     let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
     assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了index.js +12 —3', '单文件编辑附加行数变更')
+    // 无显式字段时从 newStr/oldStr 行数差计算（edit/write 工具的真实 argsRaw 形态）
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('e2', 300, 'edit', 'C:\\proj\\a.js', { file_path: 'C:\\proj\\a.js', oldStr: 'line1\nline2', newStr: 'line1\nline2\nline3\nline4' }),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e2'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了a.js +2', '从 newStr/oldStr 行数差计算（仅新增）')
     // 多个文件编辑：只显示数量+份，不附加行数
     nodes = [
       userNode('u', 100),
