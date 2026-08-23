@@ -1178,10 +1178,17 @@ window.__ModuleLoader__.load({
 			if (typeof raw.deletions === "number") removed = raw.deletions;
 			else if (typeof raw.removed === "number") removed = raw.removed;
 			else if (typeof raw["-"] === "number") removed = raw["-"];
-			// 从 newStr/oldStr 行数差计算（edit/write 工具常用，兼容 snake_case：str-replace-editor 用 old_str/new_str）
+			// 从 old/new 内容行数差计算（edit 类工具常用，兼容全部命名变体：
+			//  camelCase oldStr/newStr、snake_case old_str/new_str、
+			//  DSH edit 工具全拼 old_string/new_string）
 			if (added === 0 && removed === 0) {
-				var newContent = typeof raw.newStr === "string" ? raw.newStr : (typeof raw.new_str === "string" ? raw.new_str : null);
-				var oldContent = typeof raw.oldStr === "string" ? raw.oldStr : (typeof raw.old_str === "string" ? raw.old_str : null);
+				var newContent = null, oldContent = null;
+				if (typeof raw.newStr === "string") newContent = raw.newStr;
+				else if (typeof raw.new_str === "string") newContent = raw.new_str;
+				else if (typeof raw.new_string === "string") newContent = raw.new_string;
+				if (typeof raw.oldStr === "string") oldContent = raw.oldStr;
+				else if (typeof raw.old_str === "string") oldContent = raw.old_str;
+				else if (typeof raw.old_string === "string") oldContent = raw.old_string;
 				if (newContent !== null) {
 					var newLines = newContent.split("\n").length;
 					var oldLines = oldContent !== null ? oldContent.split("\n").length : 0;

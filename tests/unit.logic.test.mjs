@@ -359,6 +359,16 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e3'))
     assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js —1', 'snake_case old_str/new_str 行数差计算（仅删除）')
+    // DSH edit 工具全拼：old_string / new_string
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('e4', 300, 'edit', 'C:\\proj\\c.js', { file_path: 'C:\\proj\\c.js', old_string: 'x\ny', new_string: 'x\ny\nz\nw' }),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e4'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了c.js +2', 'DSH edit 工具 old_string/new_string 行数差计算')
     // 多个文件编辑：只显示数量+份，不附加行数
     nodes = [
       userNode('u', 100),
