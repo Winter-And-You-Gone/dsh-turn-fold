@@ -33,8 +33,8 @@ export const TURN13_NODES = T13_NODES
 // tokens = billedInput + output = 370202
 // cacheHitPercent = round(344864 / 366929 * 100) = 94
 // durationMs = 1787396180925 - 1787394826374 = 1354551 → "22分34秒"
-export const TURN13_METRICS = { durationMs: 1354551, tokens: 370202, outputTokens: 3273, tokensPerSecond: 144, cacheHitPercent: '94' }
-export const TURN13_LABEL = '耗时22分34秒，消耗370202token，144tok/s，缓存命中94%'
+export const TURN13_METRICS = { durationMs: 1354551, tokens: 370202, outputTokens: 3273, tokensPerSecond: 144, cacheHitPercent: '93.99' }
+export const TURN13_LABEL = '耗时22分34秒，消耗370202token，144tok/s，缓存命中93.99%'
 
 // ──────────────── turn 11 of session 898a7246（调试，34s，3 个工具调用）───────────────
 // 用户消息 "继续" (seq 31135)，然后是 3 个步骤 + 1 个最终总结。

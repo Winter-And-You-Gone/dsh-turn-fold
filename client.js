@@ -642,43 +642,12 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 回合性能指标（大组头文案） ----
-		/** 官方 cacheHitPercent 精度算法（v0.1.1-rc.1）：整数四舍五入到 100 时自动
-		 *  提高小数位，避免 99.99% 被显示为 100%。返回值：字符串（如 "57"、"99.9"、
-		 *  "100"），或 null（无可计费输入）。 */
-		function roundedIntegerPercent(cacheReadTokens, denominator) {
-			var denominatorQuotient = Math.floor(denominator / 200);
-			var denominatorRemainder = denominator % 200;
-			var lower = 0, upper = 100;
-			while (lower < upper) {
-				var candidate = Math.floor((lower + upper + 1) / 2);
-				var factor = candidate * 2 - 1;
-				if (cacheReadTokens >= factor * denominatorQuotient + Math.ceil(factor * denominatorRemainder / 200)) lower = candidate;
-				else upper = candidate - 1;
-			}
-			return lower;
-		}
+		/** 缓存命中率：固定两位小数（如 "66.67"、"99.99"、"100.00"），比官方
+		 *  仅接近 100% 才提精度的方案更高；无可计费输入返回 null。 */
 		function cacheHitPercent(uncachedInputTokens, cacheReadTokens, cacheWriteTokens) {
 			var denominator = uncachedInputTokens + cacheReadTokens + cacheWriteTokens;
 			if (denominator === 0) return null;
-			var missedInputTokens = uncachedInputTokens + cacheWriteTokens;
-			if (missedInputTokens === 0) return "100";
-			var integerPercent = roundedIntegerPercent(cacheReadTokens, denominator);
-			if (integerPercent < 100) return String(integerPercent);
-			var decimalPlaces = 1;
-			var scaledDoubleGap = missedInputTokens * 200;
-			var denominatorTens = Math.floor(denominator / 10);
-			while (scaledDoubleGap <= denominatorTens) {
-				scaledDoubleGap *= 10;
-				decimalPlaces += 1;
-			}
-			var denominatorOnes = denominator % 10;
-			var roundedLoss = 5;
-			for (var loss = 1; loss < 5; loss += 1) {
-				var factor = loss * 2 + 1;
-				var threshold = factor * denominatorTens + Math.floor(factor * denominatorOnes / 10);
-				if (scaledDoubleGap <= threshold) { roundedLoss = loss; break; }
-			}
-			return "99." + "9".repeat(decimalPlaces - 1) + String(10 - roundedLoss);
+			return (cacheReadTokens / denominator * 100).toFixed(2);
 		}
 		/** 汇总本回合的耗时 / 消耗 token / tok/s / 缓存命中率。
 		 *  @param {number|undefined} liveNow - 运行中回合传 Date.now() 用于实时耗时计算；

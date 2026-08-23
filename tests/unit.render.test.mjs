@@ -227,7 +227,7 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
   it('大组头文案显示真实会话指标（已结束回合带"已完成"状态前缀）', () => {
     const title = container.querySelector('.ccg-header .ccg-title')
     assert.ok(title)
-    assert.equal(title.textContent, '已完成 | 耗时22分34秒，消耗370202token，144tok/s，缓存命中94%')
+    assert.equal(title.textContent, '已完成 | 耗时22分34秒，消耗370202token，144tok/s，缓存命中93.99%')
   })
 })
 
@@ -279,13 +279,13 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
   it('大组头文案实时显示耗时/token（token 累计确定，耗时随秒表走动）', () => {
     const title = container.querySelector('.ccg-header .ccg-title')
     assert.ok(title)
-    // token 累计 = 130 + 260 + 60 = 450、缓存命中 67% 为确定值（本 describe 冻结了
+    // token 累计 = 130 + 260 + 60 = 450、缓存命中 66.67% 为确定值（本 describe 冻结了
     // Date.now，运行中 token 的动画偏移恒为 0，不会把 450 推高）；
     // 耗时 ≈ 5 秒（秒数不确定）、tok/s = 60/耗时 实时估算（秒数不确定）。
     // 滚轮数字是视觉装饰（DOM 含 0-9 数字条），完整文案在 sr-only 文本上。
     const sr = title.querySelector('.ccg-sr-only')
     assert.ok(sr, '滚轮文案应有 sr-only 最终文本')
-    assert.match(sr.textContent, /^耗时\d+秒，消耗450token，\d+(\.\d+)?tok\/s，缓存命中67%$/)
+    assert.match(sr.textContent, /^耗时\d+秒，消耗450token，\d+(\.\d+)?tok\/s，缓存命中66.67%$/)
   })
 
   it('点击大组头收起：成员隐藏、分隔线常驻；再点展开恢复', () => {
@@ -477,14 +477,14 @@ describe('滚轮数字（RollDigit / AnimatedLabel / 大组头 live 文案）', 
   })
 
   it('AnimatedLabel：数字拆成逐位滚轮、文字原样，sr-only 保留完整最终文案', () => {
-    mountNode(React.createElement(T.AnimatedLabel, { label: '耗时5秒，消耗450token，12tok/s，缓存命中67%' }))
+    mountNode(React.createElement(T.AnimatedLabel, { label: '耗时5秒，消耗450token，12tok/s，缓存命中66.67%' }))
     const cells = rcontainer.querySelectorAll('.ccg-roll-cell')
-    // 数字 5 / 4 5 0 / 1 2 / 6 7 = 8 个数位
-    assert.equal(cells.length, 8)
-    assert.deepEqual([...cells].map((c) => c.dataset.digit), ['5', '4', '5', '0', '1', '2', '6', '7'])
+    // 数字 5 / 4 5 0 / 1 2 / 6 6 6 7 = 10 个数位（66.67 的小数点是文字，不拆滚轮）
+    assert.equal(cells.length, 10)
+    assert.deepEqual([...cells].map((c) => c.dataset.digit), ['5', '4', '5', '0', '1', '2', '6', '6', '6', '7'])
     const sr = rcontainer.querySelector('.ccg-sr-only')
     assert.ok(sr, '应有 sr-only 完整文案')
-    assert.equal(sr.textContent, '耗时5秒，消耗450token，12tok/s，缓存命中67%')
+    assert.equal(sr.textContent, '耗时5秒，消耗450token，12tok/s，缓存命中66.67%')
   })
 
   it('AnimatedLabel：数值更新只滚动对应数位（9→10 进位时新增高位）', () => {

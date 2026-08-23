@@ -702,8 +702,8 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     assert.equal(m.durationMs, 5000)
     assert.equal(m.tokens, 450)
     assert.equal(m.tokensPerSecond, 12)
-    assert.equal(m.cacheHitPercent, '67')
-    assert.equal(T.turnHeaderLabel(m), '耗时5秒，消耗450token，12tok/s，缓存命中67%')
+    assert.equal(m.cacheHitPercent, '66.67')
+    assert.equal(T.turnHeaderLabel(m), '耗时5秒，消耗450token，12tok/s，缓存命中66.67%')
   })
 
   it('运行中：无 liveNow（回合已结束）时耗时取 endTime，不产生实时 tok/s', () => {
@@ -730,22 +730,20 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     assert.equal(m.durationMs, 500)
     assert.equal(m.tokens, 10)
     assert.equal(m.tokensPerSecond, undefined)
-    assert.equal(T.turnHeaderLabel(m), '耗时0秒，消耗10token，缓存命中0%')
+    assert.equal(T.turnHeaderLabel(m), '耗时0秒，消耗10token，缓存命中0.00%')
   })
 
   it('缺耗时但有 token → 文案省略耗时项', () => {
     assert.equal(T.turnHeaderLabel({ tokens: 100 }), '消耗100token')
   })
 
-  it('缓存命中精度（官方算法）：<100% 返回整数；接近 100% 自动提高小数位', () => {
-    // 完全命中（无未命中输入）：返回 "100"
-    assert.equal(T.cacheHitPercent(0, 500, 0), '100')
-    // 普通命中：整数
-    assert.equal(T.cacheHitPercent(130, 260, 0), '67')
-    // 未命中部分很小（四舍五入整数=100）→ 提高小数位：99.9 级
-    const nearlyFull = T.cacheHitPercent(1, 9990, 0)
-    assert.match(nearlyFull, /^99\.\d+$/, `接近 100% 应带小数位，实际 ${nearlyFull}`)
-    assert.notEqual(nearlyFull, '100', '未完全命中不得显示 100')
+  it('缓存命中精度：固定两位小数（不依赖是否接近 100%）', () => {
+    // 完全命中（无未命中输入）："100.00"
+    assert.equal(T.cacheHitPercent(0, 500, 0), '100.00')
+    // 普通命中：两位小数
+    assert.equal(T.cacheHitPercent(130, 260, 0), '66.67')
+    // 接近 100%：同样两位小数（官方算法此处才会提精度，插件固定两位）
+    assert.equal(T.cacheHitPercent(1, 9990, 0), '99.99')
     // 无计费输入：null
     assert.equal(T.cacheHitPercent(0, 0, 0), null)
   })
@@ -830,7 +828,7 @@ describe('英文界面（en）', () => {
     assert.equal(T2.formatTurnDuration(90000), '1m 30s')
     assert.equal(T2.formatTurnDuration(1354551), '22m 34s')
     assert.equal(T2.formatTurnDuration(3661000), '1h 1m 1s')
-    assert.equal(T2.turnHeaderLabel(TURN13_METRICS), '22m 34s, 370202 tokens, 144 tok/s, cache hit 94%')
+    assert.equal(T2.turnHeaderLabel(TURN13_METRICS), '22m 34s, 370202 tokens, 144 tok/s, cache hit 93.99%')
     assert.equal(T2.turnHeaderLabel({ tokens: 100 }), '100 tokens')
   })
 })
