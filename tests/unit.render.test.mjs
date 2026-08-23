@@ -397,7 +397,7 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     assert.equal(segTitleEl.textContent.trim(), '思考', '纯 think 段闭合后标题 = 思考（不再是"正在思考 · …"）')
   })
 
-  it('含 think+text 节点：展开段组头显示 think 完整内容，text 正文段外唯一一份', () => {
+  it('含 think+text 节点：展开段组头显示官方 Think 行（可折叠），text 正文段外唯一一份', () => {
     const thinkTextNode = (key, seq, think, text) => asNode(key, seq, {
       blocks: [{ kind: 'reasoning', text: think }, { kind: 'text', text }],
     })
@@ -407,19 +407,18 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
     assert.ok(segHeader, '段组头应存在')
     assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, 'text 正文段外唯一一份')
-    assert.equal(container.querySelectorAll('.ccg-think-full').length, 0, '段收起时 think 完整内容不渲染')
-    // 展开段组头：think 完整内容显示，text 正文仍唯一一份（不重复）
+    // 展开段组头：段内显示官方 Think 行（think-only 节点渲染，不含 text 正文）
     act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-    const thinkFull = container.querySelector('.ccg-think-full')
-    assert.ok(thinkFull, '展开后显示 think 完整内容')
-    assert.ok(thinkFull.textContent.includes('完整思考内容'), 'think 完整内容来自 reasoningText')
+    // 段内官方 Think 行（mock-assistant，think-only 节点）+ text-only（完整节点） = 2 个官方渲染
+    const assistants = container.querySelectorAll('.mock-assistant')
+    assert.equal(assistants.length, 2, '展开后段内官方 Think 行 + text-only = 2 个官方渲染')
+    // text 正文仍唯一一份（不重复）
     assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, '展开后 text 正文仍唯一一份，不重复')
-    assert.equal(container.querySelectorAll('.ccg-think-full').length, 1, 'think 完整内容唯一一份')
-    // DOM 顺序：think 内容在 text 正文上方（先思考后正文）
-    const textEl = container.querySelector('.ccg-text-only')
+    // DOM 顺序：段内 Think 行在 text 正文上方（先思考后正文）
+    const textEl = container.querySelector('.ccg-text-only .mock-assistant')
     assert.ok(textEl, 'text 正文存在')
-    const rel = thinkFull.compareDocumentPosition(textEl)
-    assert.ok((rel & 4) !== 0, 'think 内容应在 text 正文上方（DOCUMENT_POSITION_FOLLOWING）')
+    const rel = assistants[0].compareDocumentPosition(textEl)
+    assert.ok((rel & 4) !== 0, 'think 行应在 text 正文上方（DOCUMENT_POSITION_FOLLOWING）')
   })
 
   it('混合段（think + 工具）：段组头标题使用自研 ThinkSummary（带 data-follow-end）', () => {

@@ -197,11 +197,7 @@ window.__ModuleLoader__.load({
 				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live::after{animation:none}}",
 				/* 含 think+text 节点拆分渲染：段外 text 正文的官方 think 行隐藏
 				   （段外只显示 text 正文，段内展开时官方渲染含完整 think 行） */
-				".ccg-text-only [data-variant=\"think\"]{display:none}",
-				/* 段内完整 think 内容（含 think+text 节点拆分渲染时使用）：
-				   标题行仿官方 ReasoningRow 的 "Think" 标题，正文参照官方 thinkBody 样式 */
-				".ccg-think-full{color:var(--dsw-alias-label-tertiary,#9ca3af);white-space:pre-wrap;word-break:break-word;padding:4px 0 4px 22px;font-size:14px;line-height:24px}",
-				".ccg-think-full-title{color:var(--dsw-alias-label-secondary,#9ca3af);font-weight:400;font-size:14px;line-height:24px;margin-bottom:2px}"
+				".ccg-text-only [data-variant=\"think\"]{display:none}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
@@ -1164,13 +1160,15 @@ window.__ModuleLoader__.load({
 				if (n.kind === "tool-call") {
 					inner.push(react.createElement("div", { key: "c" + n.key }, renderBuiltinToolCall(Object.assign({}, props, { node: n }))));
 				} else if (n.kind === "assistant-step" && hasText(n)) {
-					// 含 think+text：think 完整内容（带官方 "Think" 标题）进段内，text 正文进段外
-					inner.push(react.createElement(
-						"div",
-						{ key: "t" + n.key, className: "ccg-think-full" },
-						react.createElement("div", { className: "ccg-think-full-title" }, "Think"),
-						reasoningText(n)
-					));
+					// 含 think+text：构造仅含 reasoning 块的节点，官方渲染只出 Think 行
+					// （官方 ReasoningRow：收起显示"Think · 摘要"，点击展开完整内容）；
+					// text 正文进段外（官方渲染 + CSS 隐藏 think 行）
+					var thinkOnlyNode = Object.assign({}, n, {
+						data: Object.assign({}, n.data, {
+							blocks: (n.data.blocks || []).filter(function (b) { return !b || b.kind !== "text"; })
+						})
+					});
+					inner.push(react.createElement("div", { key: "t" + n.key }, renderBuiltinAssistant(Object.assign({}, props, { node: thinkOnlyNode }))));
 					textBodies.push(react.createElement(
 						"div",
 						{ key: "x" + n.key, className: "ccg-text-only" },
