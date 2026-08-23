@@ -801,9 +801,10 @@ window.__ModuleLoader__.load({
 				else parts.push(formatTurnDuration(metrics.durationMs));
 			}
 			if (metrics.ttftMs !== undefined) {
-				// 首字（TTFT 近似）：从回合启动到首个 assistant-step 渲染，毫秒
-				if (LOCALE === "zh") parts.push("首字" + metrics.ttftMs + "ms");
-				else parts.push("TTFT " + metrics.ttftMs + "ms");
+				// 首字（TTFT 近似）：秒为单位、一位小数（毫秒不直观）
+				var ttftSec = (metrics.ttftMs / 1000).toFixed(1);
+				if (LOCALE === "zh") parts.push("首字" + ttftSec + "s");
+				else parts.push("TTFT " + ttftSec + "s");
 			}
 			if (metrics.tokens !== undefined) {
 				if (LOCALE === "zh") parts.push("消耗" + metrics.tokens + "token");
