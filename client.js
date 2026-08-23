@@ -15,8 +15,8 @@
 //      慢速变化用 350ms 回弹缓动）；组头下方常驻一条水平分隔线（收起/展开都显示）。
 //   3. 回合结束后，整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头并
 //      默认收起，只保留最终总结正文；非正常结束的回合带状态标签（已停止 / 已中断）。
-//   4. 点击组头可手动展开/折叠；展开带平滑过渡动画（高度展开 + 淡入 + 微位移，280ms），
-//      收起带收缩动画（200ms）后卸载内容；尊重 prefers-reduced-motion。
+//   4. 点击组头可手动展开/折叠；展开带平滑过渡动画（CSS grid 0fr→1fr 轨道过渡 + 淡入，280ms），
+//      收起带收缩过渡（280ms）后卸载内容；尊重 prefers-reduced-motion。
 //   5. 界面文案自动适配中英文（navigator.language(s) 含 zh 即中文），
 //      组头带 aria-label / aria-expanded，键盘可操作（Enter / Space）。
 //
@@ -374,12 +374,24 @@ window.__ModuleLoader__.load({
 		// ---- 委托渲染：取内置组件引用 ----
 		// slotsService 在 apply 时捕获；entries() 返回缓存的数组引用，渲染期读取廉价且稳定。
 		var slotsService = null;
+		// 内置组件缺失时只警告一次（按 kind）：DSH 升级若改变内置条目的 key/priority 约定，
+		// 委托渲染会拿不到组件、节点静默空白——留一条日志便于排查。
+		var builtinWarned = {};
 		function builtinComponent(kind) {
 			if (!slotsService) return undefined;
 			var entries = slotsService.entries("conversation.chat.node");
 			for (var i = 0; i < entries.length; i++) {
 				var e = entries[i];
 				if (e.options && e.options.key === kind && (e.options.priority || 0) === 0) return e.component;
+			}
+			if (!builtinWarned[kind]) {
+				builtinWarned[kind] = true;
+				try {
+					if (typeof console !== "undefined" && console.warn) {
+						console.warn('[dsh-turn-fold] builtin renderer for conversation.chat.node key "' + kind +
+							'" (priority 0) not found — delegated rendering will be empty; DSH UI contract may have changed.');
+					}
+				} catch (e) { /* 忽略 */ }
 			}
 			return undefined;
 		}
@@ -727,6 +739,32 @@ window.__ModuleLoader__.load({
 			if (timing && typeof timing.startTime === "number") {
 				ttftCache.set(key, Math.max(0, Date.now() - timing.startTime));
 			}
+		}
+		/** 会话切换时清理计算缓存与手动状态（保留 ttftCache）。
+		 *
+		 *  清理：
+		 *  - segmentLabelCache：整体清空（key 不含 sessionId；每段一条标题字符串，
+		 *    长会话可达数百 KB，是唯一有量级的计算缓存）；
+		 *  - liveTokenCache：按 sessionId 前缀清（每回合 1-2 条，无可见差异）；
+		 *  - overrides / turnOverrides（手动展开状态）：清空后回到自动规则
+		 *    （已结束回合默认收起、运行中默认展开）。
+		 *  保留：ttftCache（每回合一个毫秒数字，几百轮也只有几十 KB，不值得清）。
+		 *  由各 Grouped 视图渲染开头调用（幂等：仅 sessionId 变化时执行一次）。
+		 */
+		var trackedSession = null;
+		function trackSession(sessionId) {
+			if (sessionId === undefined || sessionId === null || sessionId === trackedSession) return;
+			var prev = trackedSession;
+			trackedSession = sessionId;
+			if (prev === null) return; // 首次调用（无前一会话）不清理
+			// 清理计算缓存与手动状态
+			if (liveTokenCache.size > 0) {
+				var prefix = prev + "::";
+				liveTokenCache.forEach(function (v, k) { if (k.indexOf(prefix) === 0) liveTokenCache.delete(k); });
+			}
+			segmentLabelCache.clear();
+			overrides.clear();
+			turnOverrides.clear();
 		}
 
 		// ---- 运行中"消耗token"的持续增长动画 ----
@@ -1591,6 +1629,8 @@ window.__ModuleLoader__.load({
 			var node = props.node;
 			var useSession = props.useSession;
 			var sessionId = props.sessionId;
+			// 会话切换时清理纯计算缓存（幂等：仅 sessionId 变化时执行一次）
+			trackSession(sessionId);
 			// 订阅会话快照：order/nodes 变化时重渲染；locations/turnEnds 提供"回合是否结束"信号。
 			var order = useSession(function (s) { return s.chat.order; });
 			var nodes = useSession(function (s) { return s.chat.nodes; });
@@ -1835,6 +1875,9 @@ window.__ModuleLoader__.load({
 		function GroupedUserView(props) {
 			var node = props.node;
 			var useSession = props.useSession;
+			var sessionId = props.sessionId;
+			// 会话切换时清理纯计算缓存（幂等：仅 sessionId 变化时执行一次）
+			trackSession(sessionId);
 			var order = useSession(function (s) { return s.chat.order; });
 			var running = useSession(function (s) { return s.running === true; });
 			var turnTimings = useSession(function (s) { return s.turnTimings; });

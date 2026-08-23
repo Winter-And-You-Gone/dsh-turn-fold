@@ -47,6 +47,8 @@ const TEST_EXPORTS = [
   'ttftCache',
   'turnOverrides',
   'overrides',
+  'trackSession',
+  'trackedSession',
   'hiddenMarker',
 ]
 

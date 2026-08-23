@@ -9,6 +9,11 @@
     "type": "git",
     "url": "git+https://github.com/Winter-And-You-Gone/dsh-turn-fold.git"
   },
+  "homepage": "https://github.com/Winter-And-You-Gone/dsh-turn-fold#readme",
+  "bugs": {
+    "url": "https://github.com/Winter-And-You-Gone/dsh-turn-fold/issues"
+  },
+  "sideEffects": true,
   "engines": {
     "node": ">=20.3"
   },
@@ -32,7 +37,8 @@
     "install.ps1",
     "LICENSE",
     "README.md",
-    "README.en.md"
+    "README.en.md",
+    "docs/images/*.png"
   ],
   "dsh": {
     "bundle": {

@@ -940,3 +940,56 @@ describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）',
     assert.equal(T.turnDisplayMetrics('sess', 27, noTokens, true, 100000), noTokens)
   })
 })
+
+// ─────────────────────── trackSession（会话切换清理） ───────────────────────
+// trackSession 是闭包内模块级状态，测试无法直接重置：每个用例先归位到哨兵会话，
+// 保证后续"切换"必然发生（哨兵会话本身无缓存条目，清理无副作用）。
+describe('trackSession（会话切换清理）', () => {
+  const RESET = '__reset__'
+
+  it('切换会话：清理 segmentLabelCache / liveTokenCache / 手动状态 · 保留 ttftCache', () => {
+    T.trackSession(RESET)
+    T.segmentLabelCache.clear()
+    T.ttftCache.clear()
+    T.liveTokenCache.clear()
+    T.turnOverrides.clear()
+    T.overrides.clear()
+    T.trackSession('sess-a') // 从 RESET 切换 → 清理（此时全空）
+    // 填充旧会话缓存
+    T.segmentLabelCache.set('zh|k1|k2', '标题')
+    T.ttftCache.set('sess-a::13', 120)
+    T.ttftCache.set('sess-b::13', 340)
+    T.liveTokenCache.set('sess-a::13', { lastTokens: 100, animBaseTick: 0 })
+    T.liveTokenCache.set('sess-a::13:pending', { lastTokens: 0, animBaseTick: 0 })
+    T.turnOverrides.set('sess-a::turn:13', true)
+    T.overrides.set('sess-a::k1', false)
+    // 切到新会话
+    T.trackSession('sess-b')
+    // 计算缓存与手动状态清理
+    assert.equal(T.segmentLabelCache.size, 0, '段标题缓存整体清空')
+    assert.equal(T.liveTokenCache.has('sess-a::13'), false, '动画基线按前缀清理')
+    assert.equal(T.liveTokenCache.has('sess-a::13:pending'), false, 'pending key 一并清理')
+    assert.equal(T.turnOverrides.has('sess-a::turn:13'), false, '回合手动状态回到自动规则')
+    assert.equal(T.overrides.has('sess-a::k1'), false, '组手动状态回到自动规则')
+    // ttftCache 保留（每回合一个数字，量级可忽略）
+    assert.ok(T.ttftCache.has('sess-a::13'), 'TTFT 缓存保留')
+    assert.ok(T.ttftCache.has('sess-b::13'), '其他会话 TTFT 不受影响')
+  })
+
+  it('同一会话重复调用不清理', () => {
+    T.trackSession(RESET)
+    T.ttftCache.clear()
+    T.liveTokenCache.clear()
+    T.segmentLabelCache.clear()
+    T.turnOverrides.clear()
+    T.overrides.clear()
+    T.trackSession('sess-c')
+    T.segmentLabelCache.set('zh|a', 'x')
+    T.liveTokenCache.set('sess-c::1', { lastTokens: 5, animBaseTick: 0 })
+    T.overrides.set('sess-c::k1', false)
+    T.trackSession('sess-c') // 同一会话：无操作
+    assert.equal(T.segmentLabelCache.size, 1, '同会话不清段标题缓存')
+    assert.ok(T.liveTokenCache.has('sess-c::1'), '同会话不清动画基线')
+    assert.ok(T.overrides.has('sess-c::k1'), '同会话不清手动状态')
+  })
+})

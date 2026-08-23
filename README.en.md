@@ -209,9 +209,15 @@ git push --follow-tags
 - **0-second placeholder**: the `user` renderer override shows a placeholder big header while the session is running and the user message is still the last item (duration counted from the running turn's `startTime`); the first intermediate node hands over to the real header.
 - **TTFT approximation**: session snapshots carry no official timing data (`stepStartTime`/`firstTokenTime` exist only on conversation-internal event nodes), so the plugin freezes `Date.now() - turnTimings.startTime` when the first assistant-step renders (error ≈ one frame of render latency), recorded idempotently once per turn.
 - **Closed-segment label cache**: closed-segment titles are memoized by `leaderKey + node keys + locale + tool fingerprint` (name/isError/argsRaw length, without parsing content) to avoid re-parsing argsRaw on every render; edit line changes prefer the official `call.diffs` data (`oldText`/`newText` block line counts), falling back to a single argsRaw parse (path + line counts extracted together).
+- **Session-switch cleanup**: `segmentLabelCache` (closed-segment label cache, one string per segment — can reach hundreds of KB in long sessions), `liveTokenCache` (1–2 entries per turn) and manual open state (`overrides` / `turnOverrides`) are cleared when switching sessions — manual state falls back to the auto rules (finished turns collapsed by default); `ttftCache` is kept (one number per turn, negligible size). Switching back to a session only reverts finished turns to their default collapsed state and recomputes segment titles once.
 - **Language follows DSH**: texts read `document.documentElement.lang` (set by `dsh-client-locale` when the UI language changes), so the plugin switches language live with DSH; the browser language is only a fallback.
 
 ## Notes
 
 - If a DSH upgrade changes the above slot contracts or built-in component props, this plugin may need small adjustments per version (that is plugin maintenance, not source modification).
 - The group header text is tunable in `CONFIG` at the top of `client.js`.
+- **Coupling points checklist** (check these when upgrading DSH; any failure degrades gracefully — falls back to built-in rendering / label fallbacks plus a `console.warn`, never a blank screen):
+  - Session snapshot fields: `s.chat.order / nodes / locations`, `locations.getTurn()`, `turnEnds`, `turnTimings`, `chat.timeline.turns` (segment/turn grouping, completion detection, duration and status labels);
+  - Node data shapes: `tool-call` `data.root` (`call.name / argsRaw / diffs`), `assistant-step` `blocks` (reasoning / text) and `usage`, `turn-tail` `tokensPerSecond` (header labels, think summaries, token/cache-hit metrics);
+  - CSS selectors: `[data-chat-flow-kind]`, `[data-variant="think"]` (hiding folded member flowItems and the final summary's Think line);
+  - Slot system: built-in `conversation.chat.node` entries (`priority: 0`), `slotsService.entriesOfSlot()` (delegated rendering and `tool.call.toolview` sub-view dispatch).

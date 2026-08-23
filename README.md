@@ -273,6 +273,10 @@ git push --follow-tags
   （名称/isError/argsRaw 长度，不解析内容）记忆，避免每次渲染重复解析 argsRaw；
   工具行数变更优先读取官方 `call.diffs` 数据（`oldText`/`newText` 块行数），无 diffs 时
   才回退解析 argsRaw（单次解析同时提取路径与行数）。
+- **会话切换清理**：`segmentLabelCache`（段闭合标题缓存，每段一条字符串、长会话可达数百 KB）、
+  `liveTokenCache`（每回合 1-2 条）与手动展开状态（`overrides` / `turnOverrides`）在切换
+  会话时清理——手动状态回到自动规则（已结束回合默认收起）；`ttftCache` 保留（每回合一个
+  数字，量级可忽略）。切换回原会话仅"已结束回合回到默认收起 + 段标题重新计算一次"。
 - **多语言跟随**：文案读取 `document.documentElement.lang`（DSH 切换界面语言时由
   `dsh-client-locale` 设置），随 DSH 语言实时切换，浏览器语言仅作回退。
 
@@ -280,3 +284,14 @@ git push --follow-tags
 
 - DSH 升级若改变上述槽位契约或内置组件 props，本插件可能需要随版本小改（属插件维护，非改源码）。
 - 组头文案在 `client.js` 顶部 `CONFIG` 可调。
+- **耦合点清单**（DSH 升级时对照排查；任一失效均优雅降级——回退内置渲染 / 文案兜底 +
+  `console.warn` 提示，不会白屏）：
+  - 会话快照字段：`s.chat.order / nodes / locations`、`locations.getTurn()`、`turnEnds`、
+    `turnTimings`、`chat.timeline.turns`（用于段/回合分组、结束判定、耗时与状态标签）；
+  - 节点数据结构：`tool-call` 的 `data.root`（`call.name / argsRaw / diffs`）、
+    `assistant-step` 的 `blocks`（reasoning / text）与 `usage`、`turn-tail` 的
+    `tokensPerSecond`（用于组头文案、think 摘要、token/缓存命中指标）；
+  - CSS 选择器：`[data-chat-flow-kind]`、`[data-variant="think"]`（隐藏折叠成员 flowItem
+    与最终总结的 Think 行）；
+  - Slot 系统：`conversation.chat.node` 内置条目（`priority: 0`）、
+    `slotsService.entriesOfSlot()`（委托渲染与 `tool.call.toolview` 子视图分发）。
