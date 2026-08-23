@@ -408,6 +408,17 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e4'))
     assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了c.js [ +2 ]', 'DSH edit 工具 old_string/new_string 行数差计算')
+    // 同一文件编辑两次（行数变更不同）→ 汇总显示
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('e5', 300, 'edit', 'C:\\proj\\d.js', { file_path: 'C:\\proj\\d.js', old_string: 'x\ny\nz', new_string: 'x\ny\nz\nw\nv\nu' }),
+      toolWithPath('e6', 301, 'edit', 'C:\\proj\\d.js', { file_path: 'C:\\proj\\d.js', old_string: 'a\nb\nc\nd\ne', new_string: 'a\nb\nc' }),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e5'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了d.js [ +3 -2 ]', '同一文件多次编辑汇总行数变更（+3-0 与 +0-2 → +3 -2）')
     // 多个文件编辑：只显示数量+份，不附加行数
     nodes = [
       userNode('u', 100),

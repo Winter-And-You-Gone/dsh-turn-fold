@@ -1163,8 +1163,8 @@ window.__ModuleLoader__.load({
 			var last = parts[parts.length - 1];
 			return last || null;
 		}
-		/** 从 argsRaw 提取编辑文件的行数变更（+xx/−xx，供 edit 类标题显示）。
-		 *  优先取 insertions/deletions 等显式字段；否则从 newStr/oldStr 的行数差计算。 */
+		/** 从 argsRaw 提取编辑文件的行数变更（{added, removed}，供 edit 类标题显示汇总）。
+		 *  优先取 insertions/deletions 等显式字段；否则从 old/new 内容行数差计算。 */
 		function extractLineChanges(info) {
 			if (!info || !info.argsRaw) return null;
 			var raw;
@@ -1197,10 +1197,7 @@ window.__ModuleLoader__.load({
 				}
 			}
 			if (added === 0 && removed === 0) return null;
-			var parts = [];
-			if (added > 0) parts.push("+" + added);
-			if (removed > 0) parts.push("-" + removed);
-			return parts.join(" ");
+			return { added: added, removed: removed };
 		}
 		/** 统计段内工具调用：按分类分组，read/edit 类附带去重后的文件名单及行数变更。 */
 		function classifySegmentTools(group, nodes) {
@@ -1231,13 +1228,19 @@ window.__ModuleLoader__.load({
 			var label;
 			if (files.length === 1) label = prefix + files[0];
 			else label = prefix + (files.length > 0 ? files.length : items.length) + suffix;
-			// edit 类：单文件时附加行数变更（方括号包裹，如 [ +12 -3 ]）
+			// edit 类：单文件时汇总所有编辑的行数变更（方括号包裹，如 [ +12 -3 ]）
 			if (kind === "edit" && files.length === 1) {
-				var changes = [];
+				var totalAdded = 0, totalRemoved = 0;
 				for (var j = 0; j < items.length; j++) {
-					if (items[j].lineChanges && changes.indexOf(items[j].lineChanges) === -1) changes.push(items[j].lineChanges);
+					var lc = items[j].lineChanges;
+					if (lc) { totalAdded += lc.added; totalRemoved += lc.removed; }
 				}
-				if (changes.length === 1) label += " [ " + changes[0] + " ]";
+				if (totalAdded > 0 || totalRemoved > 0) {
+					var parts = [];
+					if (totalAdded > 0) parts.push("+" + totalAdded);
+					if (totalRemoved > 0) parts.push("-" + totalRemoved);
+					label += " [ " + parts.join(" ") + " ]";
+				}
 			}
 			return label;
 		}
