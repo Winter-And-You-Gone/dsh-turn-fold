@@ -244,8 +244,8 @@ window.__ModuleLoader__.load({
 				   颜色方案：基线用 Codex 同款深灰 rgb(104,104,104) + 纯白高光
 				   （对比更明显，动效可见且观感仍是灰色系）；高光区域加宽（35%~65%）。
 				   图标 span 单独恢复颜色（background-clip:text 会把 currentColor 变透明）。 */
-				".ccg-think-title-live{color:transparent;-webkit-text-fill-color:transparent;background:linear-gradient(90deg,#d4d4d8 0%,#d4d4d8 35%,#f8f9fa 50%,#d4d4d8 65%,#d4d4d8 100%);background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:3.8s linear infinite ccg-turn-status-shimmer}",
-				".ccg-think-title-live .ccg-think-icon{color:#d4d4d8;-webkit-text-fill-color:#d4d4d8}",
+				".ccg-think-title-live{color:transparent;-webkit-text-fill-color:transparent;background:linear-gradient(90deg,rgb(154,154,154) 0%,rgb(154,154,154) 35%,#f8f9fa 50%,rgb(154,154,154) 65%,rgb(154,154,154) 100%);background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:3.8s linear infinite ccg-turn-status-shimmer}",
+				".ccg-think-title-live .ccg-think-icon{color:rgb(154,154,154);-webkit-text-fill-color:rgb(154,154,154)}",
 				/* 高光流动 1.8s（47.4% 从右扫到左）→ 停顿 2s（100% 停在终态），循环 */
 				"@keyframes ccg-turn-status-shimmer{0%{background-position:100% 0}47.4%{background-position:0 0}100%{background-position:0 0}}",
 				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live{background-position:0 0;background-size:100% 100%;animation:none}}",
