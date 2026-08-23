@@ -387,7 +387,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e2'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了a.js [ +2 ]', '从 newStr/oldStr 行数差计算（仅新增）')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了a.js [ +4 -2 ]', '从 newStr/oldStr 行数差计算（仅新增）')
     // str-replace-editor 用 snake_case：old_str / new_str
     nodes = [
       userNode('u', 100),
@@ -397,7 +397,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e3'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js [ -1 ]', 'snake_case old_str/new_str 行数差计算（仅删除）')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js [ +2 -3 ]', 'snake_case old_str/new_str 行数差计算（仅删除）')
     // DSH edit 工具全拼：old_string / new_string
     nodes = [
       userNode('u', 100),
@@ -407,7 +407,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e4'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了c.js [ +2 ]', 'DSH edit 工具 old_string/new_string 行数差计算')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了c.js [ +4 -2 ]', 'DSH edit 工具 old_string/new_string 行数差计算')
     // 同一文件编辑两次（行数变更不同）→ 汇总显示
     nodes = [
       userNode('u', 100),
@@ -418,7 +418,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e5'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了d.js [ +3 -2 ]', '同一文件多次编辑汇总行数变更（+3-0 与 +0-2 → +3 -2）')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了d.js [ +9 -8 ]', '同一文件多次编辑汇总行数变更（块级：+6-3 与 +3-5 → +9 -8）')
     // 行数相同但内容不同：替换 N 行 → +N -N（行数差为 0 也能显示）
     nodes = [
       userNode('u', 100),

@@ -1190,18 +1190,12 @@ window.__ModuleLoader__.load({
 				else if (typeof raw.old_str === "string") oldContent = raw.old_str;
 				else if (typeof raw.old_string === "string") oldContent = raw.old_string;
 				if (newContent !== null) {
+					// 块级统计（与官方 edit 的 diff 视图一致：old_string 整块删除、
+					// new_string 整块新增，统计块的行数而非行级差异）
 					var newLinesArr = newContent.split("\n");
 					var oldLinesArr = oldContent !== null ? oldContent.split("\n") : [];
-					if (newLinesArr.length > oldLinesArr.length) added = newLinesArr.length - oldLinesArr.length;
-					if (oldLinesArr.length > newLinesArr.length) removed = oldLinesArr.length - newLinesArr.length;
-					// 行数相同但内容不同：视为替换了 N 行（+N -N），否则行数差为 0 会漏报
-					if (added === 0 && removed === 0 && newContent !== oldContent) {
-						var diffLines = 0;
-						for (var li = 0; li < newLinesArr.length; li++) {
-							if (oldLinesArr[li] !== newLinesArr[li]) diffLines++;
-						}
-						if (diffLines > 0) { added = diffLines; removed = diffLines; }
-					}
+					added = newLinesArr.length;
+					removed = oldLinesArr.length;
 				}
 			}
 			if (added === 0 && removed === 0) return null;
