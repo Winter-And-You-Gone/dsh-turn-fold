@@ -220,9 +220,10 @@ window.__ModuleLoader__.load({
 				/* 含 think+text 节点拆分渲染：段外 text 正文的官方 think 行隐藏
 				   （段外只显示 text 正文，段内展开时官方渲染含完整 think 行） */
 				".ccg-text-only [data-variant=\"think\"]{display:none}",
-				/* 段外 text 正文与周围统一 16px 呼吸（官方 MarkdownText 的 p 首尾 margin 为 0，
-				   不加 padding 时与段组头行会贴得太近） */
-				".ccg-text-only{padding:16px 0}"
+				/* 段外 text 正文：顶部 16px 与段组头行拉开（官方 MarkdownText 的 p 首尾 margin 为 0）；
+				   底部不额外加 padding——text 到下一个段组头 flowItem 之间由官方 column 的
+				   16px gap 承担，避免 16px + 16px 叠加成 32px 造成间距过大 */
+				".ccg-text-only{padding:16px 0 0}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
