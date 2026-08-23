@@ -1138,11 +1138,13 @@ window.__ModuleLoader__.load({
 			grep: "search", search: "search", find: "search", glob: "search", web_search: "search",
 			edit: "edit", write: "edit", patch: "edit", create: "edit", "str-replace-editor": "edit"
 		};
-		/** 从 argsRaw 提取文件路径（path / file_path / url / file / target；args 数组兜底取含路径分隔符的串）。 */
-		function extractFilePath(info) {
-			if (!info || !info.argsRaw) return null;
-			var raw;
-			try { raw = JSON.parse(info.argsRaw); } catch (e) { return null; }
+		/** 解析 argsRaw 一次（提取路径与行数共用，避免重复 JSON.parse）。 */
+		function parseArgsRaw(argsRaw) {
+			if (!argsRaw) return null;
+			try { return JSON.parse(argsRaw); } catch (e) { return null; }
+		}
+		/** 从已解析的 args 提取文件路径（path / file_path / url / file / target；args 数组兜底取含路径分隔符的串）。 */
+		function extractFilePathFromParsed(raw) {
 			if (!raw || typeof raw !== "object") return null;
 			var keys = ["file_path", "path", "file", "target", "url"];
 			for (var i = 0; i < keys.length; i++) {
@@ -1157,34 +1159,9 @@ window.__ModuleLoader__.load({
 			}
 			return null;
 		}
-		/** 路径最后一段（文件名 / URL 尾）。 */
-		function pathBasename(path) {
-			if (!path) return null;
-			var sep = path.indexOf("\\") !== -1 ? "\\" : "/";
-			var parts = path.split(sep);
-			var last = parts[parts.length - 1];
-			return last || null;
-		}
-		/** 从工具调用提取编辑文件的行数变更（{added, removed}，供 edit 类标题显示汇总）。
-		 *  优先使用官方 diffs 数据（call.diffs 的 oldText/newText——与官方 diff 视图完全
-		 *  一致）；无 diffs 时回退：insertions/deletions 等显式字段，再退化为 old/new
+		/** 从已解析的 args 提取编辑行数变更：insertions/deletions 显式字段，否则 old/new
 		 *  内容块行数（兼容全部命名变体）。 */
-		function extractLineChanges(info) {
-			if (!info) return null;
-			// 官方 diffs：每个 hunk 的 oldText 行数 = 删除行、newText 行数 = 新增行
-			if (Array.isArray(info.diffs) && info.diffs.length > 0) {
-				var totalAdded = 0, totalRemoved = 0;
-				for (var di = 0; di < info.diffs.length; di++) {
-					var h = info.diffs[di];
-					if (!h) continue;
-					if (typeof h.newText === "string") totalAdded += h.newText.split("\n").length;
-					if (typeof h.oldText === "string") totalRemoved += h.oldText.split("\n").length;
-				}
-				if (totalAdded > 0 || totalRemoved > 0) return { added: totalAdded, removed: totalRemoved };
-			}
-			if (!info.argsRaw) return null;
-			var raw;
-			try { raw = JSON.parse(info.argsRaw); } catch (e) { return null; }
+		function extractLineChangesFromParsed(raw) {
 			if (!raw || typeof raw !== "object") return null;
 			var added = 0, removed = 0;
 			// 显式字段
@@ -1208,14 +1185,20 @@ window.__ModuleLoader__.load({
 				if (newContent !== null) {
 					// 块级统计（与官方 edit 的 diff 视图一致：old_string 整块删除、
 					// new_string 整块新增，统计块的行数而非行级差异）
-					var newLinesArr = newContent.split("\n");
-					var oldLinesArr = oldContent !== null ? oldContent.split("\n") : [];
-					added = newLinesArr.length;
-					removed = oldLinesArr.length;
+					added = newContent.split("\n").length;
+					removed = oldContent !== null ? oldContent.split("\n").length : 0;
 				}
 			}
 			if (added === 0 && removed === 0) return null;
 			return { added: added, removed: removed };
+		}
+		/** 路径最后一段（文件名 / URL 尾）。 */
+		function pathBasename(path) {
+			if (!path) return null;
+			var sep = path.indexOf("\\") !== -1 ? "\\" : "/";
+			var parts = path.split(sep);
+			var last = parts[parts.length - 1];
+			return last || null;
 		}
 		/** 统计段内工具调用：按分类分组，read/edit 类附带去重后的文件名单及行数变更。 */
 		function classifySegmentTools(group, nodes) {
@@ -1226,8 +1209,25 @@ window.__ModuleLoader__.load({
 				var info = toolCallInfo(n);
 				var name = info ? String(info.name) : "";
 				var kind = TOOL_KINDS[name.toLowerCase()] || "others";
-				var filePath = extractFilePath(info);
-				var lineChanges = extractLineChanges(info);
+				// 性能：官方 diffs 存在时（路径 + oldText/newText 行数）完全不解析 argsRaw；
+				// 否则解析一次 argsRaw 同时提取路径与行数（避免多次 JSON.parse）
+				var filePath = null, lineChanges = null;
+				if (info && Array.isArray(info.diffs) && info.diffs.length > 0) {
+					var first = info.diffs[0];
+					if (first && typeof first.path === "string") filePath = first.path;
+					var ta = 0, tr = 0;
+					for (var di = 0; di < info.diffs.length; di++) {
+						var h = info.diffs[di];
+						if (!h) continue;
+						if (typeof h.newText === "string") ta += h.newText.split("\n").length;
+						if (typeof h.oldText === "string") tr += h.oldText.split("\n").length;
+					}
+					if (ta > 0 || tr > 0) lineChanges = { added: ta, removed: tr };
+				} else if (info) {
+					var parsed = parseArgsRaw(info.argsRaw);
+					filePath = extractFilePathFromParsed(parsed);
+					lineChanges = extractLineChangesFromParsed(parsed);
+				}
 				stats[kind].push({ name: name, filePath: filePath, fileName: pathBasename(filePath), lineChanges: lineChanges });
 			}
 			return stats;
@@ -1269,11 +1269,39 @@ window.__ModuleLoader__.load({
 			if (items.length === 1) return _T("segmentCommand") + (items[0].name || "");
 			return _T("segmentCommand") + items.length + _T("segmentCommandSuffix");
 		}
+		// 段闭合标题缓存：段闭合后（textAfter=true）标题不再随流式变化，按
+		// leaderKey+keys+工具轻量指纹记忆只计算一次，避免每次渲染重复解析 argsRaw。
+		// 指纹 = 每个 tool 的 name + isError + argsRaw 长度（不解析内容，O(1)）——
+		// 段闭合后这些字段稳定；不同内容但同 keys 的段（如测试场景）长度不同也能区分。
+		var segmentLabelCache = new Map();
+		function segmentCacheKey(group, nodes) {
+			var parts = [group.leaderKey, group.keys.join(",")];
+			for (var i = 0; i < group.keys.length; i++) {
+				var n = nodes.get(group.keys[i]);
+				if (!n || n.kind !== "tool-call") continue;
+				var root = n.data && n.data.root;
+				var name = "", isErr = "0", rawLen = 0;
+				if (root && "kind" in root) {
+					var call = root.call || root;
+					name = call.name || "";
+					if (root.isError === true) isErr = "1";
+					if (typeof call.argsRaw === "string") rawLen = call.argsRaw.length;
+				} else if (root) {
+					name = root.name || "";
+					if (typeof root.argsRaw === "string") rawLen = root.argsRaw.length;
+				}
+				parts.push(name + ":" + isErr + ":" + rawLen);
+			}
+			return parts.join("|");
+		}
 		/** 段组头标题：运行中（textAfter=false）取最后一个节点显示当前执行内容，闭合后按
 		 *  工具类型分组显示详细标题（命令最后）。 */
 		function segmentLabel(group, nodes) {
 			if (group.textAfter && group.toolCount > 0) {
-				// 段闭合：按工具类型分组统计（think 不算）
+				// 段闭合：按工具类型分组统计（think 不算），结果缓存
+				var cacheKey = segmentCacheKey(group, nodes);
+				var cached = segmentLabelCache.get(cacheKey);
+				if (cached !== undefined) return cached;
 				var stats = classifySegmentTools(group, nodes);
 				var parts = [];
 				var readLabel = filePartLabel(stats, "read", _T("segmentRead"), _T("segmentReadSuffix"));
@@ -1291,6 +1319,7 @@ window.__ModuleLoader__.load({
 					if (group.failures === 1 && group.toolCount === 1) label += _T("failurePrefix") + _T("failureSingle");
 					else label += _T("failurePrefix") + group.failures + _T("failureSuffix");
 				}
+				segmentLabelCache.set(cacheKey, label);
 				return label;
 			}
 			if (group.textAfter && group.toolCount === 0) {

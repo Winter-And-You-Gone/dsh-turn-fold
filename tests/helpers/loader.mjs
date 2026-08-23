@@ -41,6 +41,7 @@ const TEST_EXPORTS = [
   'useLiveNow',
   'liveTokenCache',
   'liveTickState',
+  'segmentLabelCache',
   'turnOverrides',
   'overrides',
   'hiddenMarker',

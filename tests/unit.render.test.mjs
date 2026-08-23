@@ -242,6 +242,7 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     T.turnOverrides.clear() // 模块级状态，避免测试间污染
     T.overrides.clear()
     T.liveTokenCache.clear()
+    T.segmentLabelCache.clear()
     mount(RUNNING)
   })
   afterEach(() => {
@@ -250,6 +251,7 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     T.turnOverrides.clear()
     T.overrides.clear()
     T.liveTokenCache.clear()
+    T.segmentLabelCache.clear()
     T.CONFIG.liveTickMs = realLiveTickMs
     Date.now = realDateNow
   })
@@ -325,6 +327,7 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     T.turnOverrides.clear()
     T.overrides.clear()
     T.liveTokenCache.clear()
+    T.segmentLabelCache.clear()
   })
   afterEach(() => {
     act(() => root.unmount())
@@ -332,6 +335,7 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     T.turnOverrides.clear()
     T.overrides.clear()
     T.liveTokenCache.clear()
+    T.segmentLabelCache.clear()
     T.CONFIG.liveTickMs = realLiveTickMs
     Date.now = realDateNow
   })

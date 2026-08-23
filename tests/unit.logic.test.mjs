@@ -1,7 +1,7 @@
 // 纯函数单元测试：computeGroup / computeTurnFold / computeTurnMetrics /
 // turnHeaderLabel / formatTurnDuration / formatTokPerSec / turnNumber。
 // 直接测试 client.js 的真实实现（经 loader 注入 __test 导出，无复制漂移）。
-import { describe, it } from 'node:test'
+import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { loadPlugin } from './helpers/loader.mjs'
 import { makeNode, toolNode, asNode, userNode, contextNode, tailNode, buildSnapshot } from './helpers/store.mjs'
@@ -163,6 +163,8 @@ describe('computeGroup（段级分组）', () => {
 
 // ─────────────────────────── segmentLabel / summarizeArgs（段组头标题） ───────────────────────────
 describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
+  // 段闭合标题缓存按 leaderKey+keys 记忆；测试复用节点 key（如 e1/r1），需清理防串
+  beforeEach(() => { T.segmentLabelCache.clear() })
   const toolWithArgs = (key, seq, { running = false, name = 'Pwsh', argsRaw } = {}) =>
     makeNode(key, 'tool-call', seq, {
       data: { root: running ? { callId: key, name, argsRaw } : { kind: 'tool-result', callId: key, name, argsRaw, isError: false } },
