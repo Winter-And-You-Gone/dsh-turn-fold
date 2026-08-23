@@ -1148,10 +1148,25 @@ window.__ModuleLoader__.load({
 			}
 			return segmentLabel(group, nodes);
 		}
-		/** 段级分组渲染：tool-call 或 think 节点都通过此函数渲染段组头 + 折叠内容。 */
-		function renderSegment(props, group, open, sessionId, nodes, content) {
+		/** 段级分组渲染：tool-call 或 think 节点都通过此函数渲染段组头 + 折叠内容。
+		 *  段内所有含 text 的节点的 text 正文统一在段组头下方渲染（始终显示、不折叠、
+		 *  唯一一份——官方渲染 + CSS 隐藏 think 行），工具卡片/think 内容在 FoldClip 内。
+		 *  finalKey：回合最终总结节点（由 turn 级单独渲染，段内跳过避免重复）。 */
+		function renderSegment(props, group, open, sessionId, nodes, content, finalKey) {
 			if (!group.isLeader) {
 				return open ? react.createElement("div", { className: "ccg-member-in" }, content) : hiddenMarker();
+			}
+			var textBodies = [];
+			for (var i = 0; i < group.keys.length; i++) {
+				var n = nodes.get(group.keys[i]);
+				if (!n || n.key === finalKey) continue;
+				if (n.kind === "assistant-step" && hasText(n)) {
+					textBodies.push(react.createElement(
+						"div",
+						{ className: "ccg-text-only", key: n.key },
+						renderBuiltinAssistant(Object.assign({}, props, { node: n }))
+					));
+				}
 			}
 			var toggle = function () {
 				setGroupOpen(sessionId, group.leaderKey, !open);
@@ -1165,6 +1180,7 @@ window.__ModuleLoader__.load({
 					GroupHeader,
 					{ count: group.toolCount, open: open, onToggle: toggle, label: title, danger: danger, isTurn: false }
 				),
+				textBodies,
 				react.createElement(FoldClip, { open: open }, content)
 			);
 		}
@@ -1209,9 +1225,10 @@ window.__ModuleLoader__.load({
 			// 工具调用：仅上下文注入/思考的纯问答回合同样收成一个大组头。
 			if (fold && fold.foldable && !fold.outsideScope) {
 				var turnOpen = turnOverride === null ? !closed : turnOverride;
+				var finalKey = fold.finalAssistantKey;
 				if (!fold.isTurnHeader) {
 					// 成员：大组头展开时显示自己的段级内容；收起时隐藏（整行 display:none）。
-					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderSegment(props, group, open, sessionId, nodes, renderBuiltinToolCall(props))) : hiddenMarker();
+					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderSegment(props, group, open, sessionId, nodes, renderBuiltinToolCall(props), finalKey)) : hiddenMarker();
 				}
 				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签，无数据则退回
 				// "运行了 N 条命令"）；组头下方常驻分隔线（收起/展开都显示），其下接自己的段级内容。
@@ -1228,12 +1245,12 @@ window.__ModuleLoader__.load({
 						{ label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed }
 					),
 					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
-					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderSegment(props, group, open, sessionId, nodes, renderBuiltinToolCall(props)))
+					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderSegment(props, group, open, sessionId, nodes, renderBuiltinToolCall(props), finalKey))
 				);
 			}
 
 			// 未整回合折叠：段级分组逻辑。
-			return renderSegment(props, group, open, sessionId, nodes, renderBuiltinToolCall(props));
+			return renderSegment(props, group, open, sessionId, nodes, renderBuiltinToolCall(props), fold ? fold.finalAssistantKey : undefined);
 		}
 
 		// ---- 助手节点（Think / 最终消息）：整回合折叠支持 ----
@@ -1278,19 +1295,14 @@ window.__ModuleLoader__.load({
 					renderBuiltinAssistant(props)
 				);
 			}
-			// think 节点（含 think+text 同一节点）：think 部分收进段级折叠，text 正文在
-			// 段外单独渲染（CSS 隐藏官方 think 行）保持始终可见且只渲染一份——段内
-			// 展开时只显示 think 完整内容（自研文本），不含 text 正文，避免两份 text。
+			// think 节点（含 think+text 同一节点）：think 部分收进段级折叠，text 正文由
+			// renderSegment 统一在段组头下方渲染（段内所有含 text 节点的 text 正文）。
 			if (isThinkNode(node) && segGroup) {
-				// 段内内容：含 text 节点用自研完整 think 文本（不含 text 正文，防止重复）；
+				// 段内展开内容：含 text 节点用自研完整 think 文本（不含 text 正文，防止重复）；
 				// 纯 think 节点用官方渲染（官方 think 行）。
 				var segContent = hasText(node)
 					? react.createElement("div", { className: "ccg-think-full" }, reasoningText(node))
 					: renderBuiltinAssistant(props);
-				// 段外 text 正文：始终渲染（官方整体渲染 + CSS 隐藏 think 行）
-				var textBody = hasText(node)
-					? react.createElement("div", { className: "ccg-text-only" }, renderBuiltinAssistant(props))
-					: null;
 				if (fold.isTurnHeader) {
 					// think 是回合第一条中间节点：同时是 turn 组头和段 leader——大组头下方接段级折叠行。
 					var toggleTurn2 = function () {
@@ -1304,16 +1316,12 @@ window.__ModuleLoader__.load({
 						react.createElement(GroupHeader, { label: turnLabel2, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn2, isTurn: true, live: !closed }),
 						react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 						react.createElement(FoldClip, { open: turnOpen, live: !closed },
-							renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent),
-							textBody
+							renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent, fold.finalAssistantKey)
 						)
 					);
 				}
 				if (!turnOpen) return hiddenMarker();
-				return react.createElement("div", { style: { display: "contents" } },
-					renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent),
-					textBody
-				);
+				return renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent, fold.finalAssistantKey);
 			}
 			if (!fold.isTurnHeader) {
 				// 中间 Think 节点（含 text 的普通消息）：大组头展开时显示；收起时隐藏。
