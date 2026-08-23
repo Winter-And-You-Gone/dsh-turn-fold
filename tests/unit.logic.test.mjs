@@ -255,6 +255,33 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了3条命令 —— 2条执行失败')
   })
 
+  it('段闭合：混合操作失败计入所有工具（read 失败也算）', () => {
+    const toolWithPath = (key, seq, name, path, isError) =>
+      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: path ? JSON.stringify({ file_path: path }) : '{}', isError } } })
+    // read 失败 + pwsh 成功 → 1 条执行失败（不区分类型）
+    let nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('r1', 300, 'read', 'C:\\proj\\a.js', true),
+      toolWithPath('c1', 301, 'pwsh', null, false),
+      asNode('as2', 400),
+    ]
+    let s = buildSnapshot(nodes, { turnEnds: new Map() })
+    let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 运行了pwsh —— 执行失败', 'read 失败计入失败数')
+    // edit + pwsh 都失败 → 2 条执行失败
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('e1', 300, 'edit', 'C:\\proj\\b.js', true),
+      toolWithPath('c1', 301, 'pwsh', null, true),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js 运行了pwsh —— 2条执行失败', 'edit+pwsh 失败计入失败数')
+  })
+
   it('段闭合：单次命令显示工具名，多次显示次数+单位', () => {
     const nodes = [
       userNode('u', 100),
