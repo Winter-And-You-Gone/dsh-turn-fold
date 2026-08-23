@@ -207,7 +207,9 @@ window.__ModuleLoader__.load({
 				".ccg-think-prefix{flex:none}",
 				/* 图标与 · 前后统一 4px 间隔：前缀 图标 名称 · 摘要 */
 				".ccg-think-icon{flex:none;display:inline-flex;align-items:center;margin:0 4px}",
-				".ccg-think-name{flex:none;color:var(--dsw-alias-label-primary,#f3f4f6);font-weight:400}",
+				/* 名称不设显式颜色：继承组头标题色（label-secondary），与"运行了 N 条命令"
+				   纯文本标题视觉一致（此前设 label-primary 白色导致观感字号不同） */
+				".ccg-think-name{flex:none;font-weight:400}",
 				".ccg-think-sep{flex:none;color:var(--dsw-alias-label-tertiary,#9ca3af);margin:0 4px}",
 				".ccg-think-summary{display:inline-block;min-width:0;max-width:100%;vertical-align:bottom;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 				".ccg-think-summary[data-follow-end]{text-overflow:clip}",
@@ -1130,17 +1132,29 @@ window.__ModuleLoader__.load({
 			if (group.failures > 0) fallback += "——" + group.failures + _T("failureSuffix");
 			return fallback;
 		}
-		/** think 摘要行：运行中横向自动滚动跟随末尾（官方 ReasoningRow 的 data-follow-end 行为）。 */
+		/** think 摘要行：运行中横向自动滚动跟随末尾（官方 ReasoningRow 的 data-follow-end 行为）。
+		 *  滚动位置用 rAF 节流（每帧至多一次 layout 读写）——think 流式 chunk 高频更新时，
+		 *  若每次渲染都同步读 scrollWidth / 写 scrollLeft 会造成 layout thrashing、阻塞主线程
+		 *  （表现：标题卡住不动、几秒后一次性刷出全部内容）。官方 ReasoningRow 同样用
+		 *  useThrottledVisualUpdate 节流。 */
 		function ThinkSummary(props) {
 			var text = props.text;
 			var running = props.running === true;
 			var ref = react.useRef(null);
+			var rafRef = react.useRef(null);
 			var line = running ? latestLine(text) : firstLine(text);
 			react.useEffect(function () {
 				var el = ref.current;
 				if (!el) return;
-				if (running) el.scrollLeft = el.scrollWidth - el.clientWidth;
-				else el.scrollLeft = 0;
+				if (rafRef.current !== null) return; // 本帧已排队，合并多次渲染
+				rafRef.current = raf(function () {
+					rafRef.current = null;
+					if (running) el.scrollLeft = el.scrollWidth - el.clientWidth;
+					else el.scrollLeft = 0;
+				});
+				return function () {
+					if (rafRef.current !== null) { caf(rafRef.current); rafRef.current = null; }
+				};
 			});
 			return react.createElement(
 				"span",
