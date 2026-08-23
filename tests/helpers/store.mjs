@@ -62,9 +62,9 @@ export function contextNode(key, anchorSeq) {
 }
 
 /** turn-tail 节点 */
-export function tailNode(key, anchorSeq, { tokensPerSecond } = {}) {
+export function tailNode(key, anchorSeq, { tokensPerSecond, ttftMs } = {}) {
   return makeNode(key, 'turn-tail', anchorSeq, {
-    data: { turn: 13, seq: anchorSeq, ...(tokensPerSecond !== undefined ? { tokensPerSecond } : {}) },
+    data: { turn: 13, seq: anchorSeq, ...(ttftMs !== undefined ? { ttftMs } : {}), ...(tokensPerSecond !== undefined ? { tokensPerSecond } : {}) },
   })
 }
 

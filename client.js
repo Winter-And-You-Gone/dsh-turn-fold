@@ -691,7 +691,7 @@ window.__ModuleLoader__.load({
 				}
 			}
 			var input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
-			var tokensPerSecond;
+			var tokensPerSecond, ttftMs;
 			for (var i = 0; i < keys.length; i++) {
 				var n = nodes.get(keys[i]);
 				if (!n) continue;
@@ -701,8 +701,11 @@ window.__ModuleLoader__.load({
 					if (typeof u.outputTokens === "number" && isFinite(u.outputTokens)) output += u.outputTokens;
 					if (typeof u.cacheReadTokens === "number" && isFinite(u.cacheReadTokens)) cacheRead += u.cacheReadTokens;
 					if (typeof u.cacheWriteTokens === "number" && isFinite(u.cacheWriteTokens)) cacheWrite += u.cacheWriteTokens;
-				} else if (n.kind === "turn-tail" && n.data && typeof n.data.tokensPerSecond === "number") {
-					tokensPerSecond = n.data.tokensPerSecond;
+				} else if (n.kind === "turn-tail" && n.data) {
+					// 官方 turn-tail 节点携带权威的 tok/s 与 ttftMs（该回合第一个 step 的
+					// firstTokenTime - stepStartTime，来自持久化事件日志，刷新页面不丢）。
+					if (typeof n.data.tokensPerSecond === "number") tokensPerSecond = n.data.tokensPerSecond;
+					if (typeof n.data.ttftMs === "number") ttftMs = n.data.ttftMs;
 				}
 			}
 			var billedInput = input + cacheRead + cacheWrite;
@@ -714,7 +717,7 @@ window.__ModuleLoader__.load({
 				tokensPerSecond = output / (durationMs / 1000);
 			}
 			if (durationMs === undefined && !hasUsage && tokensPerSecond === undefined) return null;
-			return {
+			var metricsResult = {
 				durationMs: durationMs,
 				// 消耗 = 计费输入（uncached + cacheRead + cacheWrite）+ 输出
 				tokens: hasUsage ? (billedInput + output) : undefined,
@@ -724,6 +727,9 @@ window.__ModuleLoader__.load({
 				// 缓存命中率：固定两位小数（如 "66.67"、"99.99"）
 				cacheHitPercent: hasUsage && billedInput > 0 ? cacheHitPercent(input, cacheRead, cacheWrite) : undefined
 			};
+			// TTFT（官方 turn-tail 值，单回合第一个 step 的 firstTokenTime - stepStartTime）
+			if (ttftMs !== undefined) metricsResult.ttftMs = ttftMs;
+			return metricsResult;
 		}
 
 		/** TTFT（首字延迟，毫秒）：回合启动（turnTimings.startTime）到第一个 response
@@ -807,7 +813,8 @@ window.__ModuleLoader__.load({
 					tokens: projected,
 					outputTokens: undefined,
 					tokensPerSecond: undefined,
-					cacheHitPercent: undefined
+					cacheHitPercent: undefined,
+					ttftMs: metrics.ttftMs
 				};
 			}
 			var projected = projectLiveTokens(key, metrics.tokens, metrics.outputTokens, liveNow, metrics.tokensPerSecond);
@@ -817,7 +824,8 @@ window.__ModuleLoader__.load({
 				tokens: projected,
 				outputTokens: metrics.outputTokens,
 				tokensPerSecond: metrics.tokensPerSecond,
-				cacheHitPercent: metrics.cacheHitPercent
+				cacheHitPercent: metrics.cacheHitPercent,
+				ttftMs: metrics.ttftMs
 			};
 		}
 		/** 耗时格式化：中英文各自的单位写法；>=1 小时 → "x时x分x秒" / "xh xm xs"。 */
@@ -1652,10 +1660,14 @@ window.__ModuleLoader__.load({
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
-			// TTFT（首字近似）：首个 assistant-step 渲染时同步冻结记录（回合启动 → 首个
-			// response）；渲染期副作用需幂等（has 检查），StrictMode 双调无害
+			// TTFT（首字）：运行中（turn-tail 未出现）用渲染时刻近似——首个 assistant-step
+			// 渲染时同步冻结记录（回合启动 → 首个 response）；渲染期副作用需幂等（has 检查），
+			// StrictMode 双调无害。回合结束后优先用官方持久化值（turn-tail 携带的 ttftMs：
+			// 该回合第一个 step 的 firstTokenTime - stepStartTime，来自事件日志，刷新不丢）。
 			recordTtft(sessionId, turn, closed, turnTimings);
-			var ttftMs = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
+			var officialTtft = displayMetrics && typeof displayMetrics.ttftMs === "number" ? displayMetrics.ttftMs : undefined;
+			var approxTtft = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
+			var ttftMs = officialTtft !== undefined ? officialTtft : approxTtft;
 			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
 
 			// 兜底：找不到自己的节点时，原样委托内置渲染（补齐 renderSlot），绝不白屏。
@@ -1718,10 +1730,14 @@ window.__ModuleLoader__.load({
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
-			// TTFT（首字近似）：首个 assistant-step 渲染时同步冻结记录（回合启动 → 首个
-			// response）；渲染期副作用需幂等（has 检查），StrictMode 双调无害
+			// TTFT（首字）：运行中（turn-tail 未出现）用渲染时刻近似——首个 assistant-step
+			// 渲染时同步冻结记录（回合启动 → 首个 response）；渲染期副作用需幂等（has 检查），
+			// StrictMode 双调无害。回合结束后优先用官方持久化值（turn-tail 携带的 ttftMs：
+			// 该回合第一个 step 的 firstTokenTime - stepStartTime，来自事件日志，刷新不丢）。
 			recordTtft(sessionId, turn, closed, turnTimings);
-			var ttftMs = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
+			var officialTtft = displayMetrics && typeof displayMetrics.ttftMs === "number" ? displayMetrics.ttftMs : undefined;
+			var approxTtft = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
+			var ttftMs = officialTtft !== undefined ? officialTtft : approxTtft;
 			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
 			// 纯 think 节点也参与段级分组（段 = 两个 text 之间的 tool-call + think）。
 			var segGroup = useMemo(function () { return computeGroup(order, nodes, node); }, [order, nodes, node]);
@@ -1827,10 +1843,14 @@ window.__ModuleLoader__.load({
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
-			// TTFT（首字近似）：首个 assistant-step 渲染时同步冻结记录（回合启动 → 首个
-			// response）；渲染期副作用需幂等（has 检查），StrictMode 双调无害
+			// TTFT（首字）：运行中（turn-tail 未出现）用渲染时刻近似——首个 assistant-step
+			// 渲染时同步冻结记录（回合启动 → 首个 response）；渲染期副作用需幂等（has 检查），
+			// StrictMode 双调无害。回合结束后优先用官方持久化值（turn-tail 携带的 ttftMs：
+			// 该回合第一个 step 的 firstTokenTime - stepStartTime，来自事件日志，刷新不丢）。
 			recordTtft(sessionId, turn, closed, turnTimings);
-			var ttftMs = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
+			var officialTtft = displayMetrics && typeof displayMetrics.ttftMs === "number" ? displayMetrics.ttftMs : undefined;
+			var approxTtft = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
+			var ttftMs = officialTtft !== undefined ? officialTtft : approxTtft;
 			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
 
 			// 无法安全定位组头（回合内无任何中间节点）/ 折叠作用域之外（用户消息上方）的

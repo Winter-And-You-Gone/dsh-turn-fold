@@ -20,7 +20,7 @@ const T13_NODES = [
   asNode('as-4', 37743, { step: 4, usage: { inputTokens: 4000, outputTokens: 700, cacheReadTokens: 70000 } }),
   toolNode('tc-verify', 37744, { step: 4, isError: false }),
   asNode('as-5', 38326, { step: 5, status: 'settled', usage: { inputTokens: 2095, outputTokens: 569, cacheReadTokens: 88320 } }),
-  tailNode('tail-13', 38330, { tokensPerSecond: 144 }),
+  tailNode('tail-13', 38330, { tokensPerSecond: 144, ttftMs: 4900 }),
 ]
 export const TURN13 = buildSnapshot(T13_NODES, {
   turnEnds: new Map([[13, 38330]]),
@@ -33,8 +33,8 @@ export const TURN13_NODES = T13_NODES
 // tokens = billedInput + output = 370202
 // cacheHitPercent = round(344864 / 366929 * 100) = 94
 // durationMs = 1787396180925 - 1787394826374 = 1354551 → "22分34秒"
-export const TURN13_METRICS = { durationMs: 1354551, tokens: 370202, outputTokens: 3273, tokensPerSecond: 144, cacheHitPercent: '93.99' }
-export const TURN13_LABEL = '耗时22分34秒 · 消耗370202token · 144tok/s · 缓存命中93.99%'
+export const TURN13_METRICS = { durationMs: 1354551, ttftMs: 4900, tokens: 370202, outputTokens: 3273, tokensPerSecond: 144, cacheHitPercent: '93.99' }
+export const TURN13_LABEL = '耗时22分34秒 · 首字4.9s · 消耗370202token · 144tok/s · 缓存命中93.99%'
 
 // ──────────────── turn 11 of session 898a7246（调试 · 34s · 3 个工具调用）───────────────
 // 用户消息 "继续" (seq 31135) · 然后是 3 个步骤 + 1 个最终总结。

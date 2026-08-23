@@ -227,7 +227,7 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
   it('大组头文案显示真实会话指标（已结束回合带"已完成"状态前缀）', () => {
     const title = container.querySelector('.ccg-header .ccg-title')
     assert.ok(title)
-    assert.equal(title.textContent, '已完成 | 耗时22分34秒 · 消耗370202token · 144tok/s · 缓存命中93.99%第13轮')
+    assert.equal(title.textContent, '已完成 | 耗时22分34秒 · 首字4.9s · 消耗370202token · 144tok/s · 缓存命中93.99%第13轮')
     assert.ok(container.querySelector('.ccg-header-round'), '大组头右侧应有"第x轮"')
     assert.equal(container.querySelector('.ccg-header-round').textContent, '第13轮')
   })
@@ -587,9 +587,9 @@ describe('大组头 0 秒占位（GroupedUserView）', () => {
 describe('语言动态切换', () => {
   it('turnHeaderLabel 随 document.documentElement.lang 在中文/英文间切换', () => {
     document.documentElement.lang = 'en-US'
-    assert.equal(T.turnHeaderLabel(TURN13_METRICS), '22m 34s · 370202 tokens · 144 tok/s · cache hit 93.99%')
+    assert.equal(T.turnHeaderLabel(TURN13_METRICS), '22m 34s · TTFT 4.9s · 370202 tokens · 144 tok/s · cache hit 93.99%')
     document.documentElement.lang = 'zh-CN'
-    assert.equal(T.turnHeaderLabel(TURN13_METRICS), '耗时22分34秒 · 消耗370202token · 144tok/s · 缓存命中93.99%')
+    assert.equal(T.turnHeaderLabel(TURN13_METRICS), '耗时22分34秒 · 首字4.9s · 消耗370202token · 144tok/s · 缓存命中93.99%')
     // 恢复（避免污染后续测试；无 lang 时回退 navigator zh-CN）
     document.documentElement.lang = ''
   })

@@ -82,9 +82,11 @@ text：……                                             ← 下一个 text 出
   正式大组头接替显示（位置连续）；
 - **指标实时更新**：大组头中的**耗时秒数每秒走动**（从回合 `turn/start` 起计时），
   **"消耗token"按随机间隔（默认 125~250ms）刷新且持续增长**，tok/s 按已输出 token / 已耗时实时估算，
-  **缓存命中率显示两位小数**（如 `80.00%`），**首字（TTFT）近似**从回合启动到首个
-  assistant-step 渲染时刻计算（秒为单位、一位小数）；
-  回合结束后全部切换为官方权威值（turn-tail 的 tok/s、`turn/end` 的精确耗时）；
+  **缓存命中率显示两位小数**（如 `80.00%`），**首字（TTFT）**运行中按渲染时刻近似
+  （回合启动到首个 assistant-step 渲染，秒为单位、一位小数），**回合结束后切换为官方
+  持久化值**（turn-tail 携带的 `ttftMs`——该回合第一个请求的
+  `firstTokenTime - stepStartTime`，来自事件日志，刷新页面不丢）；
+  回合结束后全部指标切换为官方权威值（turn-tail 的 tok/s、`turn/end` 的精确耗时）；
 - **大组头最右侧右对齐显示"第x轮"**（如 `第13轮` / `Turn 13`，英文随 DSH 语言切换）；
 - **"消耗token"持续增长动画**：真实 usage 只在每个请求完成时到达，两次之间数字会
   停住——运行中在真实基线之上叠加纯展示用的动画偏移，偏移按实际 tick 次数推进
@@ -265,10 +267,12 @@ git push --follow-tags
   偏移持续增长（真实 `usage` 到达时校正基线），全部指标在 `turn/end` 后切换为权威值。
 - **0 秒占位**：`user` 渲染器覆盖在「会话运行中且用户消息仍是最后一条」时渲染占位大组头
   （耗时从运行中回合的 `startTime` 计时），第一条中间节点到达后自动交接给正式大组头。
-- **首字（TTFT）近似**：会话快照不含官方 timing 数据（`stepStartTime`/`firstTokenTime`
-  只在 conversation 内部事件节点上），插件在首个 assistant-step 渲染时冻结
-  `Date.now() - turnTimings.startTime` 作为首字延迟（误差约一帧渲染延迟），幂等记录、
-  回合内只记一次。
+- **首字（TTFT）双来源**：**运行中**（回合未结束、turn-tail 未出现）会话快照不含官方
+  timing 数据（`stepStartTime`/`firstTokenTime` 只在 conversation 内部事件节点上），插件在
+  首个 assistant-step 渲染时冻结 `Date.now() - turnTimings.startTime` 作为近似（误差约一帧
+  渲染延迟），幂等记录、回合内只记一次；**回合结束后**优先用官方持久化值——`turn-tail`
+  节点携带的 `ttftMs`（该回合第一个 step 的 `firstTokenTime - stepStartTime`，由官方
+  `deriveTurnMetrics` 从事件日志算出），刷新页面不丢。
 - **段闭合标题缓存**：段闭合后标题不再变化，按 `leaderKey + 节点 keys + 语言 + 工具指纹`
   （名称/isError/argsRaw 长度，不解析内容）记忆，避免每次渲染重复解析 argsRaw；
   工具行数变更优先读取官方 `call.diffs` 数据（`oldText`/`newText` 块行数），无 diffs 时
