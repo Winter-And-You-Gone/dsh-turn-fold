@@ -197,7 +197,8 @@ window.__ModuleLoader__.load({
 				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live::after{animation:none}}",
 				/* 含 think+text 节点拆分渲染：段外 text 正文的官方 think 行隐藏
 				   （段外只显示 text 正文，段内展开时官方渲染含完整 think 行） */
-				".ccg-text-only [data-variant=\"think\"]{display:none}"
+				".ccg-text-only [data-variant=\"think\"]{display:none}",
+				".ccg-text-only{padding:4px 0}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
