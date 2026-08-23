@@ -7,38 +7,36 @@
 > Then this plugin is made for you.
 
 A **pure plugin** for DeepSeek Harness (DSH) that only handles **collapsing**:
-1. **Segment-level auto-collapse**: tool calls are grouped by Think; once the next Think appears, the group automatically collapses into a segment-level group header (Think blocks keep their built-in defaults and only act as group boundaries).
+1. **Segment-level auto-collapse**: all tool calls and Think blocks between two text messages are grouped into **one segment-level group header**, **collapsed by default**; while running, the header dynamically shows "Running `ToolName` · description" or "Thinking · content", switching to "Ran N commands" (Think blocks don't count) once the next text message appears.
 2. **Live big header**: the big group header appears as soon as the agent's reply starts, with the reply loading line by line below it; the header shows duration / tokens / tok/s / cache-hit rate in real time, separated from the content by a divider line.
 3. **Whole-turn collapse**: after a reply finishes, all Think blocks + tool calls + context injections of that turn collapse into **one big group header** (collapsed by default); only the final summary text stays visible.
 4. **Manual expand/collapse**: click a group header to toggle.
 
 **Does not modify any `@deepseek-ai/dsh-*` source code.**
 
-> **Design reference**: this plugin's tool-call auto-collapse feature and interaction style are inspired by
-> Codex's (OpenAI) tool-call auto-collapse experience — tool calls auto-collapse by reasoning segment and can be expanded by clicking the group header.
-
 ## Feature 1: Segment-level auto-collapse
 
 ```
-Think: ……（keeps built-in default: collapsed, click to expand）
-┌───────────────────────────────────────┐
-│ › Ran 3 commands              [3]     │  ← auto-collapses after the next Think
-└───────────────────────────────────────┘
-Think: ……（keeps built-in default）
-┌───────────────────────────────────────┐
-│ › Ran 2 commands              [2]     │
-└───────────────────────────────────────┘
+text: First, check the repo status.                    ← text appears directly
+┌────────────────────────────────────────────────────┐
+│ › Running Pwsh · Commit 1: core +tests              │  ← running: shows current tool dynamically
+└────────────────────────────────────────────────────┘
+text: …                                               ← next text message
+┌────────────────────────────────────────────────────┐
+│ › Ran 3 commands                            [3]     │  ← segment closed: shows command count
+└────────────────────────────────────────────────────┘
 ```
 
-- **Think keeps built-in default**: collapsed, click to expand; the plugin makes no changes to it (only uses it as a group boundary).
-- **Auto-collapse timing**: when the **next Think** after a group of tool calls appears, that group auto-collapses.
-- **Stays expanded during the turn**: until the next Think appears, the current group of tool calls stays expanded so you can watch execution live.
-- **Manual expand/collapse**: click a group header to toggle; manual choices override the auto rule.
+- **Segment = content between two text messages**: consecutive tool calls and Think blocks mix into one segment (Think no longer breaks the group); text-carrying assistant messages are the segment boundaries, and the text itself is always displayed directly.
+- **Always collapsed by default**: segment-level headers are **always collapsed by default** (even while running) — while running, only text messages and segment header rows are visible; tool cards and Think content appear only when clicking the segment header.
+- **Dynamic title while running**: before the next text message appears (segment not closed), the header shows the last node in the segment — tool calls show "Running `ToolName` · parameter summary" (e.g. "Running Pwsh · Commit 1: core +tests"), Think blocks show "Thinking · content" (content updates live as streaming progresses).
+- **Closed segment title**: once the next text message appears, the header becomes "Ran N commands" (N = tool calls in the segment, Think blocks don't count); a Think-only segment (no tools) shows "Think" when closed.
+- **Manual expand/collapse**: click a segment header to toggle; manual choices override the auto rule.
 - **Failed commands turn red**: when a command in the group **failed** (tool result `isError`, interrupted counts too), the group header text turns red and the failed count is appended after "Ran N commands", e.g. `Ran 6 commands——2 failed`.
 
 ### Screenshots
 
-Before/after collapse (left: all tool calls expanded, listed one by one; right: auto-collapsed into segment-level group headers after the next Think):
+Before/after collapse (left: all tool calls expanded, listed one by one; right: auto-collapsed into segment-level group headers after the next text message):
 
 <table>
   <tr>
@@ -78,7 +76,7 @@ Before/after collapse (left: all tool calls expanded, listed one by one; right: 
 - **Final summary shows only body**: after the turn ends, Think lines inside the final summary message are hidden too;
 - **Status labels**: turns that ended abnormally (user-stopped / interrupted) get a status prefix on the big header,
   e.g. `Stopped | 5m 12s, ...`; normally completed turns show no extra label;
-- **Single items are not grouped**: when there is only **1** command between two Think blocks, no segment-level header is applied and the command card is always rendered as-is; at turn end it is folded into the big header, and returns to normal once expanded.
+- **Single items are grouped too**: when there is only **1** command (or 1 Think block) between two text messages, a segment-level header is still applied — "Running `ToolName` · …" while running, "Ran 1 command" once text appears; at turn end it is folded into the big header, and the segment header row is visible after expanding the big header.
 
 ### Screenshots
 
