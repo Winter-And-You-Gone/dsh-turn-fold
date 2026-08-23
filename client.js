@@ -818,7 +818,7 @@ window.__ModuleLoader__.load({
 				if (LOCALE === "zh") parts.push("缓存命中" + metrics.cacheHitPercent + "%");
 				else parts.push("cache hit " + metrics.cacheHitPercent + "%");
 			}
-			return parts.join(LOCALE === "zh" ? "，" : ", ");
+			return parts.join(" · ");
 		}
 
 		// ---- 回合状态标签 ----

@@ -1,6 +1,6 @@
 // React 渲染测试：用 jsdom + react-dom/client 挂载真实的 GroupedToolCallView /
-// GroupedAssistantView，驱动 useSession mock store，验证：
-//   初始折叠 → 点击大组头展开 → 再次点击收起 的完整交互，以及
+// GroupedAssistantView · 驱动 useSession mock store · 验证：
+//   初始折叠 → 点击大组头展开 → 再次点击收起 的完整交互 · 以及
 //   内置组件委托渲染时 useHostDescription 等 kit hook 的透传（Bug2 回归）。
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -32,7 +32,7 @@ const { test: T, exports: pluginExports, React } = loadPlugin({ window: dom.wind
 let lastToolCallProps = null
 function MockToolCallTree(props) {
   lastToolCallProps = props
-  // 组件内调用 useHostDescription（与真实 ToolCallTree 相同的用法），结果写入 DOM 供断言
+  // 组件内调用 useHostDescription（与真实 ToolCallTree 相同的用法） · 结果写入 DOM 供断言
   const home = typeof props.useHostDescription === 'function'
     ? props.useHostDescription((d) => d?.home)
     : 'NO-HOOK'
@@ -79,7 +79,7 @@ pluginExports.apply({
 
 // ── 模拟 renderer 的 cachedSlotInject：条目 inject 声明的 hooks 变成 use<Name> props ──
 // 真实 DSH 里 cachedSlotInject 会把 hooks.hostDescription(source) 绑定成 useHostDescription
-// 传入条目组件；这里用同一机制从注册条目取 source 并绑定，模拟真实渲染链路。
+// 传入条目组件；这里用同一机制从注册条目取 source 并绑定 · 模拟真实渲染链路。
 const injectedHooks = (() => {
   const injectFace = slotRegistrations[0].options.inject()
   const source = injectFace.hooks.hostDescription
@@ -147,7 +147,7 @@ const RUNNING = buildSnapshot(
 
 describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真实结构）', () => {
   beforeEach(() => {
-    T.turnOverrides.clear() // 模块级状态，避免测试间污染
+    T.turnOverrides.clear() // 模块级状态 · 避免测试间污染
     T.overrides.clear()
     mount(TURN13)
   })
@@ -158,7 +158,7 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
     T.overrides.clear()
   })
 
-  it('初始状态：只渲染大组头 + 最终总结，所有成员带隐藏标记', () => {
+  it('初始状态：只渲染大组头 + 最终总结 · 所有成员带隐藏标记', () => {
     const c = counts()
     assert.equal(c.headers, 1, '应恰好一个大组头')
     assert.ok(container.querySelector('.ccg-turn-divider'), '已结束回合收起状态下分隔线也常驻显示')
@@ -171,7 +171,7 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
     clickHeader()
     const c = counts()
     // 段级折叠默认收起 → 工具卡片隐藏
-    assert.equal(c.cards, 0, '段级折叠默认收起，工具卡片不可见')
+    assert.equal(c.cards, 0, '段级折叠默认收起 · 工具卡片不可见')
     // text 正文：as-1（纯 think 段）官方渲染自带 text；as-2/3/4 text-only + as-5 final = 4??
     // 实际：as-1 官方渲染 1 + as-2 text-only 1 + as-3 text-only 1 + as-4 text-only 1 + as-5 final 1 = 5
     assert.equal(c.assistants, 5, 'text 正文各处渲染 = 5')
@@ -183,8 +183,8 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
     for (let i = 0; i < segHeaders.length; i++) {
       assert.ok(segHeaders[i].textContent.includes('运行了pwsh'), '工具段组头标题应为"运行了pwsh"')
     }
-    // text-only：as-2/3/4（as-1 纯 think 段直接官方渲染，无段外 text-only）
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 3, '3 个 text-only（as-2/3/4，as-1 无段外 text）')
+    // text-only：as-2/3/4（as-1 纯 think 段直接官方渲染 · 无段外 text-only）
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 3, '3 个 text-only（as-2/3/4 · as-1 无段外 text）')
   })
 
   it('展开段级组头后工具卡片可见（手动展开覆盖默认折叠）', () => {
@@ -210,7 +210,7 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
 
   it('Bug2 回归：委托渲染内置工具卡片时透传 useHostDescription（不再崩溃/abdicate）', () => {
     clickHeader()
-    // 展开一个工具段，让工具卡片实际挂载
+    // 展开一个工具段 · 让工具卡片实际挂载
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
     const toolSeg = segHeaders.find(h => h.textContent.includes('运行了pwsh'))
     assert.ok(toolSeg)
@@ -227,14 +227,14 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
   it('大组头文案显示真实会话指标（已结束回合带"已完成"状态前缀）', () => {
     const title = container.querySelector('.ccg-header .ccg-title')
     assert.ok(title)
-    assert.equal(title.textContent, '已完成 | 耗时22分34秒，消耗370202token，144tok/s，缓存命中93.99%')
+    assert.equal(title.textContent, '已完成 | 耗时22分34秒 · 消耗370202token · 144tok/s · 缓存命中93.99%')
   })
 })
 
 describe('运行中的回合：大组头从回复开始出现 + 实时指标 + 分隔线', () => {
-  // 冻结时钟：运行中"消耗token"在真实基线上叠加动画偏移（每 tick +1/+11 交替，
-  // tick 由随机间隔定时器驱动）。冻结 Date.now 后 liveNow 恒定，并把直播 tick 间隔
-  // 临时拉到极大（测试期间定时器绝不触发），偏移恒为 0，token 文案保持确定的 450，
+  // 冻结时钟：运行中"消耗token"在真实基线上叠加动画偏移（每 tick +1/+11 交替 · 
+  // tick 由随机间隔定时器驱动）。冻结 Date.now 后 liveNow 恒定 · 并把直播 tick 间隔
+  // 临时拉到极大（测试期间定时器绝不触发） · 偏移恒为 0 · token 文案保持确定的 450 · 
   // 断言不依赖测试执行耗时。
   const realDateNow = Date.now
   const realLiveTickMs = T.CONFIG.liveTickMs
@@ -243,7 +243,7 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     frozenNow = Date.now()
     Date.now = () => frozenNow
     T.CONFIG.liveTickMs = 1e9 // 测试期间直播 tick 不触发
-    T.turnOverrides.clear() // 模块级状态，避免测试间污染
+    T.turnOverrides.clear() // 模块级状态 · 避免测试间污染
     T.overrides.clear()
     T.liveTokenCache.clear()
     T.segmentLabelCache.clear()
@@ -264,30 +264,30 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
 
   it('回复开始即渲染大组头：组头 + 分隔线 + 工具段段组头（默认折叠）；纯 think 段直接官方渲染', () => {
     const c = counts()
-    // 大组头 1 + tc-run 段组头 1（as-run-1 纯 think 段不套段组头，直接官方渲染）
+    // 大组头 1 + tc-run 段组头 1（as-run-1 纯 think 段不套段组头 · 直接官方渲染）
     assert.equal(c.headers, 2, '运行中应一个大组头 + 一个工具段段组头')
     assert.ok(container.querySelector('.ccg-turn-divider'), '大组头与内容之间应有分隔线')
     assert.ok(container.querySelector('.ccg-group-root[data-ccg-turn][data-ccg-open="true"]'), '运行中默认展开')
     // 段级折叠始终默认收起：工具卡片隐藏
-    assert.equal(c.cards, 0, '段级折叠默认收起，工具卡片应隐藏')
+    assert.equal(c.cards, 0, '段级折叠默认收起 · 工具卡片应隐藏')
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
     assert.equal(segHeaders.length, 1, '应只有一个工具段段组头（tc-run 段）')
     assert.ok(segHeaders[0].textContent.includes('运行了pwsh'), '工具段段组头标题应为"运行了pwsh"')
-    // as-run-1（纯 think 段）直接官方渲染（Think 行 + text 正文），as-run-2 text-only 段外渲染
+    // as-run-1（纯 think 段）直接官方渲染（Think 行 + text 正文） · as-run-2 text-only 段外渲染
     assert.equal(c.assistants, 2, 'as-run-1 官方渲染 + as-run-2 text-only')
     assert.equal(c.hidden, 1, 'as-run-2 非 leader 成员隐藏标记')
   })
 
-  it('大组头文案实时显示耗时/token（token 累计确定，耗时随秒表走动）', () => {
+  it('大组头文案实时显示耗时/token（token 累计确定 · 耗时随秒表走动）', () => {
     const title = container.querySelector('.ccg-header .ccg-title')
     assert.ok(title)
     // token 累计 = 130 + 260 + 60 = 450、缓存命中 66.67% 为确定值（本 describe 冻结了
-    // Date.now，运行中 token 的动画偏移恒为 0，不会把 450 推高）；
+    // Date.now · 运行中 token 的动画偏移恒为 0 · 不会把 450 推高）；
     // 耗时 ≈ 5 秒（秒数不确定）、tok/s = 60/耗时 实时估算（秒数不确定）。
-    // 滚轮数字是视觉装饰（DOM 含 0-9 数字条），完整文案在 sr-only 文本上。
+    // 滚轮数字是视觉装饰（DOM 含 0-9 数字条） · 完整文案在 sr-only 文本上。
     const sr = title.querySelector('.ccg-sr-only')
     assert.ok(sr, '滚轮文案应有 sr-only 最终文本')
-    assert.match(sr.textContent, /^耗时\d+秒，首字\d+\.\d+s，消耗450token，\d+(\.\d+)?tok\/s，缓存命中66.67%$/)
+    assert.match(sr.textContent, /^耗时\d+秒 · 首字\d+\.\d+s · 消耗450token · \d+(\.\d+)?tok\/s · 缓存命中66.67%$/)
   })
 
   it('点击大组头收起：成员隐藏、分隔线常驻；再点展开恢复', () => {
@@ -311,8 +311,8 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
     const tcHeader = segHeaders.find(h => h.textContent.includes('运行了pwsh'))
     assert.ok(tcHeader, 'tc-run 段组头应存在')
-    assert.equal(counts().cards, 0, '默认折叠，工具卡片隐藏')
-    // textBody：as-run-1 纯 think 段直接官方渲染（无段外 text），as-run-2 段外 text-only = 1
+    assert.equal(counts().cards, 0, '默认折叠 · 工具卡片隐藏')
+    // textBody：as-run-1 纯 think 段直接官方渲染（无段外 text） · as-run-2 段外 text-only = 1
     assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, '仅 as-run-2 段外 text 正文')
     act(() => { tcHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     assert.equal(counts().cards, 1, '展开段级折叠后工具卡片可见')
@@ -348,11 +348,11 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     Date.now = realDateNow
   })
 
-  it('纯 think 段：不套段组头，直接官方渲染（官方 Think 行）', () => {
+  it('纯 think 段：不套段组头 · 直接官方渲染（官方 Think 行）', () => {
     const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
     const nodes = [userNode('u', 100), thinkNode('th', 200, '正在分析')]
     mount(buildSnapshot(nodes, { turnEnds: new Map() }))
-    // 纯 think 段不套段组头（段内无工具调用，直接官方渲染避免双层折叠）
+    // 纯 think 段不套段组头（段内无工具调用 · 直接官方渲染避免双层折叠）
     const segRoot = container.querySelector('.ccg-group-root:not([data-ccg-turn])')
     assert.equal(segRoot, null, '纯 think 段不套段组头')
     // 官方渲染（mock-assistant）直接可见（大组头下方接官方 Think 行）
@@ -391,13 +391,13 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     assert.equal(container.querySelector('.ccg-group-root:not([data-ccg-turn])'), null, 'text 出现后仍无段组头')
   })
 
-  it('think+text 节点（纯 think 段）：不套段组头，直接官方渲染（Think 行 + text 正文）', () => {
+  it('think+text 节点（纯 think 段）：不套段组头 · 直接官方渲染（Think 行 + text 正文）', () => {
     const thinkTextNode = (key, seq, think, text) => asNode(key, seq, {
       blocks: [{ kind: 'reasoning', text: think }, { kind: 'text', text }],
     })
     const nodes = [userNode('u', 100), thinkTextNode('msg', 200, '第一行思考\n完整思考内容', '这是正文')]
     mount(buildSnapshot(nodes, { turnEnds: new Map() }))
-    // 纯 think 段（无工具）→ 无段组头，官方整体渲染（Think 行 + text 正文，无重复）
+    // 纯 think 段（无工具）→ 无段组头 · 官方整体渲染（Think 行 + text 正文 · 无重复）
     assert.equal(container.querySelector('.ccg-group-root:not([data-ccg-turn])'), null, '纯 think+text 段不套段组头')
     const assistants = container.querySelectorAll('.mock-assistant')
     assert.equal(assistants.length, 1, '官方整体渲染一份（Think 行 + text 正文）')
@@ -428,7 +428,7 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     const summary = container.querySelector('.ccg-think-summary')
     assert.ok(summary, 'think 摘要元素应存在')
     assert.equal(summary.dataset.followEnd, 'true', '运行中带 data-follow-end')
-    // 流式更新：think 文本增长，标题跟随最新一行
+    // 流式更新：think 文本增长 · 标题跟随最新一行
     act(() => {
       store.setSnapshot(buildSnapshot([
         userNode('u', 100),
@@ -460,7 +460,7 @@ describe('滚轮数字（RollDigit / AnimatedLabel / 大组头 live 文案）', 
     T.overrides.clear()
   })
 
-  it('RollDigit：每位数一个视窗，内部竖排 0-9，按 data-digit 定位（jsdom 无 WAAPI → 静态 transform）', () => {
+  it('RollDigit：每位数一个视窗 · 内部竖排 0-9 · 按 data-digit 定位（jsdom 无 WAAPI → 静态 transform）', () => {
     mountNode(React.createElement(T.RollDigit, { digit: 5 }))
     const cell = rcontainer.querySelector('.ccg-roll-cell')
     assert.ok(cell, '应有滚轮视窗')
@@ -469,7 +469,7 @@ describe('滚轮数字（RollDigit / AnimatedLabel / 大组头 live 文案）', 
     assert.ok(strip)
     assert.equal(strip.children.length, 10, '数字条应含 0-9')
     assert.equal(strip.children[9].textContent, '9')
-    // translateY(-k*10%)：strip 高 10em，10% = 1em = 一个数位
+    // translateY(-k*10%)：strip 高 10em · 10% = 1em = 一个数位
     assert.equal(strip.style.transform, 'translateY(-50%)')
   })
 
@@ -480,15 +480,15 @@ describe('滚轮数字（RollDigit / AnimatedLabel / 大组头 live 文案）', 
     assert.equal(strip.style.transform, 'translateY(-70%)')
   })
 
-  it('AnimatedLabel：数字拆成逐位滚轮、文字原样，sr-only 保留完整最终文案', () => {
-    mountNode(React.createElement(T.AnimatedLabel, { label: '耗时5秒，消耗450token，12tok/s，缓存命中66.67%' }))
+  it('AnimatedLabel：数字拆成逐位滚轮、文字原样 · sr-only 保留完整最终文案', () => {
+    mountNode(React.createElement(T.AnimatedLabel, { label: '耗时5秒 · 消耗450token · 12tok/s · 缓存命中66.67%' }))
     const cells = rcontainer.querySelectorAll('.ccg-roll-cell')
-    // 数字 5 / 4 5 0 / 1 2 / 6 6 6 7 = 10 个数位（66.67 的小数点是文字，不拆滚轮）
+    // 数字 5 / 4 5 0 / 1 2 / 6 6 6 7 = 10 个数位（66.67 的小数点是文字 · 不拆滚轮）
     assert.equal(cells.length, 10)
     assert.deepEqual([...cells].map((c) => c.dataset.digit), ['5', '4', '5', '0', '1', '2', '6', '6', '6', '7'])
     const sr = rcontainer.querySelector('.ccg-sr-only')
     assert.ok(sr, '应有 sr-only 完整文案')
-    assert.equal(sr.textContent, '耗时5秒，消耗450token，12tok/s，缓存命中66.67%')
+    assert.equal(sr.textContent, '耗时5秒 · 消耗450token · 12tok/s · 缓存命中66.67%')
   })
 
   it('AnimatedLabel：数值更新只滚动对应数位（9→10 进位时新增高位）', () => {
@@ -503,18 +503,18 @@ describe('滚轮数字（RollDigit / AnimatedLabel / 大组头 live 文案）', 
   })
 
   it('GroupHeader live=true：标题数字渲染滚轮；live=false（或缺省）：纯文本', () => {
-    const h = (live) => React.createElement(T.GroupHeader, { count: 0, open: true, onToggle: () => {}, label: '耗时5秒，消耗450token', isTurn: true, live })
+    const h = (live) => React.createElement(T.GroupHeader, { count: 0, open: true, onToggle: () => {}, label: '耗时5秒 · 消耗450token', isTurn: true, live })
     mountNode(h(true))
     assert.equal(rcontainer.querySelectorAll('.ccg-roll-cell').length, 4)
     rerender(h(false))
     assert.equal(rcontainer.querySelectorAll('.ccg-roll-cell').length, 0, '非直播回退纯文本')
-    assert.equal(rcontainer.querySelector('.ccg-title').textContent, '耗时5秒，消耗450token')
+    assert.equal(rcontainer.querySelector('.ccg-title').textContent, '耗时5秒 · 消耗450token')
   })
 })
 
 describe('注册契约（Bug2 根因回归）', () => {
   it('所有条目都声明了 hostDescription inject', () => {
-    // 前 4 个是 BUILTIN_ENTRIES，接着是插件的 4 个注册条目
+    // 前 4 个是 BUILTIN_ENTRIES · 接着是插件的 4 个注册条目
     const pluginEntries = slotRegistrations
     assert.equal(pluginEntries.length, 4, '应有 4 个插件条目注册（tool-call + assistant-step + context + user）')
     for (const entry of pluginEntries) {

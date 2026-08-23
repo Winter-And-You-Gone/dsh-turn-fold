@@ -1,6 +1,6 @@
 // 纯函数单元测试：computeGroup / computeTurnFold / computeTurnMetrics /
 // turnHeaderLabel / formatTurnDuration / formatTokPerSec / turnNumber。
-// 直接测试 client.js 的真实实现（经 loader 注入 __test 导出，无复制漂移）。
+// 直接测试 client.js 的真实实现（经 loader 注入 __test 导出 · 无复制漂移）。
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { loadPlugin } from './helpers/loader.mjs'
@@ -14,7 +14,7 @@ const { test: T } = loadPlugin()
 
 // ─────────────────────────── computeGroup ───────────────────────────
 describe('computeGroup（段级分组）', () => {
-  it('单条工具调用：count=1，自身为 leader', () => {
+  it('单条工具调用：count=1 · 自身为 leader', () => {
     const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
@@ -32,7 +32,7 @@ describe('computeGroup（段级分组）', () => {
     assert.equal(g.failures, 0)
   })
 
-  it('连续多条工具调用组成一组：count=3，中间成员 isLeader=false', () => {
+  it('连续多条工具调用组成一组：count=3 · 中间成员 isLeader=false', () => {
     const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
@@ -75,7 +75,7 @@ describe('computeGroup（段级分组）', () => {
     assert.equal(g2.isLeader, false)
   })
 
-  it('text 打断：纯 text 节点（无 reasoning）是段边界，两侧工具调用不合并', () => {
+  it('text 打断：纯 text 节点（无 reasoning）是段边界 · 两侧工具调用不合并', () => {
     const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
@@ -93,7 +93,7 @@ describe('computeGroup（段级分组）', () => {
     assert.notEqual(g1.leaderKey, g2.leaderKey)
   })
 
-  it('失败计数：isError=true 计入，运行中不计入', () => {
+  it('失败计数：isError=true 计入 · 运行中不计入', () => {
     const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
@@ -109,7 +109,7 @@ describe('computeGroup（段级分组）', () => {
     assert.equal(g.anyRunning, true)
   })
 
-  it('autoCollapsed 恒 true（段级折叠始终默认收起，运行中也不例外）', () => {
+  it('autoCollapsed 恒 true（段级折叠始终默认收起 · 运行中也不例外）', () => {
     const nodes = [
       userNode('u', 100),
       asNode('as', 200),
@@ -135,7 +135,7 @@ describe('computeGroup（段级分组）', () => {
     assert.equal(g.toolCount, 1)
   })
 
-  it('回归 Bug1：store 节点对象被替换后，按 key 仍能定位（不依赖对象身份）', () => {
+  it('回归 Bug1：store 节点对象被替换后 · 按 key 仍能定位（不依赖对象身份）', () => {
     const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
@@ -163,7 +163,7 @@ describe('computeGroup（段级分组）', () => {
 
 // ─────────────────────────── segmentLabel / summarizeArgs（段组头标题） ───────────────────────────
 describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
-  // 段闭合标题缓存按 leaderKey+keys 记忆；测试复用节点 key（如 e1/r1），需清理防串
+  // 段闭合标题缓存按 leaderKey+keys 记忆；测试复用节点 key（如 e1/r1） · 需清理防串
   beforeEach(() => { T.segmentLabelCache.clear() })
   const toolWithArgs = (key, seq, { running = false, name = 'Pwsh', argsRaw } = {}) =>
     makeNode(key, 'tool-call', seq, {
@@ -172,7 +172,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
   const thinkOnly = (key, seq, text) =>
     asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
 
-  it('summarizeArgs：取 argsRaw 中最长字符串值（-m 正文 / 路径），截断到上限', () => {
+  it('summarizeArgs：取 argsRaw 中最长字符串值（-m 正文 / 路径） · 截断到上限', () => {
     assert.equal(T.summarizeArgs(JSON.stringify({ args: ['commit', '-m', 'Commit 1: core +tests'] })), 'Commit 1: core +tests')
     assert.equal(T.summarizeArgs(JSON.stringify({ path: 'X:\\DeepSeek Harness\\dsh-plugins\\dsh-turn-fold' })), 'X:\\DeepSeek Harness\\dsh-plugins\\dsh-turn-fold')
     assert.equal(T.summarizeArgs('not-json'), 'not-json')
@@ -296,7 +296,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了pwsh —— 执行失败', '单条工具调用失败不带条数')
   })
 
-  it('段闭合：单次命令显示工具名，多次显示次数+单位', () => {
+  it('段闭合：单次命令显示工具名 · 多次显示次数+单位', () => {
     const nodes = [
       userNode('u', 100),
       asNode('as', 200),
@@ -308,7 +308,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了pwsh', '单次命令显示工具名')
   })
 
-  it('段闭合：仅读取工具——同一文件显示文件名，多个文件显示数量', () => {
+  it('段闭合：仅读取工具——同一文件显示文件名 · 多个文件显示数量', () => {
     const toolWithPath = (key, seq, name, path) =>
       makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: JSON.stringify({ path }), isError: false } } })
     // 同一文件读取两次
@@ -350,7 +350,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了client.js 运行了pwsh', '读取在前、命令在最后')
   })
 
-  it('段闭合：混合 读取+编辑+命令 —— 读取、编辑按序，命令始终最后', () => {
+  it('段闭合：混合 读取+编辑+命令 —— 读取、编辑按序 · 命令始终最后', () => {
     const toolWithPath = (key, seq, name, path) =>
       makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: path ? JSON.stringify({ path }) : '{}', isError: false } } })
     const nodes = [
@@ -367,7 +367,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 编辑了b.js 运行了2条命令')
   })
 
-  it('段闭合：仅编辑工具——同一文件显示文件名，单文件时附加行数变更（+xx —xx）', () => {
+  it('段闭合：仅编辑工具——同一文件显示文件名 · 单文件时附加行数变更（+xx —xx）', () => {
     const toolWithPath = (key, seq, name, path, extra) =>
       makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: JSON.stringify(Object.assign({ path }, extra)), isError: false } } })
     // 单文件编辑：附加 +12 —3
@@ -441,7 +441,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e8'))
     assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了f.js [ +7 -7 ]', '官方 diffs 数据优先（与官方 diff 视图一致）')
-    // 多个文件编辑：只显示数量+份，不附加行数
+    // 多个文件编辑：只显示数量+份 · 不附加行数
     nodes = [
       userNode('u', 100),
       asNode('as', 200),
@@ -484,9 +484,9 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
 
 // ─────────────────────────── computeTurnFold ───────────────────────────
 describe('computeTurnFold（整回合折叠）', () => {
-  it('运行中：finalAssistantKey 为 null，第一条中间节点即组头，foldable=true', () => {
+  it('运行中：finalAssistantKey 为 null · 第一条中间节点即组头 · foldable=true', () => {
     // 回合进行中（turnEnds 为空）：大组头应从回复开始就出现——
-    // 当前流式 assistant-step 不作为"最终总结"豁免，第一条中间节点就是组头。
+    // 当前流式 assistant-step 不作为"最终总结"豁免 · 第一条中间节点就是组头。
     const nodes = [
       userNode('u-run', 100),
       asNode('as-run-1', 200, { status: 'running' }),
@@ -656,7 +656,7 @@ describe('computeTurnFold（整回合折叠）', () => {
     assert.equal(as.headerKey, 'as-o-1')
   })
 
-  it('TWO_USERS fixture：ctx-mid 在作用域外，as-1 是组头', () => {
+  it('TWO_USERS fixture：ctx-mid 在作用域外 · as-1 是组头', () => {
     const mid = T.computeTurnFold(TWO_USERS.chat.order, TWO_USERS.chat.nodes, TWO_USERS.chat.locations, TWO_USERS.turnEnds, TWO_USERS.chat.nodes.get('ctx-mid'))
     assert.equal(mid.outsideScope, true)
     const as = T.computeTurnFold(TWO_USERS.chat.order, TWO_USERS.chat.nodes, TWO_USERS.chat.locations, TWO_USERS.turnEnds, TWO_USERS.chat.nodes.get('as-2u-1'))
@@ -685,7 +685,7 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
   })
 
   it('运行中（liveNow）：耗时按 now-startTime 实时计算、token 累计、tok/s 实时估算、缓存命中实时', () => {
-    // 回合进行中：turnTimings 只有 startTime（无 endTime），liveNow 由每秒秒表提供。
+    // 回合进行中：turnTimings 只有 startTime（无 endTime） · liveNow 由每秒秒表提供。
     const nodes = [
       userNode('u-live', 100),
       asNode('as-live-1', 200, { status: 'running', usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 } }),
@@ -698,15 +698,15 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     })
     const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 105000)
     // 耗时 = 105000 - 100000 = 5000ms；token = (100+30) + (200+60) + (50+10) = 450
-    // tok/s = 60 / 5 = 12；缓存命中 = 官方精度算法（260/390 → 67%，字符串）
+    // tok/s = 60 / 5 = 12；缓存命中 = 官方精度算法（260/390 → 67% · 字符串）
     assert.equal(m.durationMs, 5000)
     assert.equal(m.tokens, 450)
     assert.equal(m.tokensPerSecond, 12)
     assert.equal(m.cacheHitPercent, '66.67')
-    assert.equal(T.turnHeaderLabel(m), '耗时5秒，消耗450token，12tok/s，缓存命中66.67%')
+    assert.equal(T.turnHeaderLabel(m), '耗时5秒 · 消耗450token · 12tok/s · 缓存命中66.67%')
   })
 
-  it('运行中：无 liveNow（回合已结束）时耗时取 endTime，不产生实时 tok/s', () => {
+  it('运行中：无 liveNow（回合已结束）时耗时取 endTime · 不产生实时 tok/s', () => {
     const nodes = [
       userNode('u-settled', 100),
       asNode('as-s-1', 200, { usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 } }),
@@ -730,7 +730,7 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     assert.equal(m.durationMs, 500)
     assert.equal(m.tokens, 10)
     assert.equal(m.tokensPerSecond, undefined)
-    assert.equal(T.turnHeaderLabel(m), '耗时0秒，消耗10token，缓存命中0.00%')
+    assert.equal(T.turnHeaderLabel(m), '耗时0秒 · 消耗10token · 缓存命中0.00%')
   })
 
   it('缺耗时但有 token → 文案省略耗时项', () => {
@@ -742,7 +742,7 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     assert.equal(T.cacheHitPercent(0, 500, 0), '100.00')
     // 普通命中：两位小数
     assert.equal(T.cacheHitPercent(130, 260, 0), '66.67')
-    // 接近 100%：同样两位小数（官方算法此处才会提精度，插件固定两位）
+    // 接近 100%：同样两位小数（官方算法此处才会提精度 · 插件固定两位）
     assert.equal(T.cacheHitPercent(1, 9990, 0), '99.99')
     // 无计费输入：null
     assert.equal(T.cacheHitPercent(0, 0, 0), null)
@@ -756,7 +756,7 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     assert.equal(T.formatTurnDuration(0), '0秒')
   })
 
-  it('formatTokPerSec：>=10 取整，<10 保留一位小数', () => {
+  it('formatTokPerSec：>=10 取整 · <10 保留一位小数', () => {
     assert.equal(T.formatTokPerSec(144), '144')
     assert.equal(T.formatTokPerSec(9.5), '9.5')
     assert.equal(T.formatTokPerSec(0), '0')
@@ -770,7 +770,7 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
 })
 
 // ─────────────────────────── 回合结束状态（timeline reason） ───────────────────────────
-// DSH 快照的 s.chat.timeline.turns 里，turn.end 是完整 turn/end 事件，
+// DSH 快照的 s.chat.timeline.turns 里 · turn.end 是完整 turn/end 事件 · 
 // 其 data.reason.kind 由 agent-loop 写入（completed / aborted / error / max-tokens / blocked）。
 describe('回合结束状态（timeline reason）', () => {
   function turnWithReason(kind) {
@@ -805,7 +805,7 @@ describe('回合结束状态（timeline reason）', () => {
     assert.equal(turnWithReason('max-tokens').turnStatus, 'interrupted')
   })
 
-  it('blocked（输入被拒绝）→ 按正常完成处理，不误报', () => {
+  it('blocked（输入被拒绝）→ 按正常完成处理 · 不误报', () => {
     assert.equal(turnWithReason('blocked').turnStatus, 'completed')
   })
 
@@ -818,7 +818,7 @@ describe('回合结束状态（timeline reason）', () => {
 })
 
 // ─────────────────────────── 英文界面（en） ───────────────────────────
-// 重新加载一个 factory 实例（LOCALE 在 factory 顶层按 navigator 计算），
+// 重新加载一个 factory 实例（LOCALE 在 factory 顶层按 navigator 计算） · 
 // 验证英语适配：耗时/token/tok/s/缓存命中的英文格式。
 describe('英文界面（en）', () => {
   it('formatTurnDuration / turnHeaderLabel 输出英文格式', () => {
@@ -828,23 +828,23 @@ describe('英文界面（en）', () => {
     assert.equal(T2.formatTurnDuration(90000), '1m 30s')
     assert.equal(T2.formatTurnDuration(1354551), '22m 34s')
     assert.equal(T2.formatTurnDuration(3661000), '1h 1m 1s')
-    assert.equal(T2.turnHeaderLabel(TURN13_METRICS), '22m 34s, 370202 tokens, 144 tok/s, cache hit 93.99%')
+    assert.equal(T2.turnHeaderLabel(TURN13_METRICS), '22m 34s · 370202 tokens · 144 tok/s · cache hit 93.99%')
     assert.equal(T2.turnHeaderLabel({ tokens: 100 }), '100 tokens')
   })
 })
 
 // ─────────────────────────── projectLiveTokens / turnDisplayMetrics ───────────────────────────
-// 运行中"消耗token"动画增长：真实 usage 只在请求完成时到达，两次之间在真实基线之上
+// 运行中"消耗token"动画增长：真实 usage 只在请求完成时到达 · 两次之间在真实基线之上
 // 叠加动画偏移——偏移按实际 tick 次数推进（+1/+11 交替：个位每 tick +1、十位每 2
-// tick +1；tick 间隔 = liveTickMs × 随机数 0.5~1，节奏不规律）；新数据到达只校正
-// 基线、偏移继续累计（数字只增不减）。缓存按 turn 记忆，测试间需清理。
+// tick +1；tick 间隔 = liveTickMs × 随机数 0.5~1 · 节奏不规律）；新数据到达只校正
+// 基线、偏移继续累计（数字只增不减）。缓存按 turn 记忆 · 测试间需清理。
 describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）', () => {
-  // 缓存按 key（sessionId::turn）记忆，测试间需清理
+  // 缓存按 key（sessionId::turn）记忆 · 测试间需清理
   const k = (n) => `sess::${n}`
   // 动画偏移 = tickCount%10 + floor(tickCount/2)*10（+1/+11 交替）
   const offset = (t) => (t % 10) + Math.floor(t / 2) * 10
 
-  it('首次调用：初始化缓存并返回真实值（动画偏移从 0 起算，且不推进 tick）', () => {
+  it('首次调用：初始化缓存并返回真实值（动画偏移从 0 起算 · 且不推进 tick）', () => {
     T.liveTokenCache.clear()
     const base = T.liveTickState.index
     assert.equal(T.projectLiveTokens(k(21), 450, 60, 100000, 12), 450)
@@ -865,11 +865,11 @@ describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）',
     assert.equal(T.projectLiveTokens(k(22), 450, 60, 100000, undefined), 450 + offset(10))
   })
 
-  it('新数据到达：校正基线为真实值，动画偏移继续累计不回退', () => {
+  it('新数据到达：校正基线为真实值 · 动画偏移继续累计不回退', () => {
     T.liveTokenCache.clear()
     const base = T.liveTickState.index
     T.projectLiveTokens(k(24), 450, 60, 100000, 30) // 初始化：animBaseTick = base
-    // 5 个 tick 后真实值到达：基线校正为 1000，偏移照常累计 → 1000 + 25
+    // 5 个 tick 后真实值到达：基线校正为 1000 · 偏移照常累计 → 1000 + 25
     T.liveTickState.index = base + 5
     assert.equal(T.projectLiveTokens(k(24), 1000, 110, 100000, 30), 1000 + offset(5))
     // 再 2 个 tick（无新数据）：1000 + 37
@@ -892,9 +892,9 @@ describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）',
     T.liveTokenCache.clear()
     const base = T.liveTickState.index
     const m = { durationMs: 5000, tokens: 450, outputTokens: 60, tokensPerSecond: 12, cacheHitPercent: 67 }
-    // 首次调用：初始化缓存，返回原对象
+    // 首次调用：初始化缓存 · 返回原对象
     assert.equal(T.turnDisplayMetrics('sess', 26, m, false, 100000), m)
-    // 3 个 tick 后无新数据：tokens 增长为 450 + 13 = 463，其余字段不变
+    // 3 个 tick 后无新数据：tokens 增长为 450 + 13 = 463 · 其余字段不变
     T.liveTickState.index = base + 3
     const second = T.turnDisplayMetrics('sess', 26, m, false, 100000)
     assert.notEqual(second, m)
@@ -907,7 +907,7 @@ describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）',
     assert.equal(T.turnDisplayMetrics('sess', 26, m, true, 100000), m)
     // liveNow undefined：原样返回
     assert.equal(T.turnDisplayMetrics('sess', 26, m, false, undefined), m)
-    // 无 tokens：首次调用初始化 pending 缓存，仍原样返回（从下一 tick 起兜底增长）
+    // 无 tokens：首次调用初始化 pending 缓存 · 仍原样返回（从下一 tick 起兜底增长）
     const noTokens = { durationMs: 1000 }
     assert.equal(T.turnDisplayMetrics('sess', 26, noTokens, false, 100000), noTokens)
     // metrics 为空：原样返回
@@ -918,7 +918,7 @@ describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）',
     T.liveTokenCache.clear()
     const base = T.liveTickState.index
     const noTokens = { durationMs: 1000 }
-    // 首次：初始化 pending 缓存，返回原对象
+    // 首次：初始化 pending 缓存 · 返回原对象
     assert.equal(T.turnDisplayMetrics('sess', 27, noTokens, false, 100000), noTokens)
     // 3 个 tick 后：tokens 从 0 增长为 offset(3)
     T.liveTickState.index = base + 3
@@ -928,7 +928,7 @@ describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）',
     assert.equal(grown.durationMs, 1000)
     assert.equal(grown.outputTokens, undefined)
     assert.equal(grown.tokensPerSecond, undefined)
-    // 真实 usage 到达：切回正常 key，直接以真实值 450 为基线（pending 偏移不继承）
+    // 真实 usage 到达：切回正常 key · 直接以真实值 450 为基线（pending 偏移不继承）
     const real = { durationMs: 5000, tokens: 450, outputTokens: 60, tokensPerSecond: 12, cacheHitPercent: 67 }
     assert.equal(T.turnDisplayMetrics('sess', 27, real, false, 100000).tokens, 450, '真实值到达直接显示真实值')
     // 再 2 个 tick：按正常节奏增长（正常 key 的 animBaseTick 从真实值到达时起算）

@@ -1,11 +1,11 @@
 // 真实会话结构 fixtures。提取自 session 898a7246 turn 13 和当前会话 turn 3。
-// 这些结构用于数据驱动回归测试，确保插件逻辑对真实会话行为正确。
+// 这些结构用于数据驱动回归测试 · 确保插件逻辑对真实会话行为正确。
 // 来源：.dsh/sessions/--X-DeepSeek~0020Harness--/session-898a7246-.../session.jsonl.zstd
 
 import { makeNode, toolNode, asNode, userNode, tailNode, contextNode, buildSnapshot } from './store.mjs'
 
-// ──────────────── turn 13 of session 898a7246（PATH 修复，22m35s，4 个工具调用）───────────────
-// 用户消息 "撤销" (seq 35277)，然后是 4 个 pwsh 步骤 + 1 个最终总结。
+// ──────────────── turn 13 of session 898a7246（PATH 修复 · 22m35s · 4 个工具调用）───────────────
+// 用户消息 "撤销" (seq 35277) · 然后是 4 个 pwsh 步骤 + 1 个最终总结。
 // 步骤 1: as → tool (Revert); 步骤 2: as → tool (Check); 步骤 3: as → tool (Restore);
 // 步骤 4: as → tool (Verify); 步骤 5: as (final summary)
 // 来源：session-898a7246 seq 35272–38330
@@ -34,10 +34,10 @@ export const TURN13_NODES = T13_NODES
 // cacheHitPercent = round(344864 / 366929 * 100) = 94
 // durationMs = 1787396180925 - 1787394826374 = 1354551 → "22分34秒"
 export const TURN13_METRICS = { durationMs: 1354551, tokens: 370202, outputTokens: 3273, tokensPerSecond: 144, cacheHitPercent: '93.99' }
-export const TURN13_LABEL = '耗时22分34秒，消耗370202token，144tok/s，缓存命中93.99%'
+export const TURN13_LABEL = '耗时22分34秒 · 消耗370202token · 144tok/s · 缓存命中93.99%'
 
-// ──────────────── turn 11 of session 898a7246（调试，34s，3 个工具调用）───────────────
-// 用户消息 "继续" (seq 31135)，然后是 3 个步骤 + 1 个最终总结。
+// ──────────────── turn 11 of session 898a7246（调试 · 34s · 3 个工具调用）───────────────
+// 用户消息 "继续" (seq 31135) · 然后是 3 个步骤 + 1 个最终总结。
 // 步骤 1: as → read; 步骤 2: as → grep; 步骤 3: as → read; 步骤 4: as (final)
 const T11_NODES = [
   userNode('u-31135', 31135),
