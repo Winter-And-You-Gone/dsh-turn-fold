@@ -254,16 +254,17 @@ describe('真实会话数据（TURN13）全量折叠', () => {
     assert.equal(c.cards, 0)
     assert.equal(c.assistants, 1)
     assert.equal(c.hidden, 7)
-    // 展开大组头后：段级组头行可见、text 正文段外渲染，工具卡片仍默认折叠
+    // 展开大组头后：4 个工具段段组头行可见（as-1 纯 think 段直接官方渲染）、
+    // text 正文段外渲染，工具卡片仍默认折叠
     clickHeader()
     const expanded = counts()
     assert.equal(expanded.cards, 0, '段级折叠始终默认收起，工具卡片不可见')
-    assert.equal(expanded.assistants, 5, 'text 正文段外渲染（4 个 text-only）+ final = 5')
-    assert.equal(expanded.hidden, 3, 'as-2/3/4 的段内部分（非 leader 成员）隐藏')
-    // 5 个段级组头：as-1 段 + 4 个工具段
+    assert.equal(expanded.assistants, 5, 'as-1 官方渲染 + as-2/3/4 text-only + final = 5')
+    assert.equal(expanded.hidden, 3, 'as-2/3/4 非 leader 成员隐藏标记')
+    // 4 个工具段段组头（as-1 纯 think 段无段组头）
     const segHeaders = container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
-    assert.equal(segHeaders.length, 5, '5 个段级组头（as-1 + 4 个工具段）')
-    // 4 个 text-only 段外正文
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 4)
+    assert.equal(segHeaders.length, 4, '4 个工具段段组头')
+    // 3 个 text-only 段外正文（as-2/3/4）
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 3)
   }))
 })

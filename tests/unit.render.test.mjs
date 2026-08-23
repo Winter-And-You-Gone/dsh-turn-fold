@@ -163,24 +163,24 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
     assert.equal(c.hidden, 7, '4 个工具 + 3 个中间 Think 共 7 个成员应带隐藏标记')
   })
 
-  it('点击大组头展开：段级组头行可见 + text 正文段外渲染（工具卡片默认折叠）', () => {
+  it('点击大组头展开：段级组头行可见（工具段）+ text 正文段外渲染（纯 think 段直接官方渲染）', () => {
     clickHeader()
     const c = counts()
     // 段级折叠默认收起 → 工具卡片隐藏
     assert.equal(c.cards, 0, '段级折叠默认收起，工具卡片不可见')
-    // text 正文段外渲染：as-1/2/3/4 的 text-only + as-5 final = 5
-    assert.equal(c.assistants, 5, 'text 正文段外渲染（4 个 text-only + final）应可见')
-    assert.equal(c.hidden, 3, 'as-2/3/4 的段内部分（非 leader 成员）隐藏标记')
+    // text 正文：as-1（纯 think 段）官方渲染自带 text；as-2/3/4 text-only + as-5 final = 4??
+    // 实际：as-1 官方渲染 1 + as-2 text-only 1 + as-3 text-only 1 + as-4 text-only 1 + as-5 final 1 = 5
+    assert.equal(c.assistants, 5, 'text 正文各处渲染 = 5')
+    assert.equal(c.hidden, 3, 'as-2/3/4 非 leader 成员隐藏标记')
     assert.ok(container.querySelector('.ccg-group-root[data-ccg-open="true"]'), '组根应标记展开')
-    // 段级组头：as-1 段 + 4 个工具段
+    // 段级组头：4 个工具段（as-1 纯 think 段无段组头）
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
-    assert.equal(segHeaders.length, 5, '应有 5 个段级组头（as-1 + 4 个工具段）')
-    assert.ok(segHeaders[0].textContent.includes('思考'), 'as-1 段组头标题应为"思考"')
-    for (let i = 1; i < segHeaders.length; i++) {
+    assert.equal(segHeaders.length, 4, '应有 4 个工具段段组头（tc-revert/check/restore/verify）')
+    for (let i = 0; i < segHeaders.length; i++) {
       assert.ok(segHeaders[i].textContent.includes('运行了 1 条命令'), '工具段组头标题应为"运行了 1 条命令"')
     }
-    // text-only 容器存在
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 4, 'as-1/2/3/4 各有 text-only 段外渲染')
+    // text-only：as-2/3/4（as-1 纯 think 段直接官方渲染，无段外 text-only）
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 3, '3 个 text-only（as-2/3/4，as-1 无段外 text）')
   })
 
   it('展开段级组头后工具卡片可见（手动展开覆盖默认折叠）', () => {
@@ -254,24 +254,20 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     Date.now = realDateNow
   })
 
-  it('回复开始即渲染大组头：组头 + 分隔线 + 段级组头（默认折叠），text 正文段外可见', () => {
+  it('回复开始即渲染大组头：组头 + 分隔线 + 工具段段组头（默认折叠）；纯 think 段直接官方渲染', () => {
     const c = counts()
-    // 大组头 1 + as-run-1 段组头 1 + tc-run 段组头 1
-    assert.equal(c.headers, 3, '运行中应一个大组头 + 两个段级组头行')
+    // 大组头 1 + tc-run 段组头 1（as-run-1 纯 think 段不套段组头，直接官方渲染）
+    assert.equal(c.headers, 2, '运行中应一个大组头 + 一个工具段段组头')
     assert.ok(container.querySelector('.ccg-turn-divider'), '大组头与内容之间应有分隔线')
     assert.ok(container.querySelector('.ccg-group-root[data-ccg-turn][data-ccg-open="true"]'), '运行中默认展开')
     // 段级折叠始终默认收起：工具卡片隐藏
     assert.equal(c.cards, 0, '段级折叠默认收起，工具卡片应隐藏')
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
-    assert.equal(segHeaders.length, 2, '应有两个段级组头（as-run-1 段 + tc-run 段）')
-    assert.ok(segHeaders[0].textContent.includes('思考'), 'as-run-1 段组头标题应为"思考"（think+text 已闭合）')
-    assert.ok(segHeaders[1].textContent.includes('运行了 1 条命令'), 'tc-run 段组头标题应为"运行了 1 条命令"')
-    // think+text 节点的 text 正文在段外渲染（text-only），始终可见
-    const textOnly = container.querySelectorAll('.ccg-text-only')
-    assert.equal(textOnly.length, 2, 'as-run-1 / as-run-2 的 text 正文段外渲染')
-    // text-only 内是官方渲染（mock-assistant 1 个）+ as-run-2 的 text-only 1 个 = 2
-    assert.equal(c.assistants, 2, '两个 text 正文可见')
-    assert.equal(c.hidden, 1, 'as-run-2 的段内部分（非 leader 成员）隐藏标记')
+    assert.equal(segHeaders.length, 1, '应只有一个工具段段组头（tc-run 段）')
+    assert.ok(segHeaders[0].textContent.includes('运行了 1 条命令'), '工具段段组头标题应为"运行了 1 条命令"')
+    // as-run-1（纯 think 段）直接官方渲染（Think 行 + text 正文），as-run-2 text-only 段外渲染
+    assert.equal(c.assistants, 2, 'as-run-1 官方渲染 + as-run-2 text-only')
+    assert.equal(c.hidden, 1, 'as-run-2 非 leader 成员隐藏标记')
   })
 
   it('大组头文案实时显示耗时/token（token 累计确定，耗时随秒表走动）', () => {
@@ -308,13 +304,10 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     const tcHeader = segHeaders.find(h => h.textContent.includes('运行了 1 条命令'))
     assert.ok(tcHeader, 'tc-run 段组头应存在')
     assert.equal(counts().cards, 0, '默认折叠，工具卡片隐藏')
-    // textBody 始终渲染（段内不含 text 正文，不重复）
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 2, 'as-run-1/2 的 text 正文始终段外渲染')
+    // textBody：as-run-1 纯 think 段直接官方渲染（无段外 text），as-run-2 段外 text-only = 1
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, '仅 as-run-2 段外 text 正文')
     act(() => { tcHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     assert.equal(counts().cards, 1, '展开段级折叠后工具卡片可见')
-    // 段展开后，段内显示自研 think 完整内容（ccg-think-full），不含 text 正文
-    // textBody 仍存在（与段内 think 不重复）
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 2, '展开后 text 正文仍在段外，不重复')
     act(() => { tcHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     assert.equal(counts().cards, 0, '再点收起后工具卡片隐藏')
   })
@@ -343,82 +336,60 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     Date.now = realDateNow
   })
 
-  it('纯 think 段也套段组头：标题 = 正在思考 · 最新一行，展开内容委托官方', () => {
+  it('纯 think 段：不套段组头，直接官方渲染（官方 Think 行）', () => {
     const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
     const nodes = [userNode('u', 100), thinkNode('th', 200, '正在分析')]
     mount(buildSnapshot(nodes, { turnEnds: new Map() }))
-    // 纯 think 段：段组头存在（think 是回合第一条中间节点 → 大组头下方接段级折叠行）
-    const segTitle = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header .ccg-title')
-    assert.ok(segTitle, '纯 think 段也应有段组头')
-    assert.ok(segTitle.textContent.includes('正在思考 · 正在分析'), '标题 = 正在思考 · 最新一行')
-    // think 摘要元素（自研 ThinkSummary）带 data-follow-end
-    const summary = container.querySelector('.ccg-think-summary')
-    assert.ok(summary, 'think 摘要元素应存在')
-    assert.equal(summary.dataset.followEnd, 'true', '运行中带 data-follow-end')
-    // 展开段组头后：内容委托官方 think 行
-    const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
-    act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    // 纯 think 段不套段组头（段内无工具调用，直接官方渲染避免双层折叠）
+    const segRoot = container.querySelector('.ccg-group-root:not([data-ccg-turn])')
+    assert.equal(segRoot, null, '纯 think 段不套段组头')
+    // 官方渲染（mock-assistant）直接可见（大组头下方接官方 Think 行）
     const asEl = container.querySelector('.mock-assistant')
-    assert.ok(asEl, '展开后 think 内容通过官方助理组件渲染')
+    assert.ok(asEl, 'think 通过官方助理组件渲染')
     assert.equal(asEl.dataset.node, 'th', '渲染的是 think 节点')
   })
 
-  it('think 流式推进：快照更新后段组头标题跟随最新一行', () => {
+  it('纯 think 段流式推进：官方渲染节点随快照更新（数据链路正常）', () => {
     const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
     const nodes = [userNode('u', 100), thinkNode('th', 200, '正在分析')]
     const { store } = mount(buildSnapshot(nodes, { turnEnds: new Map() }))
-    const segTitle = () => container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header .ccg-title')
-    assert.ok(segTitle(), '段组头标题应存在')
-    assert.ok(segTitle().textContent.includes('正在思考 · 正在分析'), '初始标题显示最新一行')
-    // 模拟流式 chunk：think 文本增长（多行）
+    const asEl = container.querySelector('.mock-assistant')
+    assert.ok(asEl, '官方渲染存在')
+    // 模拟流式 chunk：think 文本增长
     act(() => {
       store.setSnapshot(buildSnapshot([
         userNode('u', 100),
         thinkNode('th', 200, '正在分析\n正在深入思考仓库结构'),
       ], { turnEnds: new Map() }))
     })
-    assert.ok(segTitle().textContent.includes('正在思考 · 正在深入思考仓库结构'), '标题应跟随最新一行（流式滚动效果）')
+    // 官方渲染节点仍存在（内容更新由官方组件负责）
+    assert.ok(container.querySelector('[data-node="th"]'), 'think 节点渲染不变')
   })
 
-  it('text 出现后：段闭合，纯 think 段组头标题变"思考"', () => {
+  it('纯 think 段 + text 节点：直接官方渲染（无段组头）', () => {
     const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
+    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || 'text' }] } })
     const nodes = [userNode('u', 100), thinkNode('th', 200, '正在分析')]
     const { store } = mount(buildSnapshot(nodes, { turnEnds: new Map() }))
-    // 下一个 text 出现（含 text 的消息加入 order）
-    act(() => {
-      store.setSnapshot(buildSnapshot([
-        userNode('u', 100),
-        thinkNode('th', 200, '正在分析'),
-        asNode('msg', 300, { blocks: [{ kind: 'text', text: '结果如下' }] }),
-      ], { turnEnds: new Map() }))
-    })
-    const segTitleEl = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header .ccg-title')
-    assert.ok(segTitleEl, '段组头标题应存在')
-    assert.equal(segTitleEl.textContent.trim(), '思考', '纯 think 段闭合后标题 = 思考（不再是"正在思考 · …"）')
+    // 纯 think 段无段组头
+    assert.equal(container.querySelector('.ccg-group-root:not([data-ccg-turn])'), null, '无段组头')
+    // 下一个 text 出现
+    act(() => { store.setSnapshot(buildSnapshot([...nodes, textNode('msg', 300, '结果如下')], { turnEnds: new Map() })) })
+    // 仍无段组头
+    assert.equal(container.querySelector('.ccg-group-root:not([data-ccg-turn])'), null, 'text 出现后仍无段组头')
   })
 
-  it('含 think+text 节点：展开段组头显示官方 Think 行（可折叠），text 正文段外唯一一份', () => {
+  it('think+text 节点（纯 think 段）：不套段组头，直接官方渲染（Think 行 + text 正文）', () => {
     const thinkTextNode = (key, seq, think, text) => asNode(key, seq, {
       blocks: [{ kind: 'reasoning', text: think }, { kind: 'text', text }],
     })
     const nodes = [userNode('u', 100), thinkTextNode('msg', 200, '第一行思考\n完整思考内容', '这是正文')]
     mount(buildSnapshot(nodes, { turnEnds: new Map() }))
-    // 段收起：段组头行 + 段外 text 正文（唯一一份）
-    const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
-    assert.ok(segHeader, '段组头应存在')
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, 'text 正文段外唯一一份')
-    // 展开段组头：段内显示官方 Think 行（think-only 节点渲染，不含 text 正文）
-    act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-    // 段内官方 Think 行（mock-assistant，think-only 节点）+ text-only（完整节点） = 2 个官方渲染
+    // 纯 think 段（无工具）→ 无段组头，官方整体渲染（Think 行 + text 正文，无重复）
+    assert.equal(container.querySelector('.ccg-group-root:not([data-ccg-turn])'), null, '纯 think+text 段不套段组头')
     const assistants = container.querySelectorAll('.mock-assistant')
-    assert.equal(assistants.length, 2, '展开后段内官方 Think 行 + text-only = 2 个官方渲染')
-    // text 正文仍唯一一份（不重复）
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, '展开后 text 正文仍唯一一份，不重复')
-    // DOM 顺序：段内 Think 行在 text 正文上方（先思考后正文）
-    const textEl = container.querySelector('.ccg-text-only .mock-assistant')
-    assert.ok(textEl, 'text 正文存在')
-    const rel = assistants[0].compareDocumentPosition(textEl)
-    assert.ok((rel & 4) !== 0, 'think 行应在 text 正文上方（DOCUMENT_POSITION_FOLLOWING）')
+    assert.equal(assistants.length, 1, '官方整体渲染一份（Think 行 + text 正文）')
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 0, '无段外 text（官方整体渲染已含 text）')
   })
 
   it('混合段（think + 工具）：段组头标题使用自研 ThinkSummary（带 data-follow-end）', () => {
