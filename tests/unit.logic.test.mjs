@@ -238,7 +238,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令 —— 执行失败', '1 条失败显示" —— 执行失败"（不带条数）')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令 —— 1条执行失败', '多条工具调用时 1 条失败也显示"1条执行失败"')
   })
 
   it('段闭合：多条失败追加"——y条执行失败"', () => {
@@ -268,7 +268,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     let s = buildSnapshot(nodes, { turnEnds: new Map() })
     let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 运行了pwsh —— 执行失败', 'read 失败计入失败数')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 运行了pwsh —— 1条执行失败', 'read 失败计入失败数（多条工具调用时 1 条也带条数）')
     // edit + pwsh 都失败 → 2 条执行失败
     nodes = [
       userNode('u', 100),
@@ -280,6 +280,18 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
     assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js 运行了pwsh —— 2条执行失败', 'edit+pwsh 失败计入失败数')
+  })
+
+  it('段闭合：单条工具调用失败 → 显示"执行失败"（不带条数）', () => {
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolNode('err', 300, { isError: true }),
+      asNode('as2', 400),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('err'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了pwsh —— 执行失败', '单条工具调用失败不带条数')
   })
 
   it('段闭合：单次命令显示工具名，多次显示次数+单位', () => {

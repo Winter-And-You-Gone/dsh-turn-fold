@@ -1264,9 +1264,10 @@ window.__ModuleLoader__.load({
 				var commandLabel = commandPartLabel(stats);
 				if (commandLabel) parts.push(commandLabel);
 				var label = parts.join(LOCALE === "zh" ? " " : " ");
-				// 失败追加：1 条失败 → "——执行失败"；多条 → "——y条执行失败"
+				// 失败追加：仅单条工具调用失败显示"执行失败"（无条数）；
+				// 多条工具调用时 1 条失败也显示"1条执行失败"
 				if (group.failures > 0) {
-					if (group.failures === 1) label += _T("failurePrefix") + _T("failureSingle");
+					if (group.failures === 1 && group.toolCount === 1) label += _T("failurePrefix") + _T("failureSingle");
 					else label += _T("failurePrefix") + group.failures + _T("failureSuffix");
 				}
 				return label;
@@ -1294,7 +1295,7 @@ window.__ModuleLoader__.load({
 			// 兜底：退回"运行了 N 条命令"
 			var fallback = _T("headerPrefix") + " " + group.toolCount + " " + _T("headerSuffix");
 			if (group.failures > 0) {
-				if (group.failures === 1) fallback += _T("failurePrefix") + _T("failureSingle");
+				if (group.failures === 1 && group.toolCount === 1) fallback += _T("failurePrefix") + _T("failureSingle");
 				else fallback += _T("failurePrefix") + group.failures + _T("failureSuffix");
 			}
 			return fallback;
