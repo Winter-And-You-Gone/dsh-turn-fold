@@ -84,7 +84,18 @@ window.__ModuleLoader__.load({
 				runningTool: "正在运行",
 				runningThink: "正在思考",
 				// 纯 think 段（无工具调用）闭合后的标题
-				thinkOnly: "思考"
+				thinkOnly: "思考",
+				// 段闭合详细标题：按工具类型分组
+				segmentCommand: "运行了",
+				segmentCommandSuffix: "条命令",
+				segmentRead: "读取了",
+				segmentReadSuffix: "份文件",
+				segmentEdit: "编辑了",
+				segmentEditSuffix: "份文件",
+				segmentSearch: "搜索了",
+				segmentSearchSuffix: "次",
+				segmentOthers: "执行了",
+				segmentOthersSuffix: "项操作"
 			},
 			en: {
 				headerPrefix: "Ran",
@@ -99,7 +110,17 @@ window.__ModuleLoader__.load({
 				ariaTurnExpanded: "Collapse turn",
 				runningTool: "Running ",
 				runningThink: "Thinking ",
-				thinkOnly: "Think"
+				thinkOnly: "Think",
+				segmentCommand: "Ran ",
+				segmentCommandSuffix: " commands",
+				segmentRead: "Read ",
+				segmentReadSuffix: " files",
+				segmentEdit: "Edited ",
+				segmentEditSuffix: " files",
+				segmentSearch: "Searched ",
+				segmentSearchSuffix: " times",
+				segmentOthers: "Executed ",
+				segmentOthersSuffix: " operations"
 			}
 		};
 		/** 取当前语言下的文案；缺失键回退英文，再缺失返回键名本身。 */
@@ -1102,11 +1123,94 @@ window.__ModuleLoader__.load({
 			var newline = t.indexOf("\n");
 			return newline === -1 ? t : t.slice(0, newline);
 		}
-		/** 段组头标题：运行中（textAfter=false）取最后一个节点显示当前执行内容，闭合后变"运行了 N 条命令"。 */
+		// ---- 段闭合后的详细标题：按工具类型分组统计 ----
+		// 分类与官方 TOOL_VARIANTS 一致（bash→命令、read→读取、search→搜索、
+		// write/edit→编辑），run_code 归命令、str-replace-editor 归编辑。
+		var TOOL_KINDS = {
+			pwsh: "command", bash: "command", shell: "command", cmd: "command", terminal: "command", git: "command", run_code: "command",
+			read: "read", view: "read", cat: "read", web_fetch: "read", cordis_package_inspect: "read", cordis_runtime_inspect: "read",
+			grep: "search", search: "search", find: "search", glob: "search", web_search: "search",
+			edit: "edit", write: "edit", patch: "edit", create: "edit", "str-replace-editor": "edit"
+		};
+		/** 从 argsRaw 提取文件路径（path / file_path / url / file / target；args 数组兜底取含路径分隔符的串）。 */
+		function extractFilePath(info) {
+			if (!info || !info.argsRaw) return null;
+			var raw;
+			try { raw = JSON.parse(info.argsRaw); } catch (e) { return null; }
+			if (!raw || typeof raw !== "object") return null;
+			var keys = ["file_path", "path", "file", "target", "url"];
+			for (var i = 0; i < keys.length; i++) {
+				var v = raw[keys[i]];
+				if (typeof v === "string" && v !== "") return v;
+			}
+			if (Array.isArray(raw.args)) {
+				for (var j = raw.args.length - 1; j >= 0; j--) {
+					var a = raw.args[j];
+					if (typeof a === "string" && (a.indexOf("/") !== -1 || a.indexOf("\\") !== -1)) return a;
+				}
+			}
+			return null;
+		}
+		/** 路径最后一段（文件名 / URL 尾）。 */
+		function pathBasename(path) {
+			if (!path) return null;
+			var sep = path.indexOf("\\") !== -1 ? "\\" : "/";
+			var parts = path.split(sep);
+			var last = parts[parts.length - 1];
+			return last || null;
+		}
+		/** 统计段内工具调用：按分类分组，read/edit 类附带去重后的文件名单。 */
+		function classifySegmentTools(group, nodes) {
+			var stats = { command: [], read: [], search: [], edit: [], others: [] };
+			for (var i = 0; i < group.keys.length; i++) {
+				var n = nodes.get(group.keys[i]);
+				if (!n || n.kind !== "tool-call") continue;
+				var info = toolCallInfo(n);
+				var name = info ? String(info.name) : "";
+				var kind = TOOL_KINDS[name.toLowerCase()] || "others";
+				var filePath = extractFilePath(info);
+				stats[kind].push({ name: name, filePath: filePath, fileName: pathBasename(filePath) });
+			}
+			return stats;
+		}
+		/** 组内 read/edit 类的描述：同一文件用文件名，多个文件用数量+单位。 */
+		function filePartLabel(stats, kind, prefix, suffix) {
+			var items = stats[kind];
+			if (!items || items.length === 0) return "";
+			var files = [];
+			for (var i = 0; i < items.length; i++) {
+				if (items[i].fileName) {
+					var fp = items[i].fileName;
+					if (files.indexOf(fp) === -1) files.push(fp);
+				}
+			}
+			if (files.length === 1) return prefix + files[0];
+			var count = files.length > 0 ? files.length : items.length;
+			return prefix + count + suffix;
+		}
+		/** 组内 command 类的描述：单次用工具名，多次用次数+单位。 */
+		function commandPartLabel(stats) {
+			var items = stats.command;
+			if (!items || items.length === 0) return "";
+			if (items.length === 1) return _T("segmentCommand") + (items[0].name || "");
+			return _T("segmentCommand") + items.length + _T("segmentCommandSuffix");
+		}
+		/** 段组头标题：运行中（textAfter=false）取最后一个节点显示当前执行内容，闭合后按
+		 *  工具类型分组显示详细标题（命令最后）。 */
 		function segmentLabel(group, nodes) {
 			if (group.textAfter && group.toolCount > 0) {
-				// 段闭合：出现下一个 text → "运行了 N 条命令"（think 不算命令数）
-				var label = _T("headerPrefix") + " " + group.toolCount + " " + _T("headerSuffix");
+				// 段闭合：按工具类型分组统计（think 不算）
+				var stats = classifySegmentTools(group, nodes);
+				var parts = [];
+				var readLabel = filePartLabel(stats, "read", _T("segmentRead"), _T("segmentReadSuffix"));
+				if (readLabel) parts.push(readLabel);
+				var editLabel = filePartLabel(stats, "edit", _T("segmentEdit"), _T("segmentEditSuffix"));
+				if (editLabel) parts.push(editLabel);
+				if (stats.search.length > 0) parts.push(_T("segmentSearch") + stats.search.length + _T("segmentSearchSuffix"));
+				if (stats.others.length > 0) parts.push(_T("segmentOthers") + stats.others.length + _T("segmentOthersSuffix"));
+				var commandLabel = commandPartLabel(stats);
+				if (commandLabel) parts.push(commandLabel);
+				var label = parts.join(LOCALE === "zh" ? " " : " ");
 				if (group.failures > 0) label += "——" + group.failures + _T("failureSuffix");
 				return label;
 			}

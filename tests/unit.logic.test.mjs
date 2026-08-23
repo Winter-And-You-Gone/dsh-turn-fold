@@ -225,7 +225,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc1'))
     assert.equal(g.textAfter, true)
     assert.equal(g.toolCount, 2)
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了 2 条命令')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令')
   })
 
   it('段闭合且组内有失败命令：标题追加失败数', () => {
@@ -238,7 +238,107 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了 2 条命令——1条执行失败')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令——1条执行失败')
+  })
+
+  it('段闭合：单次命令显示工具名，多次显示次数+单位', () => {
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolNode('tc', 300),
+      asNode('as2', 400),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了pwsh', '单次命令显示工具名')
+  })
+
+  it('段闭合：仅读取工具——同一文件显示文件名，多个文件显示数量', () => {
+    const toolWithPath = (key, seq, name, path) =>
+      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: JSON.stringify({ path }), isError: false } } })
+    // 同一文件读取两次
+    let nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('r1', 300, 'read', 'C:\\proj\\client.js'),
+      toolWithPath('r2', 301, 'read', 'C:\\proj\\client.js'),
+      asNode('as2', 400),
+    ]
+    let s = buildSnapshot(nodes, { turnEnds: new Map() })
+    let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了client.js', '同一文件显示文件名')
+    // 两个不同文件
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('r1', 300, 'read', 'C:\\proj\\a.js'),
+      toolWithPath('r2', 301, 'read', 'C:\\proj\\b.js'),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了2份文件', '多个文件显示数量+份')
+  })
+
+  it('段闭合：混合 读取+命令 —— 读取在前、命令在最后；单命令显示工具名', () => {
+    const toolWithPath = (key, seq, name, path) =>
+      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: path ? JSON.stringify({ path }) : '{}', isError: false } } })
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('r1', 300, 'read', 'C:\\proj\\client.js'),
+      toolWithPath('c1', 301, 'pwsh', null),
+      asNode('as2', 400),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了client.js 运行了pwsh', '读取在前、命令在最后')
+  })
+
+  it('段闭合：混合 读取+编辑+命令 —— 读取、编辑按序，命令始终最后', () => {
+    const toolWithPath = (key, seq, name, path) =>
+      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: path ? JSON.stringify({ path }) : '{}', isError: false } } })
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('r1', 300, 'read', 'C:\\proj\\a.js'),
+      toolWithPath('e1', 301, 'edit', 'C:\\proj\\b.js'),
+      toolWithPath('c1', 302, 'pwsh', null),
+      toolWithPath('c2', 303, 'pwsh', null),
+      asNode('as2', 400),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 编辑了b.js 运行了2条命令')
+  })
+
+  it('段闭合：仅编辑工具——同一文件显示文件名', () => {
+    const toolWithPath = (key, seq, name, path) =>
+      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: JSON.stringify({ path }), isError: false } } })
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('e1', 300, 'edit', 'C:\\proj\\index.js'),
+      asNode('as2', 400),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了index.js')
+  })
+
+  it('段闭合：仅搜索工具——显示搜索次数', () => {
+    const toolWithPath = (key, seq, name) =>
+      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: '{}', isError: false } } })
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('g1', 300, 'grep'),
+      toolWithPath('g2', 301, 'grep'),
+      asNode('as2', 400),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('g1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '搜索了2次')
   })
 
   it('纯 think 段闭合：标题 = 思考（不显示"运行了 0 条命令"）', () => {

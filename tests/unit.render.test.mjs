@@ -177,7 +177,7 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
     assert.equal(segHeaders.length, 4, '应有 4 个工具段段组头（tc-revert/check/restore/verify）')
     for (let i = 0; i < segHeaders.length; i++) {
-      assert.ok(segHeaders[i].textContent.includes('运行了 1 条命令'), '工具段组头标题应为"运行了 1 条命令"')
+      assert.ok(segHeaders[i].textContent.includes('运行了pwsh'), '工具段组头标题应为"运行了pwsh"')
     }
     // text-only：as-2/3/4（as-1 纯 think 段直接官方渲染，无段外 text-only）
     assert.equal(container.querySelectorAll('.ccg-text-only').length, 3, '3 个 text-only（as-2/3/4，as-1 无段外 text）')
@@ -185,9 +185,9 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
 
   it('展开段级组头后工具卡片可见（手动展开覆盖默认折叠）', () => {
     clickHeader()
-    // 找到第一个工具段组头（"运行了 1 条命令"）
+    // 找到第一个工具段组头（"运行了pwsh"）
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
-    const toolSeg = segHeaders.find(h => h.textContent.includes('运行了 1 条命令'))
+    const toolSeg = segHeaders.find(h => h.textContent.includes('运行了pwsh'))
     assert.ok(toolSeg, '工具段组头应存在')
     act(() => { toolSeg.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     assert.equal(counts().cards, 1, '展开该段后其工具卡片可见')
@@ -208,7 +208,7 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
     clickHeader()
     // 展开一个工具段，让工具卡片实际挂载
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
-    const toolSeg = segHeaders.find(h => h.textContent.includes('运行了 1 条命令'))
+    const toolSeg = segHeaders.find(h => h.textContent.includes('运行了pwsh'))
     assert.ok(toolSeg)
     act(() => { toolSeg.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     assert.ok(lastToolCallProps, '展开段级折叠后应渲染内置工具卡片')
@@ -264,7 +264,7 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     assert.equal(c.cards, 0, '段级折叠默认收起，工具卡片应隐藏')
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
     assert.equal(segHeaders.length, 1, '应只有一个工具段段组头（tc-run 段）')
-    assert.ok(segHeaders[0].textContent.includes('运行了 1 条命令'), '工具段段组头标题应为"运行了 1 条命令"')
+    assert.ok(segHeaders[0].textContent.includes('运行了pwsh'), '工具段段组头标题应为"运行了pwsh"')
     // as-run-1（纯 think 段）直接官方渲染（Think 行 + text 正文），as-run-2 text-only 段外渲染
     assert.equal(c.assistants, 2, 'as-run-1 官方渲染 + as-run-2 text-only')
     assert.equal(c.hidden, 1, 'as-run-2 非 leader 成员隐藏标记')
@@ -299,9 +299,9 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
   })
 
   it('点击段级组头展开：工具卡片可见；再点收起', () => {
-    // 找到 tc-run 段组头（标题含"运行了 1 条命令"）
+    // 找到 tc-run 段组头（标题含"运行了pwsh"）
     const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
-    const tcHeader = segHeaders.find(h => h.textContent.includes('运行了 1 条命令'))
+    const tcHeader = segHeaders.find(h => h.textContent.includes('运行了pwsh'))
     assert.ok(tcHeader, 'tc-run 段组头应存在')
     assert.equal(counts().cards, 0, '默认折叠，工具卡片隐藏')
     // textBody：as-run-1 纯 think 段直接官方渲染（无段外 text），as-run-2 段外 text-only = 1

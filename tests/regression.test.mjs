@@ -193,7 +193,7 @@ describe('段级分组：手动展开/收起', () => {
       assert.ok(turnHeader, '运行中应渲染大组头')
       const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
       assert.ok(segHeader, '段级组头应作为独立 flowItem 渲染在大组头下方')
-      assert.ok(segHeader.textContent.includes('运行了 3 条命令'), '段组头标题应为"运行了 3 条命令"（段后有 text 已闭合）')
+      assert.ok(segHeader.textContent.includes('运行了3条命令'), '段组头标题应为"运行了3条命令"（段后有 text 已闭合）')
       assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '组内两个非 leader 成员 flowItem 隐藏（内容由段 leader 统一渲染）')
       // 点击段级组头展开
       act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
@@ -233,7 +233,7 @@ describe('段级分组：手动展开/收起', () => {
     mount(s)
     const segHeaders = [...container.querySelectorAll('.ccg-header')].filter((h) => !h.closest('[data-ccg-turn]'))
     assert.equal(segHeaders.length, 1, '运行中单条工具调用应套段级组头')
-    assert.ok(segHeaders[0].textContent.includes('运行了 1 条命令'), '段组头标题应为"运行了 1 条命令"')
+    assert.ok(segHeaders[0].textContent.includes('运行了pwsh'), '段组头标题应为"运行了pwsh"（单次命令显示工具名）')
     act(() => root.unmount())
     document.body.innerHTML = ''
     // 回合结束后：大组头收起，段级组头随大组头隐藏
