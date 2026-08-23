@@ -124,8 +124,10 @@ window.__ModuleLoader__.load({
 		var IconThinkOutline14 = null;
 		var IconSearchOutline16 = null;
 		var IconEditOutline16 = null;
+		var IconBrowseOutline16 = null;
 		var IconCodeOutline16 = null;
 		var IconApiOutline14 = null;
+		var IconSparkle16 = null;
 		try {
 			var uiPrimitives = require("@deepseek-ai/dsh-client-ui-primitives");
 			DisclosureRow = uiPrimitives.DisclosureRow;
@@ -134,8 +136,10 @@ window.__ModuleLoader__.load({
 			IconThinkOutline14 = uiPrimitives.IconThinkOutline14;
 			IconSearchOutline16 = uiPrimitives.IconSearchOutline16;
 			IconEditOutline16 = uiPrimitives.IconEditOutline16;
+			IconBrowseOutline16 = uiPrimitives.IconBrowseOutline16;
 			IconCodeOutline16 = uiPrimitives.IconCodeOutline16;
 			IconApiOutline14 = uiPrimitives.IconApiOutline14;
+			IconSparkle16 = uiPrimitives.IconSparkle16;
 		} catch (e) {
 			/* 平台模块缺失：走自带兜底样式 */
 		}
@@ -1143,49 +1147,29 @@ window.__ModuleLoader__.load({
 				line
 			);
 		}
-		/** 手写内联图标（描边风格与官方 ui-primitives 一致；官方工具图标由各工具插件
-		 *  自带、不对外暴露，终端/文档这类工具在此手绘近似）。 */
-		function segGlyph(kind, size) {
-			var s = typeof size === "number" ? size : 14;
-			var svg;
-			if (kind === "terminal") {
-				// 终端：圆角框 + ">_" 提示符
-				svg = react.createElement(
-					"svg", { width: s, height: s, viewBox: "0 0 14 14", fill: "none", xmlns: "http://www.w3.org/2000/svg", "aria-hidden": "true" },
-					react.createElement("rect", { x: "1", y: "1", width: "12", height: "12", rx: "2", stroke: "currentColor", strokeWidth: "1.2" }),
-					react.createElement("path", { d: "M3.5 4.5L6 7L3.5 9.5", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round", strokeLinejoin: "round" }),
-					react.createElement("path", { d: "M7.5 9.5H10.5", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
-				);
-			} else {
-				// 文档：纸张 + 折角 + 文本横线
-				svg = react.createElement(
-					"svg", { width: s, height: s, viewBox: "0 0 14 14", fill: "none", xmlns: "http://www.w3.org/2000/svg", "aria-hidden": "true" },
-					react.createElement("path", { d: "M3 1.5H8.5L11 4V12.5H3V1.5Z", stroke: "currentColor", strokeWidth: "1.2", strokeLinejoin: "round" }),
-					react.createElement("path", { d: "M8.5 1.5V4H11", stroke: "currentColor", strokeWidth: "1.2", strokeLinejoin: "round" }),
-					react.createElement("path", { d: "M5 6.5H9M5 8.5H9M5 10.5H7.5", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
-				);
-			}
-			return react.createElement("span", { className: "ccg-think-icon" }, svg);
-		}
-		/** 工具图标：按工具名映射（终端类 → 终端图标、read/view 类 → 文档图标、
-		 *  grep/搜索类 → 官方搜索图标、edit/写类 → 官方编辑图标，兜底官方 API 图标）。
-		 *  图标统一包 flex:none 容器防滚动摘要挤压。 */
+		/** 工具图标：复用官方 GenericToolCard 的 VARIANT_ICONS 映射（dsh-client-ui-tool），
+		 *  与官方工具行逐像素一致：bash/pwsh → IconApiOutline14、read → IconBrowseOutline16、
+		 *  search → IconSearchOutline16、write/edit → IconEditOutline16、code → IconCodeOutline16、
+		 *  兜底 others → IconSparkle16。图标统一包 flex:none 容器防滚动摘要挤压。 */
 		function toolIconFor(name, size) {
 			var n = String(name || "").toLowerCase();
 			var s = typeof size === "number" ? size : 14;
-			var icon = null;
-			if (n.indexOf("pwsh") !== -1 || n.indexOf("power") !== -1 || n.indexOf("shell") !== -1 || n.indexOf("cmd") !== -1 || n.indexOf("bash") !== -1 || n.indexOf("terminal") !== -1 || n.indexOf("git") !== -1) {
-				icon = segGlyph("terminal", s);
-			} else if (n.indexOf("read") !== -1 || n.indexOf("view") !== -1 || n.indexOf("cat") !== -1 || n.indexOf("open") !== -1) {
-				icon = segGlyph("file", s);
-			} else if (n.indexOf("grep") !== -1 || n.indexOf("search") !== -1 || n.indexOf("find") !== -1 || n.indexOf("glob") !== -1) {
-				icon = IconSearchOutline16 ? react.createElement("span", { className: "ccg-think-icon" }, react.createElement(IconSearchOutline16, { size: s })) : null;
+			var Icon = null;
+			if (n.indexOf("pwsh") !== -1 || n.indexOf("bash") !== -1 || n.indexOf("shell") !== -1 || n.indexOf("cmd") !== -1 || n.indexOf("terminal") !== -1 || n.indexOf("git") !== -1) {
+				Icon = IconApiOutline14;
+			} else if (n.indexOf("read") !== -1 || n.indexOf("view") !== -1 || n.indexOf("cat") !== -1 || n.indexOf("web_fetch") !== -1) {
+				Icon = IconBrowseOutline16;
+			} else if (n.indexOf("grep") !== -1 || n.indexOf("search") !== -1 || n.indexOf("find") !== -1 || n.indexOf("glob") !== -1 || n.indexOf("web_search") !== -1) {
+				Icon = IconSearchOutline16;
 			} else if (n.indexOf("edit") !== -1 || n.indexOf("write") !== -1 || n.indexOf("patch") !== -1 || n.indexOf("create") !== -1) {
-				icon = IconEditOutline16 ? react.createElement("span", { className: "ccg-think-icon" }, react.createElement(IconEditOutline16, { size: s })) : null;
+				Icon = IconEditOutline16;
+			} else if (n.indexOf("run_code") !== -1 || n.indexOf("code") !== -1) {
+				Icon = IconCodeOutline16;
 			} else {
-				icon = IconApiOutline14 ? react.createElement("span", { className: "ccg-think-icon" }, react.createElement(IconApiOutline14, { size: s })) : null;
+				Icon = IconSparkle16;
 			}
-			return icon;
+			if (!Icon) return null;
+			return react.createElement("span", { className: "ccg-think-icon" }, react.createElement(Icon, { size: s }));
 		}
 		/** 段组头标题元素：think / 工具运行中用"前缀 + 官方图标 + 名称 + 摘要"（官方行风格），
 		 *  其余情况为纯文本。 */
