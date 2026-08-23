@@ -415,6 +415,11 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     assert.ok(thinkFull.textContent.includes('完整思考内容'), 'think 完整内容来自 reasoningText')
     assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, '展开后 text 正文仍唯一一份，不重复')
     assert.equal(container.querySelectorAll('.ccg-think-full').length, 1, 'think 完整内容唯一一份')
+    // DOM 顺序：think 内容在 text 正文上方（先思考后正文）
+    const textEl = container.querySelector('.ccg-text-only')
+    assert.ok(textEl, 'text 正文存在')
+    const rel = thinkFull.compareDocumentPosition(textEl)
+    assert.ok((rel & 4) !== 0, 'think 内容应在 text 正文上方（DOCUMENT_POSITION_FOLLOWING）')
   })
 
   it('混合段（think + 工具）：段组头标题使用自研 ThinkSummary（带 data-follow-end）', () => {

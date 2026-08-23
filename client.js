@@ -1173,6 +1173,8 @@ window.__ModuleLoader__.load({
 			};
 			var title = segmentTitle(group, nodes);
 			var danger = group.failures > 0;
+			// 顺序：段组头行 → 段内内容（think 完整内容 / 工具卡片，折叠时不可见）
+			// → 段内 text 正文（始终显示）——think 在 text 上方，符合"先思考后正文"的阅读顺序
 			return react.createElement(
 				"div",
 				{ className: "ccg-group-root", "data-ccg-count": String(group.toolCount), "data-ccg-open": open ? "true" : undefined },
@@ -1180,8 +1182,8 @@ window.__ModuleLoader__.load({
 					GroupHeader,
 					{ count: group.toolCount, open: open, onToggle: toggle, label: title, danger: danger, isTurn: false }
 				),
-				textBodies,
-				react.createElement(FoldClip, { open: open }, content)
+				react.createElement(FoldClip, { open: open }, content),
+				textBodies
 			);
 		}
 
