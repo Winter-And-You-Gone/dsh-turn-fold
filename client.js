@@ -191,6 +191,9 @@ window.__ModuleLoader__.load({
 				".ccg-think-prefix{flex:none}",
 				".ccg-think-summary{display:inline-block;min-width:0;max-width:100%;vertical-align:bottom;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 				".ccg-think-summary[data-follow-end]{text-overflow:clip}",
+				/* 运行中：滚动位置平滑追到末尾（scroll-behavior:smooth），新内容逐段到达时
+				   滚动不是瞬移而是连贯跟随，配合 sweep 高光营造"流动"感 */
+				".ccg-think-summary-live{scroll-behavior:smooth}",
 				".ccg-think-title-live{position:relative}",
 				".ccg-think-title-live::after{content:\"\";inset-block:0;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base,#fff) 60%,transparent) 55%,transparent 100%);pointer-events:none;width:300px;animation:2.6s ease-out infinite ccg-think-sweep;position:absolute;left:0}",
 				"@keyframes ccg-think-sweep{0%{left:-300px}90%,to{left:100%}}",
