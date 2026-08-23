@@ -15,12 +15,11 @@ const { test: T } = loadPlugin()
 // ─────────────────────────── computeGroup ───────────────────────────
 describe('computeGroup（段级分组）', () => {
   it('单条工具调用：count=1，自身为 leader', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
-      textNode('as', 200, 'text'),
+      asNode('as', 200),
       toolNode('tc', 300),
-      textNode('as2', 400, 'text'),
+      asNode('as2', 400),
       asNode('final', 500),
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
@@ -33,14 +32,13 @@ describe('computeGroup（段级分组）', () => {
   })
 
   it('连续多条工具调用组成一组：count=3，中间成员 isLeader=false', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
-      textNode('as', 200, 'text'),
+      asNode('as', 200),
       toolNode('tc1', 300),
       toolNode('tc2', 301),
       toolNode('tc3', 302),
-      textNode('as2', 400, 'text'),
+      asNode('as2', 400),
       asNode('final', 500),
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
@@ -53,18 +51,16 @@ describe('computeGroup（段级分组）', () => {
   })
 
   it('纯 think 入段：think 与工具调用混排成一段（think 不打断段）', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
-      textNode('as', 200, 'text'),
+      asNode('as', 200),
       toolNode('tc1', 300),
       // 纯 think（只有 reasoning 块、无 text 块）→ 段成员
       asNode('as-think', 310, { blocks: [{ kind: 'reasoning', text: '思考中' }] }),
       toolNode('tc2', 400),
-      textNode('as3', 500, 'text'),
-      asNode('final', 600),
+      asNode('final', 500),
     ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
+    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc1'))
     assert.equal(g.count, 3)
     assert.deepEqual(g.keys, ['tc1', 'as-think', 'tc2'])
@@ -75,15 +71,14 @@ describe('computeGroup（段级分组）', () => {
     assert.equal(g2.isLeader, false)
   })
 
-  it('text 打断：纯 text 节点（无 reasoning）是段边界，两侧工具调用不合并', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
+  it('text 打断：两侧工具调用不合并（含 text 的消息是段边界）', () => {
     const nodes = [
       userNode('u', 100),
-      textNode('as1', 200, 'text'),
+      asNode('as1', 200),
       toolNode('tc1', 300),
-      textNode('as2', 310, 'text'),
+      asNode('as2', 310),
       toolNode('tc2', 400),
-      textNode('final', 500, 'text'),
+      asNode('final', 500),
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
     const g1 = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc1'))
@@ -94,14 +89,13 @@ describe('computeGroup（段级分组）', () => {
   })
 
   it('失败计数：isError=true 计入，运行中不计入', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
-      textNode('as', 200, 'text'),
+      asNode('as', 200),
       toolNode('ok', 300),
       toolNode('err', 301, { isError: true }),
       toolNode('run', 302, { running: true }),
-      textNode('as2', 400, 'text'),
+      asNode('as2', 400),
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
@@ -136,12 +130,11 @@ describe('computeGroup（段级分组）', () => {
   })
 
   it('回归 Bug1：store 节点对象被替换后，按 key 仍能定位（不依赖对象身份）', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
-      textNode('as', 200, 'text'),
+      asNode('as', 200),
       toolNode('tc', 300),
-      textNode('as2', 400, 'text'),
+      asNode('as2', 400),
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
     const staleProp = s.chat.nodes.get('tc') // ChatNodeSeat 持有的旧对象
@@ -324,11 +317,11 @@ describe('computeTurnFold（整回合折叠）', () => {
 
   it('回归 verify-fix 场景 1：新会话上下文注入在用户消息之前 → headerKey 取用户消息之后第一条', () => {
     const nodes = [
-      contextNode('ctx-approval', 15, 'text'),
+      contextNode('ctx-approval', 15),
       userNode('user-main', 16),
       asNode('as-step1', 130),
       toolNode('tool-1', 131),
-      contextNode('ctx-skills', 135, 'text'),
+      contextNode('ctx-skills', 135),
       asNode('as-step2', 383),
       asNode('as-final', 4444),
       tailNode('turn-tail', 4445),
@@ -346,7 +339,7 @@ describe('computeTurnFold（整回合折叠）', () => {
   it('回归 verify-fix 场景 2：上下文注入在用户消息之后 → 作为 headerKey', () => {
     const nodes = [
       userNode('user-cont', 4458),
-      contextNode('ctx-vision', 4460, 'text'),
+      contextNode('ctx-vision', 4460),
       asNode('as-t3s1', 4461),
       toolNode('tool-3-1', 4465),
       asNode('as-t3-final', 14497),
@@ -359,7 +352,7 @@ describe('computeTurnFold（整回合折叠）', () => {
 
   it('回归 verify-fix 场景 3：无 user 节点的回合 → 回退到第一条中间节点', () => {
     const nodes = [
-      contextNode('ctx-a', 100, 'text'),
+      contextNode('ctx-a', 100),
       asNode('as-1', 101),
       toolNode('tool-a', 102),
       asNode('as-final', 103),
@@ -373,7 +366,7 @@ describe('computeTurnFold（整回合折叠）', () => {
   it('回归 verify-fix 场景 4：两个用户消息 + 中间上下文 → headerKey 取最后一个 user 之后', () => {
     const nodes = [
       userNode('user-a', 200),
-      contextNode('ctx-mid', 201, 'text'),
+      contextNode('ctx-mid', 201),
       userNode('user-b', 202),
       asNode('as-1', 203),
       toolNode('tool-a', 204),

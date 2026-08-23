@@ -174,16 +174,14 @@ describe('段级分组：手动展开/收起', () => {
   it('连续工具调用组：运行中渲染大组头 + 段级组头（默认折叠）；段级组头展开/收起成员，大组头收起整回合', () => {
     T.turnOverrides.clear()
     T.overrides.clear()
-    // 段边界：纯 text 节点（无 reasoning 块）
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
-      textNode('as', 200, 'text'),
+      asNode('as', 200),
       toolNode('tc1', 300),
       toolNode('tc2', 301),
       toolNode('tc3', 302),
-      textNode('as2', 400, 'text'),
-      textNode('final', 500, 'text'),
+      asNode('as2', 400),
+      asNode('final', 500),
     ]
     // 回合进行中（turnEnds 为空）→ 大组头从回复开始出现（默认展开），段级组头默认折叠
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
@@ -219,13 +217,12 @@ describe('段级分组：手动展开/收起', () => {
   it('单条命令运行中也套段级组头（不再原样渲染）', () => {
     T.turnOverrides.clear()
     T.overrides.clear()
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
       userNode('u', 100),
-      textNode('as', 200, 'text'),
+      asNode('as', 200),
       toolNode('tc', 300),
-      textNode('as2', 400, 'text'),
-      textNode('final', 500, 'text'),
+      asNode('as2', 400),
+      asNode('final', 500),
     ]
     // 运行中：段级组头出现
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
@@ -253,13 +250,11 @@ describe('真实会话数据（TURN13）全量折叠', () => {
     assert.equal(c.cards, 0)
     assert.equal(c.assistants, 1)
     assert.equal(c.hidden, 7)
-    // 展开大组头后：段级组头行可见；含 text 段自动展开（工具卡片可见）
+    // 展开大组头后：段级组头行可见，工具卡片仍默认折叠
     clickHeader()
     const expanded = counts()
-    assert.equal(expanded.cards, 4, '含 text 段自动展开，4 个工具卡片可见')
+    assert.equal(expanded.cards, 0, '段级折叠默认收起，工具卡片不可见')
     assert.equal(expanded.hidden, 0)
-    // 5 个段级组头：as-1 段 + 4 个工具+think 段
-    const segHeaders = container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
-    assert.equal(segHeaders.length, 5, '5 个段级组头（as-1 + 4 个工具段）')
+    assert.equal(container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header').length, 4, '4 个段级组头（每个 text 之间一条命令）')
   }))
 })
