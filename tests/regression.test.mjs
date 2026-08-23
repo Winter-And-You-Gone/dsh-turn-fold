@@ -194,14 +194,15 @@ describe('段级分组：手动展开/收起', () => {
       const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
       assert.ok(segHeader, '段级组头应作为独立 flowItem 渲染在大组头下方')
       assert.ok(segHeader.textContent.includes('运行了 3 条命令'), '段组头标题应为"运行了 3 条命令"（段后有 text 已闭合）')
-      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '组内两个非 leader 成员隐藏（段默认折叠）')
+      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '组内两个非 leader 成员 flowItem 隐藏（内容由段 leader 统一渲染）')
       // 点击段级组头展开
       act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 0, '展开后成员可见')
-      assert.equal(container.querySelectorAll('.mock-tool-card').length, 3, '3 个工具卡片可见')
+      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '展开后非 leader 成员 flowItem 仍隐藏（内容在段组头内）')
+      assert.equal(container.querySelectorAll('.mock-tool-card').length, 3, '3 个工具卡片在段组头内可见')
       // 再点收起
       act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '收起后成员重新隐藏')
+      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '收起后成员 flowItem 仍隐藏')
+      assert.equal(container.querySelectorAll('.mock-tool-card').length, 0, '收起后工具卡片隐藏')
       // 点击大组头收起整回合：段级组头随成员隐藏，只剩大组头
       act(() => { turnHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
       assert.equal(container.querySelectorAll('.ccg-header').length, 1, '只剩大组头')
