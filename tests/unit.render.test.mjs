@@ -310,7 +310,8 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     assert.equal(counts().cards, 0, '默认折叠，工具卡片隐藏')
     act(() => { tcHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     assert.equal(counts().cards, 1, '展开段级折叠后工具卡片可见')
-    assert.equal(container.querySelector('.ccg-seg-with-text[data-open="true"]') !== null, true, '段展开标记 data-open=true')
+    // 段展开后段外 text 正文不再渲染（段内官方渲染提供 text 正文，避免重复）
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 1, 'tc-run 段展开后其段外 text 卸载（as-run-1 段仍折叠）')
     act(() => { tcHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     assert.equal(counts().cards, 0, '再点收起后工具卡片隐藏')
   })

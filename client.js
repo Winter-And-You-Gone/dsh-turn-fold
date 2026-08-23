@@ -195,10 +195,9 @@ window.__ModuleLoader__.load({
 				".ccg-think-title-live::after{content:\"\";inset-block:0;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base,#fff) 60%,transparent) 55%,transparent 100%);pointer-events:none;width:300px;animation:2.6s ease-out infinite ccg-think-sweep;position:absolute;left:0}",
 				"@keyframes ccg-think-sweep{0%{left:-300px}90%,to{left:100%}}",
 				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live::after{animation:none}}",
-				/* 含 think+text 节点拆分渲染：段外 text 正文（官方渲染，CSS 隐藏 think 行）始终可见；
-				   段展开（data-open=true）时隐藏段外 text 避免与段内官方渲染重复 */
-				".ccg-text-only [data-variant=\"think\"]{display:none}",
-				".ccg-seg-with-text[data-open=\"true\"] .ccg-text-only{display:none}"
+				/* 含 think+text 节点拆分渲染：段外 text 正文的官方 think 行隐藏
+				   （段外只显示 text 正文，段内展开时官方渲染含完整 think 行） */
+				".ccg-text-only [data-variant=\"think\"]{display:none}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
@@ -1281,12 +1280,11 @@ window.__ModuleLoader__.load({
 			// think 完整内容）默认折叠，展开时官方整体渲染。
 			if (isThinkNode(node) && segGroup) {
 				var segContent = renderBuiltinAssistant(props);
-				// 段外 text 正文：官方整体渲染 + CSS 隐藏 think 行（data-variant="think"）
-				var textBody = hasText(node)
+				// 段外 text 正文：仅在段收起时渲染（段展开时由段内官方渲染提供 text 正文，
+				// 避免重复）。官方整体渲染 + CSS 隐藏 think 行。
+				var textBody = hasText(node) && !segOpen
 					? react.createElement("div", { className: "ccg-text-only" }, renderBuiltinAssistant(props))
 					: null;
-				// 段部分：段组头 + 折叠内容（含 think 完整内容）
-				var segPart;
 				if (fold.isTurnHeader) {
 					// think 是回合第一条中间节点：同时是 turn 组头和段 leader——大组头下方接段级折叠行。
 					var toggleTurn2 = function () {
@@ -1294,28 +1292,20 @@ window.__ModuleLoader__.load({
 					};
 					var baseLabel2 = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 					var turnLabel2 = closed ? turnLabelWithStatus(baseLabel2, fold.turnStatus) : baseLabel2;
-					segPart = react.createElement(
+					return react.createElement(
 						"div",
 						{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
 						react.createElement(GroupHeader, { label: turnLabel2, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn2, isTurn: true, live: !closed }),
 						react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 						react.createElement(FoldClip, { open: turnOpen, live: !closed },
-							react.createElement("div", { className: "ccg-seg-with-text", "data-open": segOpen ? "true" : undefined },
-								renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent),
-								textBody
-							)
+							renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent),
+							textBody
 						)
 					);
-				} else {
-					if (!turnOpen) return hiddenMarker();
-					segPart = renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent);
 				}
-				if (textBody === null || fold.isTurnHeader) return segPart;
-				// 段外 text 正文与段部分并列（段展开时 CSS 隐藏 text 正文避免重复）
-				return react.createElement(
-					"div",
-					{ className: "ccg-seg-with-text", "data-open": segOpen ? "true" : undefined },
-					segPart,
+				if (!turnOpen) return hiddenMarker();
+				return react.createElement("div", { style: { display: "contents" } },
+					renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent),
 					textBody
 				);
 			}
