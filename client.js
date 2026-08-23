@@ -59,14 +59,23 @@ window.__ModuleLoader__.load({
 		};
 
 		// ---- 多语言支持 ----
-		// 根据浏览器语言自动选择界面语言：任一语言以 zh 开头即简体中文，否则英语；
-		// 无 navigator（如部分测试/SSR 环境）时回退英语。
-		var LOCALE = "en";
-		if (typeof navigator !== "undefined" && navigator) {
-			var langList = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]);
-			for (var li = 0; li < langList.length; li++) {
-				if (langList[li] && String(langList[li]).indexOf("zh") !== -1) { LOCALE = "zh"; break; }
+		// 动态语言：DSH 切换界面语言时设置 document.documentElement.lang
+		// （dsh-client-locale），插件每次读取当前值，随 DSH 语言切换而切换；
+		// 无 document（部分测试/SSR）时回退 navigator 语言；两者都无则英语。
+		function currentLocale() {
+			var lang = "";
+			try {
+				if (typeof document !== "undefined" && document.documentElement && document.documentElement.lang) {
+					lang = document.documentElement.lang;
+				}
+			} catch (e) { /* 忽略 */ }
+			if (!lang && typeof navigator !== "undefined" && navigator) {
+				var langList = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]);
+				for (var li = 0; li < langList.length; li++) {
+					if (langList[li] && String(langList[li]).indexOf("zh") !== -1) { lang = "zh"; break; }
+				}
 			}
+			return String(lang).toLowerCase().indexOf("zh") !== -1 ? "zh" : "en";
 		}
 		var TEXTS = {
 			zh: {
@@ -129,7 +138,7 @@ window.__ModuleLoader__.load({
 		};
 		/** 取当前语言下的文案；缺失键回退英文，再缺失返回键名本身。 */
 		function _T(key) {
-			var dict = TEXTS[LOCALE] || TEXTS.en;
+			var dict = TEXTS[currentLocale()] || TEXTS.en;
 			return dict[key] !== undefined ? dict[key] : key;
 		}
 
@@ -775,16 +784,16 @@ window.__ModuleLoader__.load({
 				var h = Math.floor(total / 3600);
 				var m = Math.floor((total % 3600) / 60);
 				var s = total % 60;
-				if (LOCALE === "zh") return h + "时" + m + "分" + s + "秒";
+				if (currentLocale() === "zh") return h + "时" + m + "分" + s + "秒";
 				return h + "h " + m + "m " + s + "s";
 			}
 			if (total >= 60) {
 				var mm = Math.floor(total / 60);
 				var ss = total % 60;
-				if (LOCALE === "zh") return mm + "分" + ss + "秒";
+				if (currentLocale() === "zh") return mm + "分" + ss + "秒";
 				return mm + "m " + ss + "s";
 			}
-			if (LOCALE === "zh") return total + "秒";
+			if (currentLocale() === "zh") return total + "秒";
 			return total + "s";
 		}
 		/** tok/s：>=10 取整，<10 保留一位小数（与官方一致）。 */
@@ -797,25 +806,25 @@ window.__ModuleLoader__.load({
 			if (!metrics) return "";
 			var parts = [];
 			if (metrics.durationMs !== undefined) {
-				if (LOCALE === "zh") parts.push("耗时" + formatTurnDuration(metrics.durationMs));
+				if (currentLocale() === "zh") parts.push("耗时" + formatTurnDuration(metrics.durationMs));
 				else parts.push(formatTurnDuration(metrics.durationMs));
 			}
 			if (metrics.ttftMs !== undefined) {
 				// 首字（TTFT 近似）：秒为单位、一位小数（毫秒不直观）
 				var ttftSec = (metrics.ttftMs / 1000).toFixed(1);
-				if (LOCALE === "zh") parts.push("首字" + ttftSec + "s");
+				if (currentLocale() === "zh") parts.push("首字" + ttftSec + "s");
 				else parts.push("TTFT " + ttftSec + "s");
 			}
 			if (metrics.tokens !== undefined) {
-				if (LOCALE === "zh") parts.push("消耗" + metrics.tokens + "token");
+				if (currentLocale() === "zh") parts.push("消耗" + metrics.tokens + "token");
 				else parts.push(metrics.tokens + " tokens");
 			}
 			if (metrics.tokensPerSecond !== undefined) {
-				if (LOCALE === "zh") parts.push(formatTokPerSec(metrics.tokensPerSecond) + "tok/s");
+				if (currentLocale() === "zh") parts.push(formatTokPerSec(metrics.tokensPerSecond) + "tok/s");
 				else parts.push(formatTokPerSec(metrics.tokensPerSecond) + " tok/s");
 			}
 			if (metrics.cacheHitPercent !== undefined) {
-				if (LOCALE === "zh") parts.push("缓存命中" + metrics.cacheHitPercent + "%");
+				if (currentLocale() === "zh") parts.push("缓存命中" + metrics.cacheHitPercent + "%");
 				else parts.push("cache hit " + metrics.cacheHitPercent + "%");
 			}
 			return parts.join(" · ");
@@ -1334,7 +1343,7 @@ window.__ModuleLoader__.load({
 		// 段闭合后这些字段稳定；不同内容但同 keys 的段（如测试场景）长度不同也能区分。
 		var segmentLabelCache = new Map();
 		function segmentCacheKey(group, nodes) {
-			var parts = [group.leaderKey, group.keys.join(",")];
+			var parts = [currentLocale(), group.leaderKey, group.keys.join(",")];
 			for (var i = 0; i < group.keys.length; i++) {
 				var n = nodes.get(group.keys[i]);
 				if (!n || n.kind !== "tool-call") continue;
@@ -1371,7 +1380,7 @@ window.__ModuleLoader__.load({
 				if (stats.others.length > 0) parts.push(_T("segmentOthers") + stats.others.length + _T("segmentOthersSuffix"));
 				var commandLabel = commandPartLabel(stats);
 				if (commandLabel) parts.push(commandLabel);
-				var label = parts.join(LOCALE === "zh" ? " " : " ");
+				var label = parts.join(" ");
 				// 失败追加：仅单条工具调用失败显示"执行失败"（无条数）；
 				// 多条工具调用时 1 条失败也显示"1条执行失败"
 				if (group.failures > 0) {

@@ -9,7 +9,7 @@ import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { loadPlugin } from './helpers/loader.mjs'
 import { createSessionStore, makeUseSession, makeNode, userNode, asNode, toolNode, buildSnapshot } from './helpers/store.mjs'
-import { TURN13 } from './helpers/fixtures.mjs'
+import { TURN13, TURN13_METRICS } from './helpers/fixtures.mjs'
 
 const require = createRequire(import.meta.url)
 const { JSDOM } = require('jsdom')
@@ -578,5 +578,17 @@ describe('大组头 0 秒占位（GroupedUserView）', () => {
     snapshot.running = true
     mountUser(snapshot)
     assert.equal(container.querySelector('.ccg-group-root[data-ccg-turn]'), null, '无占位')
+  })
+})
+
+// ── 语言动态切换（跟随 DSH 的 document.documentElement.lang） ──
+describe('语言动态切换', () => {
+  it('turnHeaderLabel 随 document.documentElement.lang 在中文/英文间切换', () => {
+    document.documentElement.lang = 'en-US'
+    assert.equal(T.turnHeaderLabel(TURN13_METRICS), '22m 34s · 370202 tokens · 144 tok/s · cache hit 93.99%')
+    document.documentElement.lang = 'zh-CN'
+    assert.equal(T.turnHeaderLabel(TURN13_METRICS), '耗时22分34秒 · 消耗370202token · 144tok/s · 缓存命中93.99%')
+    // 恢复（避免污染后续测试；无 lang 时回退 navigator zh-CN）
+    document.documentElement.lang = ''
   })
 })

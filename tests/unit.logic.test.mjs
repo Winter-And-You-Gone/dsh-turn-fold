@@ -830,6 +830,8 @@ describe('英文界面（en）', () => {
     assert.equal(T2.formatTurnDuration(3661000), '1h 1m 1s')
     assert.equal(T2.turnHeaderLabel(TURN13_METRICS), '22m 34s · 370202 tokens · 144 tok/s · cache hit 93.99%')
     assert.equal(T2.turnHeaderLabel({ tokens: 100 }), '100 tokens')
+    // 恢复中文 navigator（动态语言读取下，否则会污染同进程后续测试）
+    Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
   })
 })
 
