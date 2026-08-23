@@ -227,7 +227,7 @@ window.__ModuleLoader__.load({
 				".ccg-roll-text{display:inline}",
 				".ccg-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}",
 				/* think 运行中摘要（段组头标题）：前缀 + 最新一行，横向自动滚动跟随末尾
-				   （官方 ReasoningRow 同款 data-follow-end），并带高光扫过动画 */
+				   （官方 ReasoningRow 同款 data-follow-end） */
 				".ccg-think-title{display:inline-flex;align-items:center;min-width:0;max-width:100%}",
 				".ccg-think-prefix{flex:none}",
 				/* 图标与 · 前后统一 4px 间隔：前缀 图标 名称 · 摘要 */
@@ -238,10 +238,13 @@ window.__ModuleLoader__.load({
 				".ccg-think-sep{flex:none;color:var(--dsw-alias-label-tertiary,#9ca3af);margin:0 4px}",
 				".ccg-think-summary{display:inline-block;min-width:0;max-width:100%;vertical-align:bottom;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 				".ccg-think-summary[data-follow-end]{text-overflow:clip}",
-				".ccg-think-title-live{position:relative}",
-				".ccg-think-title-live::after{content:\"\";inset-block:0;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base,#fff) 60%,transparent) 55%,transparent 100%);pointer-events:none;width:300px;animation:2.6s ease-out infinite ccg-think-sweep;position:absolute;left:0}",
-				"@keyframes ccg-think-sweep{0%{left:-300px}90%,to{left:100%}}",
-				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live::after{animation:none}}",
+				/* 运行中段组头标题：文字 shimmer 高光（官方 TurnStatus "Deep diving..." 同款）——
+				   渐变背景 + background-clip:text + 背景位移动画，文字表面流动光泽。
+				   只作用于文本子元素（prefix/name/sep/summary），图标（SVG currentColor）
+				   不受影响（background-clip:text 会把 currentColor 变透明）。 */
+				".ccg-think-title-live .ccg-think-prefix,.ccg-think-title-live .ccg-think-name,.ccg-think-title-live .ccg-think-sep,.ccg-think-title-live .ccg-think-summary{color:transparent;-webkit-text-fill-color:transparent;background:linear-gradient(90deg,var(--dsw-static-deepseek-500) 0%,var(--dsw-static-deepseek-500) 40%,var(--dsw-static-deepseek-200) 50%,var(--dsw-static-deepseek-500) 60%,var(--dsw-static-deepseek-500) 100%);background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:1.8s linear infinite ccg-turn-status-shimmer}",
+				"@keyframes ccg-turn-status-shimmer{to{background-position:0 0}}",
+				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live .ccg-think-prefix,.ccg-think-title-live .ccg-think-name,.ccg-think-title-live .ccg-think-sep,.ccg-think-title-live .ccg-think-summary{background-position:0 0;background-size:100% 100%;animation:none}}",
 				/* 含 think+text 节点拆分渲染：段外 text 正文的官方 think 行隐藏
 				   （段外只显示 text 正文，段内展开时官方渲染含完整 think 行） */
 				".ccg-text-only [data-variant=\"think\"]{display:none}",
@@ -1429,7 +1432,7 @@ window.__ModuleLoader__.load({
 						var desc = summarizeArgs(info.argsRaw);
 						return react.createElement(
 							"span",
-							{ className: "ccg-think-title" },
+							{ className: "ccg-think-title ccg-think-title-live" },
 							react.createElement("span", { className: "ccg-think-prefix" }, _T("runningTool")),
 							toolIconFor(info.name, 14),
 							react.createElement("span", { className: "ccg-think-name" }, info.name),
