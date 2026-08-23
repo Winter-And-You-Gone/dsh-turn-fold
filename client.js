@@ -194,7 +194,11 @@ window.__ModuleLoader__.load({
 				".ccg-think-title-live{position:relative}",
 				".ccg-think-title-live::after{content:\"\";inset-block:0;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base,#fff) 60%,transparent) 55%,transparent 100%);pointer-events:none;width:300px;animation:2.6s ease-out infinite ccg-think-sweep;position:absolute;left:0}",
 				"@keyframes ccg-think-sweep{0%{left:-300px}90%,to{left:100%}}",
-				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live::after{animation:none}}"
+				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live::after{animation:none}}",
+				/* 含 think+text 节点拆分渲染：段外 text 正文（官方渲染，CSS 隐藏 think 行）始终可见；
+				   段展开（data-open=true）时隐藏段外 text 避免与段内官方渲染重复 */
+				".ccg-text-only [data-variant=\"think\"]{display:none}",
+				".ccg-seg-with-text[data-open=\"true\"] .ccg-text-only{display:none}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
@@ -322,11 +326,13 @@ window.__ModuleLoader__.load({
 			}
 			return false;
 		}
-		/** 纯 think 节点：有 reasoning、无 text（含 text 的消息是段边界，其 think 跟消息走）。 */
+		/** think 节点：有 reasoning 块即算（含 think+text 同一节点的消息——DSH 把 think 和
+		 *  text 放在同一 assistant-step 的 blocks 里；think 部分收进段组头，text 部分在
+		 *  段外单独渲染保持可见）。 */
 		function isThinkNode(node) {
-			return hasReasoning(node) && !hasText(node);
+			return hasReasoning(node);
 		}
-		/** 段成员：tool-call 或纯 think 的 assistant-step（两个 text 之间的内容都入段）。 */
+		/** 段成员：tool-call 或含 reasoning 的 assistant-step（两个 text 之间的内容都入段）。 */
 		function isSegmentMember(node) {
 			if (!node) return false;
 			if (node.kind === "tool-call") return true;
@@ -383,8 +389,10 @@ window.__ModuleLoader__.load({
 		}
 		/**
 		 * 计算本节点所属的"段级分组"：
-		 *   - 段 = 两个 text 之间的所有节点（tool-call + 纯 think 的 assistant-step
-		 *     混排成一段；think 不打断段，含 text 的消息才是段边界）。
+		 *   - 段 = 两个 text 之间的所有内容（tool-call + 含 reasoning 的 assistant-step
+		 *     混排成一段；think 不打断段，text 是段边界）。含 think+text 的同一节点是
+		 *     段的"收尾成员"：think 部分入段，text 部分使段闭合（text 正文在段外单独
+		 *     渲染保持始终可见）。
 		 *   - leader = 段内第一个节点（只有 leader 渲染段组头）。
 		 *   - 段级折叠始终默认收起（autoCollapsed 恒 true）；运行中（textAfter=false）
 		 *     段组头动态显示"正在运行 Xxx · 描述 / 正在思考 · 内容"，出现下一个 text
@@ -398,12 +406,16 @@ window.__ModuleLoader__.load({
 			}
 			if (ourIdx === -1) return null;
 			var start = ourIdx, end = ourIdx;
+			// 向前：不包含含 text 的节点（含 text 的节点属于它前面的段或独立为边界）
 			while (start - 1 >= 0) {
 				var prev = nodes.get(order[start - 1]);
-				if (!isSegmentMember(prev)) break;
+				if (!isSegmentMember(prev) || hasText(prev)) break;
 				start--;
 			}
+			// 向后：段尾含 text 时停止扩展（text 出现即段闭合）
 			while (end + 1 < order.length) {
+				var tail = nodes.get(order[end]);
+				if (hasText(tail)) break;
 				var next = nodes.get(order[end + 1]);
 				if (!isSegmentMember(next)) break;
 				end++;
@@ -413,19 +425,24 @@ window.__ModuleLoader__.load({
 			var toolCount = 0;
 			var failures = 0;
 			var anyRunning = false;
+			var segHasText = false;
 			for (var m = 0; m < keys.length; m++) {
 				var n = nodes.get(keys[m]);
-				if (!n || n.kind !== "tool-call") continue;
+				if (!n) continue;
+				if (hasText(n)) segHasText = true;
+				if (n.kind !== "tool-call") continue;
 				toolCount++;
 				if (n.data && isRunningRoot(n.data.root)) { anyRunning = true; continue; }
 				// 已结算的命令以 isError=true 标记执行失败（含中断）。
 				var root = n.data && n.data.root;
 				if (root && "kind" in root && root.kind === "tool-result" && root.isError === true) failures++;
 			}
-			// 段闭合：段尾之后已出现含 text 的节点（"下一个 text 出现"后标题变"运行了 N 条命令"）。
-			var textAfter = false;
-			for (var j = end + 1; j < order.length; j++) {
-				if (hasText(nodes.get(order[j]))) { textAfter = true; break; }
+			// 段闭合：段尾节点自身含 text，或段尾之后已出现含 text 的节点。
+			var textAfter = segHasText;
+			if (!textAfter) {
+				for (var j = end + 1; j < order.length; j++) {
+					if (hasText(nodes.get(order[j]))) { textAfter = true; break; }
+				}
 			}
 			return {
 				start: start,
@@ -440,7 +457,7 @@ window.__ModuleLoader__.load({
 				textAfter: textAfter,
 				// 运行中段组头标题取段内最后一个节点（当前正在执行的工具 / 思考内容）
 				lastActiveKey: keys[keys.length - 1],
-				// 段级折叠始终默认收起（运行中标题动态变化，不需要展开内容）
+				// 段级折叠始终默认收起（含 think+text 节点的 text 正文在段外单独渲染）
 				autoCollapsed: true
 			};
 		}
@@ -1259,11 +1276,17 @@ window.__ModuleLoader__.load({
 					renderBuiltinAssistant(props)
 				);
 			}
-			// 纯 think 节点：收进段级折叠（段 = 两个 text 之间的内容，think 与工具混排
-			// 一段；哪怕段内只有 think 也套段组头——标题显示"正在思考 · 最新一行"，
-			// 展开后显示官方 think 行）。
+			// think 节点（含 think+text 同一节点）：think 部分收进段级折叠，text 正文在
+			// 段外单独渲染（CSS 隐藏官方 think 行）保持始终可见；段内内容（工具卡片/
+			// think 完整内容）默认折叠，展开时官方整体渲染。
 			if (isThinkNode(node) && segGroup) {
 				var segContent = renderBuiltinAssistant(props);
+				// 段外 text 正文：官方整体渲染 + CSS 隐藏 think 行（data-variant="think"）
+				var textBody = hasText(node)
+					? react.createElement("div", { className: "ccg-text-only" }, renderBuiltinAssistant(props))
+					: null;
+				// 段部分：段组头 + 折叠内容（含 think 完整内容）
+				var segPart;
 				if (fold.isTurnHeader) {
 					// think 是回合第一条中间节点：同时是 turn 组头和段 leader——大组头下方接段级折叠行。
 					var toggleTurn2 = function () {
@@ -1271,18 +1294,30 @@ window.__ModuleLoader__.load({
 					};
 					var baseLabel2 = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 					var turnLabel2 = closed ? turnLabelWithStatus(baseLabel2, fold.turnStatus) : baseLabel2;
-					return react.createElement(
+					segPart = react.createElement(
 						"div",
 						{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
 						react.createElement(GroupHeader, { label: turnLabel2, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn2, isTurn: true, live: !closed }),
 						react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 						react.createElement(FoldClip, { open: turnOpen, live: !closed },
-							renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent)
+							react.createElement("div", { className: "ccg-seg-with-text", "data-open": segOpen ? "true" : undefined },
+								renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent),
+								textBody
+							)
 						)
 					);
+				} else {
+					if (!turnOpen) return hiddenMarker();
+					segPart = renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent);
 				}
-				if (!turnOpen) return hiddenMarker();
-				return renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent);
+				if (textBody === null || fold.isTurnHeader) return segPart;
+				// 段外 text 正文与段部分并列（段展开时 CSS 隐藏 text 正文避免重复）
+				return react.createElement(
+					"div",
+					{ className: "ccg-seg-with-text", "data-open": segOpen ? "true" : undefined },
+					segPart,
+					textBody
+				);
 			}
 			if (!fold.isTurnHeader) {
 				// 中间 Think 节点（含 text 的普通消息）：大组头展开时显示；收起时隐藏。
