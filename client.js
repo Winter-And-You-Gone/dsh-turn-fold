@@ -322,11 +322,12 @@ window.__ModuleLoader__.load({
 			}
 			return false;
 		}
-		/** 纯 think 节点：有 reasoning、无 text（含 text 的消息是段边界，其 think 跟消息走）。 */
+		/** think 节点：有 reasoning 块即算（含 think+text 同一节点的消息——DSH 把 think 和
+		 *  text 放在同一 assistant-step 的 blocks 里，text 是段边界、think 部分收进段）。 */
 		function isThinkNode(node) {
-			return hasReasoning(node) && !hasText(node);
+			return hasReasoning(node);
 		}
-		/** 段成员：tool-call 或纯 think 的 assistant-step（两个 text 之间的内容都入段）。 */
+		/** 段成员：tool-call 或含 reasoning 的 assistant-step（两个 text 之间的内容都入段）。 */
 		function isSegmentMember(node) {
 			if (!node) return false;
 			if (node.kind === "tool-call") return true;
@@ -383,12 +384,14 @@ window.__ModuleLoader__.load({
 		}
 		/**
 		 * 计算本节点所属的"段级分组"：
-		 *   - 段 = 两个 text 之间的所有节点（tool-call + 纯 think 的 assistant-step
-		 *     混排成一段；think 不打断段，含 text 的消息才是段边界）。
+		 *   - 段 = 两个 text 之间的所有内容（tool-call + 含 reasoning 的 assistant-step
+		 *     混排成一段；think 不打断段，text 是段边界）。含 think+text 的同一节点是
+		 *     段的"收尾成员"：think 部分入段，text 部分使段闭合。
 		 *   - leader = 段内第一个节点（只有 leader 渲染段组头）。
-		 *   - 段级折叠始终默认收起（autoCollapsed 恒 true）；运行中（textAfter=false）
-		 *     段组头动态显示"正在运行 Xxx · 描述 / 正在思考 · 内容"，出现下一个 text
-		 *     后显示"运行了 N 条命令"（think 不算命令数）。
+		 *   - 段级折叠默认收起（autoCollapsed 恒 true），但段内含 text 节点时自动展开
+		 *     （text 正文必须可见）；运行中（textAfter=false）段组头动态显示
+		 *     "正在运行 Xxx · 描述 / 正在思考 · 内容"，出现下一个 text 后显示
+		 *     "运行了 N 条命令"（think 不算命令数）。
 		 */
 		function computeGroup(order, nodes, ourNode) {
 			if (!order || !nodes || !ourNode) return null;
@@ -398,12 +401,16 @@ window.__ModuleLoader__.load({
 			}
 			if (ourIdx === -1) return null;
 			var start = ourIdx, end = ourIdx;
+			// 向前：包含无 text 的段成员（含 text 的节点属于它前面的段，不并入本段）
 			while (start - 1 >= 0) {
 				var prev = nodes.get(order[start - 1]);
-				if (!isSegmentMember(prev)) break;
+				if (!isSegmentMember(prev) || hasText(prev)) break;
 				start--;
 			}
+			// 向后：段尾无 text 时才能继续并入成员（text 出现即段闭合）
 			while (end + 1 < order.length) {
+				var tail = nodes.get(order[end]);
+				if (hasText(tail)) break;
 				var next = nodes.get(order[end + 1]);
 				if (!isSegmentMember(next)) break;
 				end++;
@@ -413,19 +420,24 @@ window.__ModuleLoader__.load({
 			var toolCount = 0;
 			var failures = 0;
 			var anyRunning = false;
+			var segHasText = false;
 			for (var m = 0; m < keys.length; m++) {
 				var n = nodes.get(keys[m]);
-				if (!n || n.kind !== "tool-call") continue;
+				if (!n) continue;
+				if (hasText(n)) segHasText = true;
+				if (n.kind !== "tool-call") continue;
 				toolCount++;
 				if (n.data && isRunningRoot(n.data.root)) { anyRunning = true; continue; }
 				// 已结算的命令以 isError=true 标记执行失败（含中断）。
 				var root = n.data && n.data.root;
 				if (root && "kind" in root && root.kind === "tool-result" && root.isError === true) failures++;
 			}
-			// 段闭合：段尾之后已出现含 text 的节点（"下一个 text 出现"后标题变"运行了 N 条命令"）。
-			var textAfter = false;
-			for (var j = end + 1; j < order.length; j++) {
-				if (hasText(nodes.get(order[j]))) { textAfter = true; break; }
+			// 段闭合：段尾节点自身含 text，或段尾之后已出现含 text 的节点。
+			var textAfter = segHasText;
+			if (!textAfter) {
+				for (var j = end + 1; j < order.length; j++) {
+					if (hasText(nodes.get(order[j]))) { textAfter = true; break; }
+				}
 			}
 			return {
 				start: start,
@@ -440,8 +452,8 @@ window.__ModuleLoader__.load({
 				textAfter: textAfter,
 				// 运行中段组头标题取段内最后一个节点（当前正在执行的工具 / 思考内容）
 				lastActiveKey: keys[keys.length - 1],
-				// 段级折叠始终默认收起（运行中标题动态变化，不需要展开内容）
-				autoCollapsed: true
+				// 段内含 text 节点时自动展开（text 正文必须可见），否则默认收起
+				autoCollapsed: !segHasText
 			};
 		}
 		/** 取节点所属回合号；非回合/步骤定位（如 session 级）返回 undefined。 */
@@ -1259,9 +1271,8 @@ window.__ModuleLoader__.load({
 					renderBuiltinAssistant(props)
 				);
 			}
-			// 纯 think 节点：收进段级折叠（段 = 两个 text 之间的内容，think 与工具混排
-			// 一段；哪怕段内只有 think 也套段组头——标题显示"正在思考 · 最新一行"，
-			// 展开后显示官方 think 行）。
+			// think 节点（含 think+text 同一节点的消息——think 部分入段，text 是段边界）：
+			// 收进段级折叠；段内含 text 时自动展开（正文可见），否则默认折叠。
 			if (isThinkNode(node) && segGroup) {
 				var segContent = renderBuiltinAssistant(props);
 				if (fold.isTurnHeader) {
