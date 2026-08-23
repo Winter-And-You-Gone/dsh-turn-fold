@@ -238,7 +238,21 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令——1条执行失败')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令——执行失败', '1 条失败显示"——执行失败"（不带条数）')
+  })
+
+  it('段闭合：多条失败追加"——y条执行失败"', () => {
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolNode('ok', 300),
+      toolNode('err1', 301, { isError: true }),
+      toolNode('err2', 302, { isError: true }),
+      asNode('as2', 400),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了3条命令——2条执行失败')
   })
 
   it('段闭合：单次命令显示工具名，多次显示次数+单位', () => {
@@ -312,18 +326,30 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 编辑了b.js 运行了2条命令')
   })
 
-  it('段闭合：仅编辑工具——同一文件显示文件名', () => {
-    const toolWithPath = (key, seq, name, path) =>
-      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: JSON.stringify({ path }), isError: false } } })
-    const nodes = [
+  it('段闭合：仅编辑工具——同一文件显示文件名，单文件时附加行数变更（+xx —xx）', () => {
+    const toolWithPath = (key, seq, name, path, extra) =>
+      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: JSON.stringify(Object.assign({ path }, extra)), isError: false } } })
+    // 单文件编辑：附加 +12 —3
+    let nodes = [
       userNode('u', 100),
       asNode('as', 200),
-      toolWithPath('e1', 300, 'edit', 'C:\\proj\\index.js'),
+      toolWithPath('e1', 300, 'edit', 'C:\\proj\\index.js', { insertions: 12, deletions: 3 }),
       asNode('as2', 400),
     ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了index.js')
+    let s = buildSnapshot(nodes, { turnEnds: new Map() })
+    let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了index.js +12 —3', '单文件编辑附加行数变更')
+    // 多个文件编辑：只显示数量+份，不附加行数
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('e1', 300, 'edit', 'C:\\proj\\a.js', { insertions: 12, deletions: 3 }),
+      toolWithPath('e2', 301, 'edit', 'C:\\proj\\b.js', { insertions: 1, deletions: 0 }),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了2份文件')
   })
 
   it('段闭合：仅搜索工具——显示搜索次数', () => {

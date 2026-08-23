@@ -72,6 +72,8 @@ window.__ModuleLoader__.load({
 			zh: {
 				headerPrefix: "运行了",
 				headerSuffix: "条命令",
+				failurePrefix: "——",
+				failureSingle: "执行失败",
 				failureSuffix: "条执行失败",
 				statusCompleted: "已完成",
 				statusStopped: "已停止",
@@ -100,7 +102,9 @@ window.__ModuleLoader__.load({
 			en: {
 				headerPrefix: "Ran",
 				headerSuffix: "commands",
-				failureSuffix: "failed",
+				failurePrefix: " — ",
+				failureSingle: "failed",
+				failureSuffix: " failed",
 				statusCompleted: "Completed",
 				statusStopped: "Stopped",
 				statusInterrupted: "Interrupted",
@@ -1159,7 +1163,25 @@ window.__ModuleLoader__.load({
 			var last = parts[parts.length - 1];
 			return last || null;
 		}
-		/** 统计段内工具调用：按分类分组，read/edit 类附带去重后的文件名单。 */
+		/** 从 argsRaw 提取编辑文件的行数变更（+xx/−xx，供 edit 类标题显示）。 */
+		function extractLineChanges(info) {
+			if (!info || !info.argsRaw) return null;
+			var raw;
+			try { raw = JSON.parse(info.argsRaw); } catch (e) { return null; }
+			if (!raw || typeof raw !== "object") return null;
+			var added = 0, removed = 0;
+			if (typeof raw.insertions === "number") added = raw.insertions;
+			else if (typeof raw.added === "number") added = raw.added;
+			else if (typeof raw["+"] === "number") added = raw["+"];
+			else if (typeof raw["+"] === "string") added = parseInt(raw["+"], 10) || 0;
+			if (typeof raw.deletions === "number") removed = raw.deletions;
+			else if (typeof raw.removed === "number") removed = raw.removed;
+			else if (typeof raw["-"] === "number") removed = raw["-"];
+			else if (typeof raw["-"] === "string") removed = parseInt(raw["-"], 10) || 0;
+			if (added === 0 && removed === 0) return null;
+			return "+" + added + " —" + removed;
+		}
+		/** 统计段内工具调用：按分类分组，read/edit 类附带去重后的文件名单及行数变更。 */
 		function classifySegmentTools(group, nodes) {
 			var stats = { command: [], read: [], search: [], edit: [], others: [] };
 			for (var i = 0; i < group.keys.length; i++) {
@@ -1169,11 +1191,12 @@ window.__ModuleLoader__.load({
 				var name = info ? String(info.name) : "";
 				var kind = TOOL_KINDS[name.toLowerCase()] || "others";
 				var filePath = extractFilePath(info);
-				stats[kind].push({ name: name, filePath: filePath, fileName: pathBasename(filePath) });
+				var lineChanges = extractLineChanges(info);
+				stats[kind].push({ name: name, filePath: filePath, fileName: pathBasename(filePath), lineChanges: lineChanges });
 			}
 			return stats;
 		}
-		/** 组内 read/edit 类的描述：同一文件用文件名，多个文件用数量+单位。 */
+		/** 组内 read/edit 类的描述：同一文件用文件名，多个文件用数量+单位。edit 类额外附加行数变更。 */
 		function filePartLabel(stats, kind, prefix, suffix) {
 			var items = stats[kind];
 			if (!items || items.length === 0) return "";
@@ -1184,9 +1207,18 @@ window.__ModuleLoader__.load({
 					if (files.indexOf(fp) === -1) files.push(fp);
 				}
 			}
-			if (files.length === 1) return prefix + files[0];
-			var count = files.length > 0 ? files.length : items.length;
-			return prefix + count + suffix;
+			var label;
+			if (files.length === 1) label = prefix + files[0];
+			else label = prefix + (files.length > 0 ? files.length : items.length) + suffix;
+			// edit 类：单文件时附加行数变更
+			if (kind === "edit" && files.length === 1) {
+				var changes = [];
+				for (var j = 0; j < items.length; j++) {
+					if (items[j].lineChanges && changes.indexOf(items[j].lineChanges) === -1) changes.push(items[j].lineChanges);
+				}
+				if (changes.length === 1) label += " " + changes[0];
+			}
+			return label;
 		}
 		/** 组内 command 类的描述：单次用工具名，多次用次数+单位。 */
 		function commandPartLabel(stats) {
@@ -1211,7 +1243,11 @@ window.__ModuleLoader__.load({
 				var commandLabel = commandPartLabel(stats);
 				if (commandLabel) parts.push(commandLabel);
 				var label = parts.join(LOCALE === "zh" ? " " : " ");
-				if (group.failures > 0) label += "——" + group.failures + _T("failureSuffix");
+				// 失败追加：1 条失败 → "——执行失败"；多条 → "——y条执行失败"
+				if (group.failures > 0) {
+					if (group.failures === 1) label += _T("failurePrefix") + _T("failureSingle");
+					else label += _T("failurePrefix") + group.failures + _T("failureSuffix");
+				}
 				return label;
 			}
 			if (group.textAfter && group.toolCount === 0) {
@@ -1236,7 +1272,10 @@ window.__ModuleLoader__.load({
 			}
 			// 兜底：退回"运行了 N 条命令"
 			var fallback = _T("headerPrefix") + " " + group.toolCount + " " + _T("headerSuffix");
-			if (group.failures > 0) fallback += "——" + group.failures + _T("failureSuffix");
+			if (group.failures > 0) {
+				if (group.failures === 1) fallback += _T("failurePrefix") + _T("failureSingle");
+				else fallback += _T("failurePrefix") + group.failures + _T("failureSuffix");
+			}
 			return fallback;
 		}
 		/** think 摘要行：运行中横向自动滚动跟随末尾（官方 ReasoningRow 的 data-follow-end 行为）。
