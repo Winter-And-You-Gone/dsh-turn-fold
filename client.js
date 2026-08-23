@@ -716,10 +716,26 @@ window.__ModuleLoader__.load({
 			var animOffset = (tickCount % 10) + Math.floor(tickCount / 2) * 10;
 			return Math.floor(c.lastTokens) + animOffset;
 		}
-		/** 大组头展示指标：运行中把"消耗token"按动画节奏持续增长（真实 usage 到达时校正基线）。 */
+		/** 大组头展示指标：运行中把"消耗token"按动画节奏持续增长（真实 usage 到达时校正基线）。
+		 *  兜底：回合运行中但尚无任何 usage（第一条 response 到达前/首节点无 usage）时，
+		 *  token 从 0 按同一动画节奏增长——"第一个 response 就出现 token"；
+		 *  真实 usage 到达后用独立缓存 key 切换，直接以真实值为基线。 */
 		function turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow) {
-			if (!metrics || closed || typeof metrics.tokens !== "number" || typeof liveNow !== "number" || turn === undefined) return metrics;
-			var projected = projectLiveTokens(sessionId + "::" + turn, metrics.tokens, metrics.outputTokens, liveNow, metrics.tokensPerSecond);
+			if (!metrics || closed || typeof liveNow !== "number" || turn === undefined) return metrics;
+			var key = sessionId + "::" + turn;
+			if (typeof metrics.tokens !== "number") {
+				// 无 usage 兜底：独立 key（与真实值缓存隔离），基线 0 开始动画增长
+				var projected = projectLiveTokens(key + ":pending", 0, undefined, liveNow, undefined);
+				if (projected === 0) return metrics;
+				return {
+					durationMs: metrics.durationMs,
+					tokens: projected,
+					outputTokens: undefined,
+					tokensPerSecond: undefined,
+					cacheHitPercent: undefined
+				};
+			}
+			var projected = projectLiveTokens(key, metrics.tokens, metrics.outputTokens, liveNow, metrics.tokensPerSecond);
 			if (projected === metrics.tokens) return metrics;
 			return {
 				durationMs: metrics.durationMs,

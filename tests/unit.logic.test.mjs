@@ -896,10 +896,34 @@ describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）',
     assert.equal(T.turnDisplayMetrics('sess', 26, m, true, 100000), m)
     // liveNow undefined：原样返回
     assert.equal(T.turnDisplayMetrics('sess', 26, m, false, undefined), m)
-    // 无 tokens：原样返回
+    // 无 tokens：首次调用初始化 pending 缓存，仍原样返回（从下一 tick 起兜底增长）
     const noTokens = { durationMs: 1000 }
     assert.equal(T.turnDisplayMetrics('sess', 26, noTokens, false, 100000), noTokens)
     // metrics 为空：原样返回
     assert.equal(T.turnDisplayMetrics('sess', 26, null, false, 100000), null)
+  })
+
+  it('turnDisplayMetrics：无 usage 兜底——token 从 0 动画增长；真实值到达切回正常基线', () => {
+    T.liveTokenCache.clear()
+    const base = T.liveTickState.index
+    const noTokens = { durationMs: 1000 }
+    // 首次：初始化 pending 缓存，返回原对象
+    assert.equal(T.turnDisplayMetrics('sess', 27, noTokens, false, 100000), noTokens)
+    // 3 个 tick 后：tokens 从 0 增长为 offset(3)
+    T.liveTickState.index = base + 3
+    const grown = T.turnDisplayMetrics('sess', 27, noTokens, false, 100000)
+    assert.notEqual(grown, noTokens)
+    assert.equal(grown.tokens, offset(3))
+    assert.equal(grown.durationMs, 1000)
+    assert.equal(grown.outputTokens, undefined)
+    assert.equal(grown.tokensPerSecond, undefined)
+    // 真实 usage 到达：切回正常 key，直接以真实值 450 为基线（pending 偏移不继承）
+    const real = { durationMs: 5000, tokens: 450, outputTokens: 60, tokensPerSecond: 12, cacheHitPercent: 67 }
+    assert.equal(T.turnDisplayMetrics('sess', 27, real, false, 100000).tokens, 450, '真实值到达直接显示真实值')
+    // 再 2 个 tick：按正常节奏增长（正常 key 的 animBaseTick 从真实值到达时起算）
+    T.liveTickState.index = base + 5
+    assert.equal(T.turnDisplayMetrics('sess', 27, real, false, 100000).tokens, 450 + offset(2))
+    // 回合闭合：不再兜底（原样返回）
+    assert.equal(T.turnDisplayMetrics('sess', 27, noTokens, true, 100000), noTokens)
   })
 })
