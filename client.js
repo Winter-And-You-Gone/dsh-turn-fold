@@ -876,7 +876,11 @@ window.__ModuleLoader__.load({
 			var prevOpenRef = react.useRef(false);
 			var rafRef = react.useRef(null);
 			var timerRef = react.useRef(null);
-			react.useEffect(function () {
+			// 用 useLayoutEffect（DOM 提交后同步执行）：展开分支的 setExpanded(false)
+			// 折叠起始态在 paint 前提交 DOM，双 rAF 展开时过渡起始帧必然存在——
+			// useEffect（异步）在渲染合并/帧时序下可能让浏览器从未渲染过 0fr 起始帧，
+			// 导致 grid 过渡不播放、出现"瞬间展开"。
+			react.useLayoutEffect(function () {
 				var prev = prevOpenRef.current;
 				prevOpenRef.current = open;
 				// 直播模式（回合运行中）：内容常驻、直接展开（轨道 1fr 自适应流式增长）。
