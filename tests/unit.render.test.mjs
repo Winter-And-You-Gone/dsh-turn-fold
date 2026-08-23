@@ -41,10 +41,14 @@ function MockToolCallTree(props) {
 function MockAssistantNodeView(props) {
   return React.createElement('div', { className: 'mock-assistant', 'data-node': props.node?.key }, 'AS')
 }
+function MockUserNodeView(props) {
+  return React.createElement('div', { className: 'mock-user', 'data-node': props.node?.key }, 'USER')
+}
 const BUILTIN_ENTRIES = [
   { component: MockToolCallTree, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
   { component: MockAssistantNodeView, options: { key: 'assistant-step', priority: 0, locale: 'conversation' } },
   { component: MockAssistantNodeView, options: { key: 'context', priority: 0, locale: 'conversation' } },
+  { component: MockUserNodeView, options: { key: 'user', priority: 0, locale: 'conversation' } },
 ]
 
 // ── 模拟 slots service ──
@@ -505,10 +509,10 @@ describe('滚轮数字（RollDigit / AnimatedLabel / 大组头 live 文案）', 
 })
 
 describe('注册契约（Bug2 根因回归）', () => {
-  it('三个条目都声明了 hostDescription inject', () => {
-    // 前 3 个是 BUILTIN_ENTRIES，接着是插件的 3 个注册条目
+  it('所有条目都声明了 hostDescription inject', () => {
+    // 前 4 个是 BUILTIN_ENTRIES，接着是插件的 4 个注册条目
     const pluginEntries = slotRegistrations
-    assert.equal(pluginEntries.length, 3, '应有 3 个插件条目注册')
+    assert.equal(pluginEntries.length, 4, '应有 4 个插件条目注册（tool-call + assistant-step + context + user）')
     for (const entry of pluginEntries) {
       const opts = entry.options
       assert.equal(typeof opts.inject, 'function', `条目 ${opts.key} 必须声明 inject`)
@@ -516,5 +520,58 @@ describe('注册契约（Bug2 根因回归）', () => {
       const hookNames = Object.keys(injectFace.hooks)
       assert.ok(hookNames.includes('hostDescription'), `条目 ${opts.key} 的 inject 必须包含 hostDescription`)
     }
+  })
+})
+
+// ── 大组头 0 秒占位（user 渲染器） ──
+describe('大组头 0 秒占位（GroupedUserView）', () => {
+  beforeEach(() => {
+    T.liveTokenCache.clear()
+    T.segmentLabelCache.clear()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+  afterEach(() => {
+    if (root) { root.unmount(); root = null; container.remove(); container = null }
+  })
+  function mountUser(snapshot, sessionId = 'sess-u') {
+    const store = createSessionStore(snapshot)
+    const useSession = makeUseSession(store)
+    const propsFor = (node) => ({ node, useSession, sessionId, ...injectedHooks })
+    act(() => {
+      root.render(React.createElement(T.GroupedUserView, { key: 'u', ...propsFor(snapshot.chat.nodes.get('u')) }))
+    })
+    return { store }
+  }
+  it('运行中 + user 是最后一条消息：user 下方渲染大组头占位（耗时计时）', () => {
+    const nodes = [userNode('u', 100)]
+    const snapshot = buildSnapshot(nodes, {
+      turnTimings: new Map([[13, { startTime: 1000000, endTime: undefined }]]),
+    })
+    snapshot.running = true
+    mountUser(snapshot)
+    const userMsg = container.querySelector('.mock-user')
+    assert.ok(userMsg, '官方 user 消息渲染')
+    const placeholder = container.querySelector('.ccg-group-root[data-ccg-turn]')
+    assert.ok(placeholder, '占位大组头存在')
+    assert.ok(placeholder.textContent.includes('耗时'), '占位显示耗时')
+    const divider = container.querySelector('.ccg-turn-divider')
+    assert.ok(divider, '分隔线存在')
+  })
+  it('会话未运行：不渲染占位', () => {
+    const nodes = [userNode('u', 100)]
+    const snapshot = buildSnapshot(nodes)
+    snapshot.running = false
+    mountUser(snapshot)
+    assert.ok(container.querySelector('.mock-user'), 'user 消息渲染')
+    assert.equal(container.querySelector('.ccg-group-root[data-ccg-turn]'), null, '无占位')
+  })
+  it('user 之后有中间节点：不渲染占位（转交正式大组头）', () => {
+    const nodes = [userNode('u', 100), asNode('as', 200), toolNode('tc', 300)]
+    const snapshot = buildSnapshot(nodes)
+    snapshot.running = true
+    mountUser(snapshot)
+    assert.equal(container.querySelector('.ccg-group-root[data-ccg-turn]'), null, '无占位')
   })
 })

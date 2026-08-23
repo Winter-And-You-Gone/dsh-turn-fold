@@ -1732,6 +1732,52 @@ window.__ModuleLoader__.load({
 			return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinContext(props)) : hiddenMarker();
 		}
 
+		// 内置 UserMessageNodeView 无 renderSlot，原样转发即可。
+		function renderBuiltinUser(props) {
+			var Builtin = builtinComponent("user");
+			if (!Builtin) return null;
+			return react.createElement(Builtin, props);
+		}
+
+		// ---- 大组头 0 秒占位 ----
+		// 用户发送消息后、agent 输出第一条中间节点前，会话处于"运行中且最后一条消息是
+		// user"：此时没有任何节点承载大组头（官方大组头由回合第一条中间节点渲染），
+		// 模型响应前的等待期大组头迟迟不出现。这里在 user 消息下方渲染大组头占位
+		// （耗时从回合开始计时，0 秒即出现）；第一条中间节点到达后条件失效，占位消失，
+		// 大组头转交中间节点正式渲染（位置连续：都在 user 消息下方）。
+		function GroupedUserView(props) {
+			var node = props.node;
+			var useSession = props.useSession;
+			var order = useSession(function (s) { return s.chat.order; });
+			var running = useSession(function (s) { return s.running === true; });
+			var turnTimings = useSession(function (s) { return s.turnTimings; });
+			var liveNow = useLiveNow(running);
+			// 占位条件：会话运行中 + 该 user 是最后一条消息（其后尚无任何中间节点）
+			var isPending = running && order.length > 0 && order[order.length - 1] === node.key;
+			if (!isPending) return renderBuiltinUser(props);
+			// 回合开始时间：turnTimings 中运行中（有 startTime、无 endTime）的回合
+			var startTime = null;
+			if (turnTimings && typeof turnTimings.forEach === "function") {
+				turnTimings.forEach(function (t) {
+					if (startTime === null && t && typeof t.startTime === "number" && typeof t.endTime !== "number") startTime = t.startTime;
+				});
+			}
+			var now = typeof liveNow === "number" ? liveNow : Date.now();
+			var durationMs = typeof startTime === "number" ? Math.max(0, now - startTime) : 0;
+			var label = turnHeaderLabel({ durationMs: durationMs }) || (_T("headerPrefix") + " 0 " + _T("headerSuffix"));
+			return react.createElement(
+				"div",
+				{ style: { display: "contents" } },
+				renderBuiltinUser(props),
+				react.createElement(
+					"div",
+					{ className: "ccg-group-root", "data-ccg-count": "0", "data-ccg-open": "true", "data-ccg-turn": "true" },
+					react.createElement(GroupHeader, { label: label, count: 0, open: true, onToggle: function () {}, isTurn: true, live: true }),
+					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" })
+				)
+			);
+		}
+
 		// ---- Cordis 插件入口 ----
 		// 关键：委托渲染内置组件时，内置组件（ToolCallTree 等）依赖由"条目自身
 		// inject 声明"提供的 hook（如 useHostDescription，来自 connection 服务的
@@ -1774,6 +1820,15 @@ window.__ModuleLoader__.load({
 						locale: "conversation",
 						inject: hostDescriptionInject
 					}, GroupedContextView);
+				});
+				scope.slots.inject("conversation.chat.node", function () {
+					return scope.slots.register({
+						name: "conversation.chat.node",
+						key: "user",
+						priority: -1,
+						locale: "conversation",
+						inject: hostDescriptionInject
+					}, GroupedUserView);
 				});
 			});
 		};

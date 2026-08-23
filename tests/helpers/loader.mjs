@@ -27,6 +27,7 @@ const TEST_EXPORTS = [
   'GroupedToolCallView',
   'GroupedAssistantView',
   'GroupedContextView',
+  'GroupedUserView',
   'GroupHeader',
   'RollDigit',
   'AnimatedLabel',
