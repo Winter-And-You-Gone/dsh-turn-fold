@@ -1259,29 +1259,10 @@ window.__ModuleLoader__.load({
 					renderBuiltinAssistant(props)
 				);
 			}
-			// 纯 think 节点：段内无工具调用时直接委托官方组件渲染（官方 ReasoningRow
-			// 自带滚动摘要 / sweep 高光 / 点击展开，无需自研）；段内有工具调用时收进
-			// 段级折叠（聚合标题，think 作为最后节点时标题显示"正在思考 · 最新一行"）。
+			// 纯 think 节点：收进段级折叠（段 = 两个 text 之间的内容，think 与工具混排
+			// 一段；哪怕段内只有 think 也套段组头——标题显示"正在思考 · 最新一行"，
+			// 展开后显示官方 think 行）。
 			if (isThinkNode(node) && segGroup) {
-				if (segGroup.toolCount === 0) {
-					// 纯 think 段：不套段组头，官方原样渲染（官方折叠行本身就是"收起摘要 + 点击展开"）
-					if (fold.isTurnHeader) {
-						// think 是回合第一条中间节点：大组头下方接官方 think 行
-						var toggleTurn3 = function () {
-							setTurnOpen(sessionId, fold.turn, !turnOpen);
-						};
-						var baseLabel3 = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
-						var turnLabel3 = closed ? turnLabelWithStatus(baseLabel3, fold.turnStatus) : baseLabel3;
-						return react.createElement(
-							"div",
-							{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-							react.createElement(GroupHeader, { label: turnLabel3, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn3, isTurn: true, live: !closed }),
-							react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
-							react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinAssistant(props))
-						);
-					}
-					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinAssistant(props)) : hiddenMarker();
-				}
 				var segContent = renderBuiltinAssistant(props);
 				if (fold.isTurnHeader) {
 					// think 是回合第一条中间节点：同时是 turn 组头和段 leader——大组头下方接段级折叠行。
