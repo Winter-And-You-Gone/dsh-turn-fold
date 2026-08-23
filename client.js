@@ -244,12 +244,8 @@ window.__ModuleLoader__.load({
 				   颜色方案：基线用 Codex 同款深灰 rgb(104,104,104) + 纯白高光
 				   （对比更明显，动效可见且观感仍是灰色系）；高光区域加宽（35%~65%）。
 				   图标 span 单独恢复颜色（background-clip:text 会把 currentColor 变透明）。 */
-				".ccg-think-title-live{color:transparent;-webkit-text-fill-color:transparent;background:linear-gradient(90deg,var(--dsw-alias-label-secondary,#61666b) 0%,var(--dsw-alias-label-secondary,#61666b) 35%,color-mix(in srgb,#ffffff 70%,var(--dsw-static-deepseek-500,#4176e6)) 50%,var(--dsw-alias-label-secondary,#61666b) 65%,var(--dsw-alias-label-secondary,#61666b) 100%);background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:3.8s linear infinite ccg-turn-status-shimmer}",
-				".ccg-think-title-live .ccg-think-icon{color:var(--dsw-alias-label-secondary,#61666b);-webkit-text-fill-color:var(--dsw-alias-label-secondary,#61666b)}",
-				/* 亮色模式（body 无 data-ds-dark-theme）：反色——浅灰基线 + 深蓝高光，
-				   白高光在浅背景上不可见，深蓝扫过才醒目 */
-				"body:not([data-ds-dark-theme]) .ccg-think-title-live{background:linear-gradient(90deg,#d4d4d8 0%,#d4d4d8 35%,#4176e6 50%,#d4d4d8 65%,#d4d4d8 100%)}",
-				"body:not([data-ds-dark-theme]) .ccg-think-title-live .ccg-think-icon{color:#d4d4d8;-webkit-text-fill-color:#d4d4d8}",
+				".ccg-think-title-live{color:transparent;-webkit-text-fill-color:transparent;background:linear-gradient(90deg,#d4d4d8 0%,#d4d4d8 35%,#f8f9fa 50%,#d4d4d8 65%,#d4d4d8 100%);background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:3.8s linear infinite ccg-turn-status-shimmer}",
+				".ccg-think-title-live .ccg-think-icon{color:#d4d4d8;-webkit-text-fill-color:#d4d4d8}",
 				/* 高光流动 1.8s（47.4% 从右扫到左）→ 停顿 2s（100% 停在终态），循环 */
 				"@keyframes ccg-turn-status-shimmer{0%{background-position:100% 0}47.4%{background-position:0 0}100%{background-position:0 0}}",
 				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live{background-position:0 0;background-size:100% 100%;animation:none}}",
