@@ -244,8 +244,8 @@ window.__ModuleLoader__.load({
 				   颜色方案：基线用 Codex 同款深灰 rgb(104,104,104) + 纯白高光
 				   （对比更明显，动效可见且观感仍是灰色系）；高光区域加宽（35%~65%）。
 				   图标 span 单独恢复颜色（background-clip:text 会把 currentColor 变透明）。 */
-				".ccg-think-title-live{color:transparent;-webkit-text-fill-color:transparent;background:linear-gradient(90deg,rgb(113,133,113) 0%,rgb(113,133,113) 35%,rgb(219,219,219) 50%,rgb(113,133,113) 65%,rgb(113,133,113) 100%);background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:3.8s linear infinite ccg-turn-status-shimmer}",
-				".ccg-think-title-live .ccg-think-icon{color:rgb(113,133,113);-webkit-text-fill-color:rgb(113,133,113)}",
+				".ccg-think-title-live{color:transparent;-webkit-text-fill-color:transparent;background:linear-gradient(90deg,rgb(113,113,113) 0%,rgb(113,113,113) 35%,rgb(219,219,219) 50%,rgb(113,113,113) 65%,rgb(113,113,113) 100%);background-position:100% 0;background-size:250% 100%;-webkit-background-clip:text;background-clip:text;animation:3.8s linear infinite ccg-turn-status-shimmer}",
+				".ccg-think-title-live .ccg-think-icon{color:rgb(113,113,113);-webkit-text-fill-color:rgb(113,113,113)}",
 				/* 亮色模式：body 无 data-ds-dark-theme 时覆盖渐变色与图标色 */
 				"body:not([data-ds-dark-theme]) .ccg-think-title-live{background-image:linear-gradient(90deg,rgb(167,168,169) 0%,rgb(167,168,169) 35%,rgb(232,233,233) 50%,rgb(167,168,169) 65%,rgb(167,168,169) 100%)}",
 				"body:not([data-ds-dark-theme]) .ccg-think-title-live .ccg-think-icon{color:rgb(167,168,169);-webkit-text-fill-color:rgb(167,168,169)}",
