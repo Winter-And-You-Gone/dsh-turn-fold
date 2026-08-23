@@ -1400,7 +1400,7 @@ window.__ModuleLoader__.load({
 				var info = toolCallInfo(last);
 				if (info && info.name) {
 					var desc = summarizeArgs(info.argsRaw);
-					return _T("runningTool") + info.name + (desc ? " · " + desc : "");
+					return _T("runningTool") + capitalizeFirst(info.name) + (desc ? " · " + desc : "");
 				}
 			}
 			if (last && last.kind === "assistant-step") {
@@ -1472,6 +1472,10 @@ window.__ModuleLoader__.load({
 			if (!Icon) return null;
 			return react.createElement("span", { className: "ccg-think-icon" }, react.createElement(Icon, { size: s }));
 		}
+		/** 名称首字母大写（"pwsh" → "Pwsh"，与官方 TOOL_TITLES 的显示风格一致）。 */
+		function capitalizeFirst(s) {
+			return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+		}
 		/** 段组头标题元素：think / 工具运行中用"前缀 + 官方图标 + 名称 + 摘要"（官方行风格），
 		 *  其余情况为纯文本。 */
 		function segmentTitle(group, nodes) {
@@ -1500,7 +1504,7 @@ window.__ModuleLoader__.load({
 							{ className: "ccg-think-title ccg-think-title-live" },
 							react.createElement("span", { className: "ccg-think-prefix" }, _T("runningTool")),
 							toolIconFor(info.name, 14),
-							react.createElement("span", { className: "ccg-think-name" }, info.name),
+							react.createElement("span", { className: "ccg-think-name" }, capitalizeFirst(info.name)),
 							desc ? react.createElement("span", { className: "ccg-think-sep" }, " · ") : null,
 							desc ? react.createElement("span", { className: "ccg-think-summary" }, desc) : null
 						);
