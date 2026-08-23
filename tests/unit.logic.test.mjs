@@ -703,7 +703,69 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     assert.equal(m.tokens, 450)
     assert.equal(m.tokensPerSecond, 12)
     assert.equal(m.cacheHitPercent, '66.67')
+    assert.equal(m.ttftMs, undefined, '运行中且无 settle step（无 finalNode.timing）→ 无官方 TTFT')
     assert.equal(T.turnHeaderLabel(m), '耗时5秒 · 消耗450token · 12tok/s · 缓存命中66.67%')
+  })
+
+  it('运行中：第一个 step settle 后即显示官方 TTFT（finalNode.timing 实时读取）', () => {
+    // 回合未结束（turnEnds 空）但第一个 step 已 settle：官方在 assistant/message 后
+    // 把 timing 写入 finalNode——插件应实时读到官方值（firstTokenTime - stepStartTime），
+    // 不再等回合结束的 turn-tail。
+    const nodes = [
+      userNode('u-ttft', 100),
+      asNode('as-ttft-1', 200, {
+        status: 'settled',
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 },
+        timing: { stepStartTime: 200000, firstTokenTime: 204900, completedTime: 210000 },
+      }),
+      toolNode('tc-ttft', 300, { running: true }),
+    ]
+    const s = buildSnapshot(nodes, {
+      turnEnds: new Map(), // 回合未结束
+      turnTimings: new Map([[13, { startTime: 200000 }]]),
+    })
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 300000)
+    assert.equal(m.ttftMs, 4900, 'step settle 后实时读到官方 TTFT（204900 - 200000 = 4900ms）')
+    // token = 100 + 200 + 50 = 350；tok/s = 50 / (100000ms/1000) = 0.5
+    assert.equal(T.turnHeaderLabel(m), '耗时1分40秒 · 首字4.9s · 消耗350token · 0.5tok/s · 缓存命中66.67%')
+  })
+
+  it('运行中：多个 settle step 取 step 最小者（官方 deriveTurnMetrics 语义）', () => {
+    const nodes = [
+      userNode('u-ttft2', 100),
+      asNode('as-ttft2-1', 200, {
+        status: 'settled',
+        timing: { stepStartTime: 200000, firstTokenTime: 204900, completedTime: 210000 },
+      }),
+      asNode('as-ttft2-2', 300, {
+        status: 'settled',
+        step: 2,
+        timing: { stepStartTime: 210000, firstTokenTime: 216500, completedTime: 220000 },
+      }),
+    ]
+    const s = buildSnapshot(nodes, {
+      turnEnds: new Map(),
+      turnTimings: new Map([[13, { startTime: 200000 }]]),
+    })
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 300000)
+    assert.equal(m.ttftMs, 4900, '取 step 1 的 TTFT（204900-200000=4900），不用 step 2 的 6500')
+  })
+
+  it('回合结束：turn-tail 聚合值优先于 finalNode.timing（官方权威值）', () => {
+    const nodes = [
+      userNode('u-ttft3', 100),
+      asNode('as-ttft3-1', 200, {
+        status: 'settled',
+        timing: { stepStartTime: 200000, firstTokenTime: 204900, completedTime: 210000 },
+      }),
+      tailNode('tail-ttft3', 300, { tokensPerSecond: 12, ttftMs: 5100 }),
+    ]
+    const s = buildSnapshot(nodes, {
+      turnEnds: new Map([[13, 300]]),
+      turnTimings: new Map([[13, { startTime: 200000, endTime: 220000 }]]),
+    })
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings)
+    assert.equal(m.ttftMs, 5100, 'turn-tail 的官方聚合值优先')
   })
 
   it('运行中：无 liveNow（回合已结束）时耗时取 endTime · 不产生实时 tok/s', () => {

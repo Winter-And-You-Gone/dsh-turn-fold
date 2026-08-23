@@ -692,15 +692,34 @@ window.__ModuleLoader__.load({
 			}
 			var input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
 			var tokensPerSecond, ttftMs;
+			// 官方 TTFT（deriveTurnMetrics 同款语义）：回合结束后的 turn-tail 聚合值优先；
+			// 回合未结束时，从已 settle 的 assistant-step 的 data.finalNode.timing 实时读取
+			// ——官方在 step settle（assistant/message）后把 timing 写入 finalNode
+			// （{ stepStartTime, firstTokenTime, completedTime }；中断的 step 无 timing），
+			// 取 step 号最小者（第一个请求）的 firstTokenTime - stepStartTime。
+			var liveTtft = null;
+			var liveFirstStep = Infinity;
 			for (var i = 0; i < keys.length; i++) {
 				var n = nodes.get(keys[i]);
 				if (!n) continue;
-				if (n.kind === "assistant-step" && n.data && n.data.usage) {
-					var u = n.data.usage;
-					if (typeof u.inputTokens === "number" && isFinite(u.inputTokens)) input += u.inputTokens;
-					if (typeof u.outputTokens === "number" && isFinite(u.outputTokens)) output += u.outputTokens;
-					if (typeof u.cacheReadTokens === "number" && isFinite(u.cacheReadTokens)) cacheRead += u.cacheReadTokens;
-					if (typeof u.cacheWriteTokens === "number" && isFinite(u.cacheWriteTokens)) cacheWrite += u.cacheWriteTokens;
+				if (n.kind === "assistant-step" && n.data) {
+					if (n.data.usage) {
+						var u = n.data.usage;
+						if (typeof u.inputTokens === "number" && isFinite(u.inputTokens)) input += u.inputTokens;
+						if (typeof u.outputTokens === "number" && isFinite(u.outputTokens)) output += u.outputTokens;
+						if (typeof u.cacheReadTokens === "number" && isFinite(u.cacheReadTokens)) cacheRead += u.cacheReadTokens;
+						if (typeof u.cacheWriteTokens === "number" && isFinite(u.cacheWriteTokens)) cacheWrite += u.cacheWriteTokens;
+					}
+					var fn = n.data.finalNode;
+					var timing = fn && fn.timing;
+					if (timing && typeof timing.stepStartTime === "number" && typeof timing.firstTokenTime === "number") {
+						var stepNum = typeof fn.step === "number" ? fn.step
+							: (typeof n.data.step === "number" ? n.data.step : (typeof n.step === "number" ? n.step : -1));
+						if (stepNum < liveFirstStep) {
+							liveFirstStep = stepNum;
+							liveTtft = Math.max(0, timing.firstTokenTime - timing.stepStartTime);
+						}
+					}
 				} else if (n.kind === "turn-tail" && n.data) {
 					// 官方 turn-tail 节点携带权威的 tok/s 与 ttftMs（该回合第一个 step 的
 					// firstTokenTime - stepStartTime，来自持久化事件日志，刷新页面不丢）。
@@ -708,6 +727,8 @@ window.__ModuleLoader__.load({
 					if (typeof n.data.ttftMs === "number") ttftMs = n.data.ttftMs;
 				}
 			}
+			// 回合未结束（turn-tail 未出现）时用 finalNode.timing 实时值
+			if (ttftMs === undefined && liveTtft !== null) ttftMs = liveTtft;
 			var billedInput = input + cacheRead + cacheWrite;
 			var hasUsage = billedInput > 0 || output > 0;
 			// 运行中（liveNow 存在）且官方 turn-tail 未给出 tok/s 时：
