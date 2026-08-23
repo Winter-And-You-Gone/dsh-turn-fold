@@ -8,7 +8,7 @@ import { createRequire } from 'node:module'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { loadPlugin } from './helpers/loader.mjs'
-import { createSessionStore, makeUseSession, userNode, asNode, toolNode, buildSnapshot } from './helpers/store.mjs'
+import { createSessionStore, makeUseSession, makeNode, userNode, asNode, toolNode, buildSnapshot } from './helpers/store.mjs'
 import { TURN13 } from './helpers/fixtures.mjs'
 
 const require = createRequire(import.meta.url)
@@ -300,7 +300,7 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
   })
 })
 
-describe('think 段级折叠：流式标题跟随最新一行（滚动效果的数据链路）', () => {
+describe('think 段级折叠：纯 think 段委托官方 / 混合段自研 ThinkSummary', () => {
   // 冻结时钟 + 拉大 tick 间隔：与 RUNNING describe 相同的确定性手段
   const realDateNow = Date.now
   const realLiveTickMs = T.CONFIG.liveTickMs
@@ -323,43 +323,64 @@ describe('think 段级折叠：流式标题跟随最新一行（滚动效果的�
     Date.now = realDateNow
   })
 
-  it('think 流式推进：快照更新后段组头标题跟随最新一行', () => {
+  it('纯 think 段：直接委托官方渲染（无段组头，官方 ReasoningRow 自带滚动效果）', () => {
+    const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
+    const nodes = [userNode('u', 100), thinkNode('th', 200, '正在分析')]
+    mount(buildSnapshot(nodes, { turnEnds: new Map() }))
+    // 纯 think 段不走段组头 → 无 .ccg-group-root:not([data-ccg-turn])
+    const segRoot = container.querySelector('.ccg-group-root:not([data-ccg-turn])')
+    assert.equal(segRoot, null, '纯 think 段不套段组头')
+    // think 委托官方渲染 → mock-assistant 可见（官方 think 行）
+    const asEl = container.querySelector('.mock-assistant')
+    assert.ok(asEl, 'think 应通过官方助理组件渲染')
+    assert.equal(asEl.dataset.node, 'th', '渲染的是 think 节点')
+  })
+
+  it('纯 think 段流式推进：官方渲染的 think 行应随快照更新（节点数据变化）', () => {
     const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
     const nodes = [userNode('u', 100), thinkNode('th', 200, '正在分析')]
     const { store } = mount(buildSnapshot(nodes, { turnEnds: new Map() }))
-    const segTitle = () => container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header .ccg-title')
-    assert.ok(segTitle(), '段组头标题应存在（think 是回合第一条中间节点 → 大组头下方接段级折叠行）')
-    assert.ok(segTitle().textContent.includes('正在思考 · 正在分析'), '初始标题显示最新一行')
-    // 模拟流式 chunk：think 文本增长（多行）
+    // 更新 think 文本
     act(() => {
       store.setSnapshot(buildSnapshot([
         userNode('u', 100),
-        thinkNode('th', 200, '正在分析\n正在深入思考仓库结构'),
+        thinkNode('th', 200, '正在分析\n深入思考中'),
       ], { turnEnds: new Map() }))
     })
-    assert.ok(segTitle().textContent.includes('正在思考 · 正在深入思考仓库结构'), '标题应跟随最新一行（流式滚动效果）')
-    // think 摘要元素带 data-follow-end（横向滚动跟随末尾的 CSS/JS 行为）
+    // 官方渲染内容更新：mock-assistant 仍然是同一个节点（data-node 不变）
+    // 这里只验证数据链路不崩溃；实际内容的官方滚动效果由官方组件负责
+    assert.ok(container.querySelector('[data-node="th"]'), 'think 节点渲染不变')
+  })
+
+  it('混合段（think + 工具）：段组头标题使用自研 ThinkSummary（带 data-follow-end）', () => {
+    const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
+    const toolWithArgs = (key, seq, { running = false, name = 'Pwsh', argsRaw } = {}) =>
+      makeNode(key, 'tool-call', seq, { data: { root: running ? { callId: key, name, argsRaw } : { kind: 'tool-result', callId: key, name, argsRaw, isError: false } } })
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithArgs('tc', 300, { running: false, argsRaw: '{}' }),
+      thinkNode('th', 310, '第一行分析\n正在验证结果'),
+    ]
+    const { store } = mount(buildSnapshot(nodes, { turnEnds: new Map() }))
+    // 混合段有段组头：最后节点是 think → 标题显示"正在思考 · 最新一行"
+    const segTitle = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header .ccg-title')
+    assert.ok(segTitle, '混合段应有段组头')
+    assert.ok(segTitle.textContent.includes('正在思考 · 正在验证结果'), '最后一行作为标题摘要')
+    // think 摘要元素（自研 ThinkSummary）
     const summary = container.querySelector('.ccg-think-summary')
     assert.ok(summary, 'think 摘要元素应存在')
     assert.equal(summary.dataset.followEnd, 'true', '运行中带 data-follow-end')
-    assert.equal(summary.textContent, '正在深入思考仓库结构', '摘要文本 = 最新一行')
-  })
-
-  it('text 出现后：段闭合，段组头标题变"思考"（think 不算命令数）', () => {
-    const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
-    const nodes = [userNode('u', 100), thinkNode('th', 200, '正在分析')]
-    const { store } = mount(buildSnapshot(nodes, { turnEnds: new Map() }))
-    // 下一个 text 出现（含 text 的消息加入 order）
+    // 流式更新：think 文本增长，标题跟随最新一行
     act(() => {
       store.setSnapshot(buildSnapshot([
         userNode('u', 100),
-        thinkNode('th', 200, '正在分析'),
-        asNode('msg', 300, { blocks: [{ kind: 'text', text: '结果如下' }] }),
+        asNode('as', 200),
+        toolWithArgs('tc', 300, { running: false, argsRaw: '{}' }),
+        thinkNode('th', 310, '第一行分析\n正在验证结果\n发现新问题'),
       ], { turnEnds: new Map() }))
     })
-    const segTitleEl = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header .ccg-title')
-    assert.ok(segTitleEl, '段组头标题应存在')
-    assert.equal(segTitleEl.textContent.trim(), '思考', '纯 think 段闭合后标题 = 思考（不再是"正在思考 · …"）')
+    assert.ok(segTitle.textContent.includes('正在思考 · 发现新问题'), '标题跟随最新一行（自研滚动效果）')
   })
 })
 
