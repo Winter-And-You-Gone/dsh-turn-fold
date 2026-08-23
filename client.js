@@ -184,7 +184,17 @@ window.__ModuleLoader__.load({
 				".ccg-roll-strip{display:flex;flex-direction:column}",
 				".ccg-roll-strip .ccg-roll-d{flex:none;width:1ch;height:1em;line-height:1em;text-align:center}",
 				".ccg-roll-text{display:inline}",
-				".ccg-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}"
+				".ccg-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}",
+				/* think 运行中摘要（段组头标题）：前缀 + 最新一行，横向自动滚动跟随末尾
+				   （官方 ReasoningRow 同款 data-follow-end），并带高光扫过动画 */
+				".ccg-think-title{display:inline-flex;align-items:baseline;min-width:0;max-width:100%}",
+				".ccg-think-prefix{flex:none}",
+				".ccg-think-summary{display:inline-block;min-width:0;max-width:100%;vertical-align:bottom;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+				".ccg-think-summary[data-follow-end]{text-overflow:clip}",
+				".ccg-think-title-live{position:relative}",
+				".ccg-think-title-live::after{content:\"\";inset-block:0;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base,#fff) 60%,transparent) 55%,transparent 100%);pointer-events:none;width:300px;animation:2.6s ease-out infinite ccg-think-sweep;position:absolute;left:0}",
+				"@keyframes ccg-think-sweep{0%{left:-300px}90%,to{left:100%}}",
+				"@media (prefers-reduced-motion:reduce){.ccg-think-title-live::after{animation:none}}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
@@ -1038,7 +1048,19 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 段级分组渲染（现有行为）：单条原样 / 非 leader 隐藏 / leader 渲染组头 ----
-		/** 段级折叠组头标题：运行中（textAfter=false）取最后一个节点显示当前执行内容，闭合后变"运行了 N 条命令"。 */
+				/** 取 think 文本最后一行（运行中摘要跟随最新内容，官方 ReasoningRow 同款）。 */
+		function latestLine(text) {
+			var visible = String(text).trimEnd();
+			var newline = visible.lastIndexOf("\n");
+			return newline === -1 ? visible : visible.slice(newline + 1);
+		}
+		/** 取 think 文本第一行（段闭合后摘要用）。 */
+		function firstLine(text) {
+			var t = String(text);
+			var newline = t.indexOf("\n");
+			return newline === -1 ? t : t.slice(0, newline);
+		}
+		/** 段组头标题：运行中（textAfter=false）取最后一个节点显示当前执行内容，闭合后变"运行了 N 条命令"。 */
 		function segmentLabel(group, nodes) {
 			if (group.textAfter && group.toolCount > 0) {
 				// 段闭合：出现下一个 text → "运行了 N 条命令"（think 不算命令数）
@@ -1062,14 +1084,50 @@ window.__ModuleLoader__.load({
 			if (last && last.kind === "assistant-step") {
 				var text = reasoningText(last);
 				if (text) {
-					var clipped = text.length > 60 ? text.slice(0, 60) + "…" : text;
-					return _T("runningThink") + clipped;
+					// 运行中摘要取最新一行（与官方 ReasoningRow 一致：流式跟随最新内容）
+					return _T("runningThink") + latestLine(text);
 				}
 			}
 			// 兜底：退回"运行了 N 条命令"
 			var fallback = _T("headerPrefix") + " " + group.toolCount + " " + _T("headerSuffix");
 			if (group.failures > 0) fallback += "——" + group.failures + _T("failureSuffix");
 			return fallback;
+		}
+		/** think 摘要行：运行中横向自动滚动跟随末尾（官方 ReasoningRow 的 data-follow-end 行为）。 */
+		function ThinkSummary(props) {
+			var text = props.text;
+			var running = props.running === true;
+			var ref = react.useRef(null);
+			var line = running ? latestLine(text) : firstLine(text);
+			react.useEffect(function () {
+				var el = ref.current;
+				if (!el) return;
+				if (running) el.scrollLeft = el.scrollWidth - el.clientWidth;
+				else el.scrollLeft = 0;
+			});
+			return react.createElement(
+				"span",
+				{ ref: ref, className: "ccg-think-summary" + (running ? " ccg-think-summary-live" : ""), "data-follow-end": running || undefined },
+				line
+			);
+		}
+		/** 段组头标题元素：think 运行中用"前缀 + 滚动摘要"，其余情况为纯文本。 */
+		function segmentTitle(group, nodes) {
+			if (!group.textAfter) {
+				var last = group.lastActiveKey ? nodes.get(group.lastActiveKey) : null;
+				if (last && last.kind === "assistant-step") {
+					var text = reasoningText(last);
+					if (text) {
+						return react.createElement(
+							"span",
+							{ className: "ccg-think-title ccg-think-title-live" },
+							react.createElement("span", { className: "ccg-think-prefix" }, _T("runningThink")),
+							react.createElement(ThinkSummary, { text: text, running: true })
+						);
+					}
+				}
+			}
+			return segmentLabel(group, nodes);
 		}
 		/** 段级分组渲染：tool-call 或 think 节点都通过此函数渲染段组头 + 折叠内容。 */
 		function renderSegment(props, group, open, sessionId, nodes, content) {
@@ -1079,14 +1137,14 @@ window.__ModuleLoader__.load({
 			var toggle = function () {
 				setGroupOpen(sessionId, group.leaderKey, !open);
 			};
-			var label = segmentLabel(group, nodes);
+			var title = segmentTitle(group, nodes);
 			var danger = group.failures > 0;
 			return react.createElement(
 				"div",
 				{ className: "ccg-group-root", "data-ccg-count": String(group.toolCount), "data-ccg-open": open ? "true" : undefined },
 				react.createElement(
 					GroupHeader,
-					{ count: group.toolCount, open: open, onToggle: toggle, label: label, danger: danger, isTurn: false }
+					{ count: group.toolCount, open: open, onToggle: toggle, label: title, danger: danger, isTurn: false }
 				),
 				react.createElement(FoldClip, { open: open }, content)
 			);

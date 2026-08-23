@@ -184,24 +184,25 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     assert.equal(T.segmentLabel(g, s.chat.nodes), '正在运行Pwsh · Commit 1: core +tests')
   })
 
-  it('运行中（段未闭合）：最后一个节点是 think → 标题 = 正在思考 · 内容（流式滚动随节点更新）', () => {
+  it('运行中（段未闭合）：最后一个节点是 think → 标题 = 正在思考 · 最新一行（流式跟随）', () => {
     const nodes = [
       userNode('u', 100),
       asNode('as', 200),
       toolWithArgs('tc', 300, { running: false, argsRaw: JSON.stringify({ args: ['x'] }) }),
-      thinkOnly('th', 310, '分析一下仓库结构'),
+      thinkOnly('th', 310, '第一行思考\n第二行思考\n正在分析仓库结构'),
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在思考 · 分析一下仓库结构')
-    // think 内容超过 60 字符 → 截断加省略号
+    // 多行 think：运行中摘要取最新一行（官方 ReasoningRow 同款 latestLine）
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在思考 · 正在分析仓库结构')
+    // think 内容只有一行时完整显示（溢出交给 CSS ellipsis / 横向滚动跟随）
     const nodes2 = [
       userNode('u', 100),
       thinkOnly('th2', 200, '长'.repeat(80)),
     ]
     const s2 = buildSnapshot(nodes2, { turnEnds: new Map() })
     const g2 = T.computeGroup(s2.chat.order, s2.chat.nodes, s2.chat.nodes.get('th2'))
-    assert.equal(T.segmentLabel(g2, s2.chat.nodes), '正在思考 · ' + '长'.repeat(60) + '…')
+    assert.equal(T.segmentLabel(g2, s2.chat.nodes), '正在思考 · ' + '长'.repeat(80))
   })
 
   it('段闭合（出现下一个 text）：标题 = 运行了 N 条命令（think 不算命令数）', () => {

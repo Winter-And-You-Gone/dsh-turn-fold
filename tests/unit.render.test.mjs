@@ -300,6 +300,69 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
   })
 })
 
+describe('think 段级折叠：流式标题跟随最新一行（滚动效果的数据链路）', () => {
+  // 冻结时钟 + 拉大 tick 间隔：与 RUNNING describe 相同的确定性手段
+  const realDateNow = Date.now
+  const realLiveTickMs = T.CONFIG.liveTickMs
+  let frozenNow = 0
+  beforeEach(() => {
+    frozenNow = Date.now()
+    Date.now = () => frozenNow
+    T.CONFIG.liveTickMs = 1e9
+    T.turnOverrides.clear()
+    T.overrides.clear()
+    T.liveTokenCache.clear()
+  })
+  afterEach(() => {
+    act(() => root.unmount())
+    document.body.innerHTML = ''
+    T.turnOverrides.clear()
+    T.overrides.clear()
+    T.liveTokenCache.clear()
+    T.CONFIG.liveTickMs = realLiveTickMs
+    Date.now = realDateNow
+  })
+
+  it('think 流式推进：快照更新后段组头标题跟随最新一行', () => {
+    const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
+    const nodes = [userNode('u', 100), thinkNode('th', 200, '正在分析')]
+    const { store } = mount(buildSnapshot(nodes, { turnEnds: new Map() }))
+    const segTitle = () => container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header .ccg-title')
+    assert.ok(segTitle(), '段组头标题应存在（think 是回合第一条中间节点 → 大组头下方接段级折叠行）')
+    assert.ok(segTitle().textContent.includes('正在思考 · 正在分析'), '初始标题显示最新一行')
+    // 模拟流式 chunk：think 文本增长（多行）
+    act(() => {
+      store.setSnapshot(buildSnapshot([
+        userNode('u', 100),
+        thinkNode('th', 200, '正在分析\n正在深入思考仓库结构'),
+      ], { turnEnds: new Map() }))
+    })
+    assert.ok(segTitle().textContent.includes('正在思考 · 正在深入思考仓库结构'), '标题应跟随最新一行（流式滚动效果）')
+    // think 摘要元素带 data-follow-end（横向滚动跟随末尾的 CSS/JS 行为）
+    const summary = container.querySelector('.ccg-think-summary')
+    assert.ok(summary, 'think 摘要元素应存在')
+    assert.equal(summary.dataset.followEnd, 'true', '运行中带 data-follow-end')
+    assert.equal(summary.textContent, '正在深入思考仓库结构', '摘要文本 = 最新一行')
+  })
+
+  it('text 出现后：段闭合，段组头标题变"思考"（think 不算命令数）', () => {
+    const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
+    const nodes = [userNode('u', 100), thinkNode('th', 200, '正在分析')]
+    const { store } = mount(buildSnapshot(nodes, { turnEnds: new Map() }))
+    // 下一个 text 出现（含 text 的消息加入 order）
+    act(() => {
+      store.setSnapshot(buildSnapshot([
+        userNode('u', 100),
+        thinkNode('th', 200, '正在分析'),
+        asNode('msg', 300, { blocks: [{ kind: 'text', text: '结果如下' }] }),
+      ], { turnEnds: new Map() }))
+    })
+    const segTitleEl = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header .ccg-title')
+    assert.ok(segTitleEl, '段组头标题应存在')
+    assert.equal(segTitleEl.textContent.trim(), '思考', '纯 think 段闭合后标题 = 思考（不再是"正在思考 · …"）')
+  })
+})
+
 describe('滚轮数字（RollDigit / AnimatedLabel / 大组头 live 文案）', () => {
   let rroot = null
   let rcontainer = null
