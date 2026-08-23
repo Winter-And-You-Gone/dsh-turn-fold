@@ -419,6 +419,16 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e5'))
     assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了d.js [ +3 -2 ]', '同一文件多次编辑汇总行数变更（+3-0 与 +0-2 → +3 -2）')
+    // 行数相同但内容不同：替换 N 行 → +N -N（行数差为 0 也能显示）
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithPath('e7', 300, 'edit', 'C:\\proj\\e.js', { file_path: 'C:\\proj\\e.js', old_string: 'a\nb\nc\nd\ne\nf\ng', new_string: 'A\nB\nC\nD\nE\nF\nG' }),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e7'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了e.js [ +7 -7 ]', '行数相同但内容不同 → 替换 7 行 +7 -7')
     // 多个文件编辑：只显示数量+份，不附加行数
     nodes = [
       userNode('u', 100),
