@@ -227,7 +227,9 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
   it('大组头文案显示真实会话指标（已结束回合带"已完成"状态前缀）', () => {
     const title = container.querySelector('.ccg-header .ccg-title')
     assert.ok(title)
-    assert.equal(title.textContent, '已完成 | 耗时22分34秒 · 消耗370202token · 144tok/s · 缓存命中93.99%')
+    assert.equal(title.textContent, '已完成 | 耗时22分34秒 · 消耗370202token · 144tok/s · 缓存命中93.99%第13轮')
+    assert.ok(container.querySelector('.ccg-header-round'), '大组头右侧应有"第x轮"')
+    assert.equal(container.querySelector('.ccg-header-round').textContent, '第13轮')
   })
 })
 

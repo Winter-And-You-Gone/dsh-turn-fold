@@ -210,6 +210,11 @@ window.__ModuleLoader__.load({
 				".ccg-member-in{animation:ccg-member-in .22s ease-out both}",
 				/* 官方 DisclosureRow 组头微调：标题 400、可省略号（大组头指标文案可能较长）、chevron 用 label-secondary */
 				".ccg-header-title{font-weight:400;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+				/* 大组头标题占满行宽，指标与"第x轮"两端对齐（右对齐轮次） */
+				".ccg-group-root[data-ccg-turn] .ccg-header-title{flex:1 1 auto}",
+				".ccg-header-flex{display:flex;align-items:center;justify-content:space-between;width:100%;min-width:0;gap:12px}",
+				".ccg-header-flex-metrics{min-width:0}",
+				".ccg-header-round{flex:none;white-space:nowrap}",
 				/* 组内有执行失败命令时标题标红（与官方错误色 token 一致） */
 				".ccg-header-danger{color:var(--dsw-alias-state-error-primary,#ef4444)}",
 				".ccg-header-chevron{color:var(--dsw-alias-label-secondary,#9ca3af)}",
@@ -1118,6 +1123,12 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		/** 回合轮次文案：大组头最右侧右对齐显示（"第3轮" / "Round 3"）。 */
+		function turnRoundLabel(turn) {
+			if (turn === undefined || turn === null) return "";
+			return currentLocale() === "zh" ? "第" + turn + "轮" : "Round " + turn;
+		}
+
 		// ---- 组头组件 ----
 		// 优先用官方 DisclosureRow（24px 行高、16px 前导、14px 官方 chevron、14px/24px 标题），
 		// 与 Think / 工具卡片的折叠行样式一致；平台原语缺失时回退到自带兜底行。
@@ -1137,6 +1148,15 @@ window.__ModuleLoader__.load({
 			// title 直接作为 children 渲染，传 React 元素即可）。
 			var live = props.live === true;
 			var titleContent = live ? react.createElement(AnimatedLabel, { label: label }) : label;
+			// right：右对齐的尾部元素（大组头的"第x轮"）——flex 容器两端对齐，指标在左、轮次在右
+			if (props.right !== undefined && props.right !== null && props.right !== "") {
+				titleContent = react.createElement(
+					"span",
+					{ className: "ccg-header-flex" },
+					react.createElement("span", { className: "ccg-header-flex-metrics" }, titleContent),
+					react.createElement("span", { className: "ccg-header-round" }, props.right)
+				);
+			}
 			var titleClass = "ccg-header-title" + (danger ? " ccg-header-danger" : "");
 			var ariaLabel = isTurn
 				? (open ? _T("ariaTurnExpanded") : _T("ariaTurn"))
@@ -1626,10 +1646,7 @@ window.__ModuleLoader__.load({
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-					react.createElement(
-						GroupHeader,
-						{ label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed }
-					),
+					react.createElement(GroupHeader, { label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
 					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderSegment(props, group, open, sessionId, nodes, finalKey))
 				);
@@ -1702,7 +1719,7 @@ window.__ModuleLoader__.load({
 						return react.createElement(
 							"div",
 							{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-							react.createElement(GroupHeader, { label: turnLabel3, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn3, isTurn: true, live: !closed }),
+							react.createElement(GroupHeader, { label: turnLabel3, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn3, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
 							react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 							react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinAssistant(props))
 						);
@@ -1719,7 +1736,7 @@ window.__ModuleLoader__.load({
 					return react.createElement(
 						"div",
 						{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-						react.createElement(GroupHeader, { label: turnLabel2, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn2, isTurn: true, live: !closed }),
+						react.createElement(GroupHeader, { label: turnLabel2, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn2, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
 						react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 						react.createElement(FoldClip, { open: turnOpen, live: !closed },
 							renderSegment(props, segGroup, segOpen, sessionId, nodes, fold.finalAssistantKey)
@@ -1743,10 +1760,7 @@ window.__ModuleLoader__.load({
 			return react.createElement(
 				"div",
 				{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-				react.createElement(
-					GroupHeader,
-					{ label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed }
-				),
+				react.createElement(GroupHeader, { label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
 				react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 				react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinAssistant(props))
 			);
@@ -1797,10 +1811,7 @@ window.__ModuleLoader__.load({
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-					react.createElement(
-						GroupHeader,
-						{ label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed }
-					),
+					react.createElement(GroupHeader, { label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
 					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinContext(props))
 				);
@@ -1831,11 +1842,15 @@ window.__ModuleLoader__.load({
 			// 占位条件：会话运行中 + 该 user 是最后一条消息（其后尚无任何中间节点）
 			var isPending = running && order.length > 0 && order[order.length - 1] === node.key;
 			if (!isPending) return renderBuiltinUser(props);
-			// 回合开始时间：turnTimings 中运行中（有 startTime、无 endTime）的回合
+			// 回合开始时间 / 回合号：turnTimings 中运行中（有 startTime、无 endTime）的回合
 			var startTime = null;
+			var runningTurn = null;
 			if (turnTimings && typeof turnTimings.forEach === "function") {
-				turnTimings.forEach(function (t) {
-					if (startTime === null && t && typeof t.startTime === "number" && typeof t.endTime !== "number") startTime = t.startTime;
+				turnTimings.forEach(function (t, turn) {
+					if (startTime === null && t && typeof t.startTime === "number" && typeof t.endTime !== "number") {
+						startTime = t.startTime;
+						runningTurn = turn;
+					}
 				});
 			}
 			var now = typeof liveNow === "number" ? liveNow : Date.now();
@@ -1848,7 +1863,7 @@ window.__ModuleLoader__.load({
 				react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": "0", "data-ccg-open": "true", "data-ccg-turn": "true" },
-					react.createElement(GroupHeader, { label: label, count: 0, open: true, onToggle: function () {}, isTurn: true, live: true }),
+					react.createElement(GroupHeader, { label: label, count: 0, open: true, onToggle: function () {}, isTurn: true, live: true, right: turnRoundLabel(runningTurn) }),
 					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" })
 				)
 			);
