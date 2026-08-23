@@ -72,7 +72,7 @@ window.__ModuleLoader__.load({
 			zh: {
 				headerPrefix: "运行了",
 				headerSuffix: "条命令",
-				failurePrefix: "——",
+				failurePrefix: " —— ",
 				failureSingle: "执行失败",
 				failureSuffix: "条执行失败",
 				statusCompleted: "已完成",

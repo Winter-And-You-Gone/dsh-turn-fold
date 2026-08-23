@@ -238,7 +238,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令——执行失败', '1 条失败显示"——执行失败"（不带条数）')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令 —— 执行失败', '1 条失败显示" —— 执行失败"（不带条数）')
   })
 
   it('段闭合：多条失败追加"——y条执行失败"', () => {
@@ -252,7 +252,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了3条命令——2条执行失败')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了3条命令 —— 2条执行失败')
   })
 
   it('段闭合：单次命令显示工具名，多次显示次数+单位', () => {
