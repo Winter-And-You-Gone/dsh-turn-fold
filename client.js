@@ -82,7 +82,7 @@ window.__ModuleLoader__.load({
 				ariaTurnExpanded: "折叠回合",
 				// 段级折叠运行中标题：当前正在执行的工具 / 思考内容
 				runningTool: "正在运行",
-				runningThink: "正在思考 · ",
+				runningThink: "正在思考：",
 				// 纯 think 段（无工具调用）闭合后的标题
 				thinkOnly: "思考"
 			},
@@ -98,7 +98,7 @@ window.__ModuleLoader__.load({
 				ariaTurn: "Expand turn",
 				ariaTurnExpanded: "Collapse turn",
 				runningTool: "Running ",
-				runningThink: "Thinking · ",
+				runningThink: "Thinking: ",
 				thinkOnly: "Think"
 			}
 		};
@@ -121,11 +121,19 @@ window.__ModuleLoader__.load({
 		var DisclosureRow = null;
 		var IconChevronDownOutline14 = null;
 		var IconChevronRightOutline14 = null;
+		var IconThinkOutline14 = null;
+		var IconSearchOutline16 = null;
+		var IconEditOutline16 = null;
+		var IconCodeOutline16 = null;
 		try {
 			var uiPrimitives = require("@deepseek-ai/dsh-client-ui-primitives");
 			DisclosureRow = uiPrimitives.DisclosureRow;
 			IconChevronDownOutline14 = uiPrimitives.IconChevronDownOutline14;
 			IconChevronRightOutline14 = uiPrimitives.IconChevronRightOutline14;
+			IconThinkOutline14 = uiPrimitives.IconThinkOutline14;
+			IconSearchOutline16 = uiPrimitives.IconSearchOutline16;
+			IconEditOutline16 = uiPrimitives.IconEditOutline16;
+			IconCodeOutline16 = uiPrimitives.IconCodeOutline16;
 		} catch (e) {
 			/* 平台模块缺失：走自带兜底样式 */
 		}
@@ -189,8 +197,10 @@ window.__ModuleLoader__.load({
 				".ccg-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}",
 				/* think 运行中摘要（段组头标题）：前缀 + 最新一行，横向自动滚动跟随末尾
 				   （官方 ReasoningRow 同款 data-follow-end），并带高光扫过动画 */
-				".ccg-think-title{display:inline-flex;align-items:baseline;min-width:0;max-width:100%}",
+				".ccg-think-title{display:inline-flex;align-items:center;min-width:0;max-width:100%}",
 				".ccg-think-prefix{flex:none}",
+				".ccg-think-name{flex:none;color:var(--dsw-alias-label-primary,#f3f4f6);font-weight:400}",
+				".ccg-think-sep{flex:none;color:var(--dsw-alias-label-tertiary,#9ca3af)}",
 				".ccg-think-summary{display:inline-block;min-width:0;max-width:100%;vertical-align:bottom;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 				".ccg-think-summary[data-follow-end]{text-overflow:clip}",
 				".ccg-think-title-live{position:relative}",
@@ -1130,7 +1140,21 @@ window.__ModuleLoader__.load({
 				line
 			);
 		}
-		/** 段组头标题元素：think 运行中用"前缀 + 滚动摘要"，其余情况为纯文本。 */
+		/** 工具图标：按工具名映射到官方 ui-primitives 图标（Pwsh/终端类、Grep/搜索类、
+		 *  Edit 类、Read 类等），兜底通用代码图标；平台模块缺失（图标为 null）时返回 null。
+		 *  官方工具卡片在段内展开时仍是官方图标。 */
+		function toolIconFor(name, size) {
+			var n = String(name || "").toLowerCase();
+			var Icon = null;
+			if (n.indexOf("grep") !== -1 || n.indexOf("search") !== -1 || n.indexOf("find") !== -1 || n.indexOf("glob") !== -1) Icon = IconSearchOutline16;
+			else if (n.indexOf("edit") !== -1 || n.indexOf("write") !== -1 || n.indexOf("patch") !== -1 || n.indexOf("create") !== -1 || n.indexOf("read") !== -1 || n.indexOf("view") !== -1) Icon = IconEditOutline16;
+			else if (n.indexOf("pwsh") !== -1 || n.indexOf("power") !== -1 || n.indexOf("shell") !== -1 || n.indexOf("cmd") !== -1 || n.indexOf("bash") !== -1 || n.indexOf("terminal") !== -1 || n.indexOf("git") !== -1) Icon = IconCodeOutline16;
+			else Icon = IconCodeOutline16;
+			if (!Icon) return null;
+			return react.createElement(Icon, { size: typeof size === "number" ? size : 14 });
+		}
+		/** 段组头标题元素：think / 工具运行中用"前缀 + 官方图标 + 名称 + 摘要"（官方行风格），
+		 *  其余情况为纯文本。 */
 		function segmentTitle(group, nodes) {
 			if (!group.textAfter) {
 				var last = group.lastActiveKey ? nodes.get(group.lastActiveKey) : null;
@@ -1141,7 +1165,25 @@ window.__ModuleLoader__.load({
 							"span",
 							{ className: "ccg-think-title ccg-think-title-live" },
 							react.createElement("span", { className: "ccg-think-prefix" }, _T("runningThink")),
+							IconThinkOutline14 ? react.createElement(IconThinkOutline14, { size: 14 }) : null,
+							react.createElement("span", { className: "ccg-think-name" }, "Think"),
+							react.createElement("span", { className: "ccg-think-sep" }, " · "),
 							react.createElement(ThinkSummary, { text: text, running: true })
+						);
+					}
+				}
+				if (last && last.kind === "tool-call") {
+					var info = toolCallInfo(last);
+					if (info && info.name) {
+						var desc = summarizeArgs(info.argsRaw);
+						return react.createElement(
+							"span",
+							{ className: "ccg-think-title" },
+							react.createElement("span", { className: "ccg-think-prefix" }, _T("runningTool")),
+							toolIconFor(info.name, 14),
+							react.createElement("span", { className: "ccg-think-name" }, info.name),
+							desc ? react.createElement("span", { className: "ccg-think-sep" }, " · ") : null,
+							desc ? react.createElement("span", { className: "ccg-think-summary" }, desc) : null
 						);
 					}
 				}
