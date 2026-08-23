@@ -1123,10 +1123,10 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		/** 回合轮次文案：大组头最右侧右对齐显示（"第3轮" / "Round 3"）。 */
+		/** 回合轮次文案：大组头最右侧右对齐显示（"第3轮" / "Turn 3"，官方用 turns 一词）。 */
 		function turnRoundLabel(turn) {
 			if (turn === undefined || turn === null) return "";
-			return currentLocale() === "zh" ? "第" + turn + "轮" : "Round " + turn;
+			return currentLocale() === "zh" ? "第" + turn + "轮" : "Turn " + turn;
 		}
 
 		// ---- 组头组件 ----
