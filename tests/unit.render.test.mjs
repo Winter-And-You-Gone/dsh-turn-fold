@@ -247,6 +247,7 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     T.overrides.clear()
     T.liveTokenCache.clear()
     T.segmentLabelCache.clear()
+    T.ttftCache.clear()
     mount(RUNNING)
   })
   afterEach(() => {
@@ -256,6 +257,7 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     T.overrides.clear()
     T.liveTokenCache.clear()
     T.segmentLabelCache.clear()
+    T.ttftCache.clear()
     T.CONFIG.liveTickMs = realLiveTickMs
     Date.now = realDateNow
   })
@@ -285,7 +287,7 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     // 滚轮数字是视觉装饰（DOM 含 0-9 数字条），完整文案在 sr-only 文本上。
     const sr = title.querySelector('.ccg-sr-only')
     assert.ok(sr, '滚轮文案应有 sr-only 最终文本')
-    assert.match(sr.textContent, /^耗时\d+秒，消耗450token，\d+(\.\d+)?tok\/s，缓存命中66.67%$/)
+    assert.match(sr.textContent, /^耗时\d+秒，首字\d+ms，消耗450token，\d+(\.\d+)?tok\/s，缓存命中66.67%$/)
   })
 
   it('点击大组头收起：成员隐藏、分隔线常驻；再点展开恢复', () => {
@@ -332,6 +334,7 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     T.overrides.clear()
     T.liveTokenCache.clear()
     T.segmentLabelCache.clear()
+    T.ttftCache.clear()
   })
   afterEach(() => {
     act(() => root.unmount())
@@ -340,6 +343,7 @@ describe('think 段级折叠：纯 think 段也套段组头（标题自研 Think
     T.overrides.clear()
     T.liveTokenCache.clear()
     T.segmentLabelCache.clear()
+    T.ttftCache.clear()
     T.CONFIG.liveTickMs = realLiveTickMs
     Date.now = realDateNow
   })
@@ -528,6 +532,7 @@ describe('大组头 0 秒占位（GroupedUserView）', () => {
   beforeEach(() => {
     T.liveTokenCache.clear()
     T.segmentLabelCache.clear()
+    T.ttftCache.clear()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)

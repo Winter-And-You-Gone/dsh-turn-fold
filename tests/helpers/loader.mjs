@@ -44,6 +44,7 @@ const TEST_EXPORTS = [
   'liveTokenCache',
   'liveTickState',
   'segmentLabelCache',
+  'ttftCache',
   'turnOverrides',
   'overrides',
   'hiddenMarker',

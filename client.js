@@ -700,6 +700,21 @@ window.__ModuleLoader__.load({
 			};
 		}
 
+		/** TTFT（首字延迟，毫秒）：回合启动（turnTimings.startTime）到第一个 response
+		 *  （首个 assistant-step 渲染时刻）的近似值，由组件渲染期同步冻结记录。
+		 *  会话快照不提供官方 timing 数据，这是插件的自测近似（误差约一帧渲染延迟）。
+		 *  记录幂等（has 检查），StrictMode 双调用/渲染中断重试均无害。 */
+		var ttftCache = new Map();
+		function recordTtft(sessionId, turn, closed, turnTimings) {
+			if (closed || turn === undefined) return;
+			var key = sessionId + "::" + turn;
+			if (ttftCache.has(key)) return;
+			var timing = turnTimings && typeof turnTimings.get === "function" ? turnTimings.get(turn) : null;
+			if (timing && typeof timing.startTime === "number") {
+				ttftCache.set(key, Math.max(0, Date.now() - timing.startTime));
+			}
+		}
+
 		// ---- 运行中"消耗token"的持续增长动画 ----
 		// 真实 usage（assistant/chunk 的 usage 块）只在每个请求完成时到达，两次到达
 		// 之间（思考/工具执行期间）数字会停住不动。为营造"一直在消耗"的观感，在真实
@@ -784,6 +799,11 @@ window.__ModuleLoader__.load({
 			if (metrics.durationMs !== undefined) {
 				if (LOCALE === "zh") parts.push("耗时" + formatTurnDuration(metrics.durationMs));
 				else parts.push(formatTurnDuration(metrics.durationMs));
+			}
+			if (metrics.ttftMs !== undefined) {
+				// 首字（TTFT 近似）：从回合启动到首个 assistant-step 渲染，毫秒
+				if (LOCALE === "zh") parts.push("首字" + metrics.ttftMs + "ms");
+				else parts.push("TTFT " + metrics.ttftMs + "ms");
 			}
 			if (metrics.tokens !== undefined) {
 				if (LOCALE === "zh") parts.push("消耗" + metrics.tokens + "token");
@@ -1558,6 +1578,11 @@ window.__ModuleLoader__.load({
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
+			// TTFT（首字近似）：首个 assistant-step 渲染时同步冻结记录（回合启动 → 首个
+			// response）；渲染期副作用需幂等（has 检查），StrictMode 双调无害
+			recordTtft(sessionId, turn, closed, turnTimings);
+			var ttftMs = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
+			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
 
 			// 兜底：找不到自己的节点时，原样委托内置渲染（补齐 renderSlot），绝不白屏。
 			if (!group) return renderBuiltinToolCall(props);
@@ -1582,7 +1607,7 @@ window.__ModuleLoader__.load({
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnOpen);
 				};
-				var baseLabel = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var baseLabel = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 				var turnLabel = closed ? turnLabelWithStatus(baseLabel, fold.turnStatus) : baseLabel;
 				return react.createElement(
 					"div",
@@ -1622,6 +1647,11 @@ window.__ModuleLoader__.load({
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
+			// TTFT（首字近似）：首个 assistant-step 渲染时同步冻结记录（回合启动 → 首个
+			// response）；渲染期副作用需幂等（has 检查），StrictMode 双调无害
+			recordTtft(sessionId, turn, closed, turnTimings);
+			var ttftMs = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
+			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
 			// 纯 think 节点也参与段级分组（段 = 两个 text 之间的 tool-call + think）。
 			var segGroup = useMemo(function () { return computeGroup(order, nodes, node); }, [order, nodes, node]);
 			var segManual = useGroupOverride(sessionId, segGroup ? segGroup.leaderKey : "");
@@ -1653,7 +1683,7 @@ window.__ModuleLoader__.load({
 						var toggleTurn3 = function () {
 							setTurnOpen(sessionId, fold.turn, !turnOpen);
 						};
-						var baseLabel3 = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+						var baseLabel3 = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 						var turnLabel3 = closed ? turnLabelWithStatus(baseLabel3, fold.turnStatus) : baseLabel3;
 						return react.createElement(
 							"div",
@@ -1670,7 +1700,7 @@ window.__ModuleLoader__.load({
 					var toggleTurn2 = function () {
 						setTurnOpen(sessionId, fold.turn, !turnOpen);
 					};
-					var baseLabel2 = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+					var baseLabel2 = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 					var turnLabel2 = closed ? turnLabelWithStatus(baseLabel2, fold.turnStatus) : baseLabel2;
 					return react.createElement(
 						"div",
@@ -1694,7 +1724,7 @@ window.__ModuleLoader__.load({
 			var toggleTurn = function () {
 				setTurnOpen(sessionId, fold.turn, !turnOpen);
 			};
-			var baseLabel = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+			var baseLabel = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 			var turnLabel = closed ? turnLabelWithStatus(baseLabel, fold.turnStatus) : baseLabel;
 			return react.createElement(
 				"div",
@@ -1729,6 +1759,11 @@ window.__ModuleLoader__.load({
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
+			// TTFT（首字近似）：首个 assistant-step 渲染时同步冻结记录（回合启动 → 首个
+			// response）；渲染期副作用需幂等（has 检查），StrictMode 双调无害
+			recordTtft(sessionId, turn, closed, turnTimings);
+			var ttftMs = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
+			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
 
 			// 无法安全定位组头（回合内无任何中间节点）/ 折叠作用域之外（用户消息上方）的
 			// 上下文行不参与折叠，始终原样渲染。不要求本回合必须有工具调用——仅上下文
@@ -1743,7 +1778,7 @@ window.__ModuleLoader__.load({
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnOpen);
 				};
-				var baseLabel = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var baseLabel = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 				var turnLabel = closed ? turnLabelWithStatus(baseLabel, fold.turnStatus) : baseLabel;
 				return react.createElement(
 					"div",
