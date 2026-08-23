@@ -377,7 +377,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     let s = buildSnapshot(nodes, { turnEnds: new Map() })
     let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了index.js +12 —3', '单文件编辑附加行数变更')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了index.js [ +12 -3 ]', '单文件编辑附加行数变更')
     // 无显式字段时从 newStr/oldStr 行数差计算（edit/write 工具的真实 argsRaw 形态）
     nodes = [
       userNode('u', 100),
@@ -387,7 +387,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e2'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了a.js +2', '从 newStr/oldStr 行数差计算（仅新增）')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了a.js [ +2 ]', '从 newStr/oldStr 行数差计算（仅新增）')
     // str-replace-editor 用 snake_case：old_str / new_str
     nodes = [
       userNode('u', 100),
@@ -397,7 +397,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e3'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js —1', 'snake_case old_str/new_str 行数差计算（仅删除）')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js [ -1 ]', 'snake_case old_str/new_str 行数差计算（仅删除）')
     // DSH edit 工具全拼：old_string / new_string
     nodes = [
       userNode('u', 100),
@@ -407,7 +407,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e4'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了c.js +2', 'DSH edit 工具 old_string/new_string 行数差计算')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了c.js [ +2 ]', 'DSH edit 工具 old_string/new_string 行数差计算')
     // 多个文件编辑：只显示数量+份，不附加行数
     nodes = [
       userNode('u', 100),

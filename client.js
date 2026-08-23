@@ -1199,7 +1199,7 @@ window.__ModuleLoader__.load({
 			if (added === 0 && removed === 0) return null;
 			var parts = [];
 			if (added > 0) parts.push("+" + added);
-			if (removed > 0) parts.push("—" + removed);
+			if (removed > 0) parts.push("-" + removed);
 			return parts.join(" ");
 		}
 		/** 统计段内工具调用：按分类分组，read/edit 类附带去重后的文件名单及行数变更。 */
@@ -1231,13 +1231,13 @@ window.__ModuleLoader__.load({
 			var label;
 			if (files.length === 1) label = prefix + files[0];
 			else label = prefix + (files.length > 0 ? files.length : items.length) + suffix;
-			// edit 类：单文件时附加行数变更
+			// edit 类：单文件时附加行数变更（方括号包裹，如 [ +12 -3 ]）
 			if (kind === "edit" && files.length === 1) {
 				var changes = [];
 				for (var j = 0; j < items.length; j++) {
 					if (items[j].lineChanges && changes.indexOf(items[j].lineChanges) === -1) changes.push(items[j].lineChanges);
 				}
-				if (changes.length === 1) label += " " + changes[0];
+				if (changes.length === 1) label += " [ " + changes[0] + " ]";
 			}
 			return label;
 		}
