@@ -50,7 +50,28 @@ describe('computeGroup（段级分组）', () => {
     assert.deepEqual(g.keys, ['tc1', 'tc2', 'tc3'])
   })
 
-  it('Think 打断：两侧工具调用不合并', () => {
+  it('纯 think 入段：think 与工具调用混排成一段（think 不打断段）', () => {
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolNode('tc1', 300),
+      // 纯 think（只有 reasoning 块、无 text 块）→ 段成员
+      asNode('as-think', 310, { blocks: [{ kind: 'reasoning', text: '思考中' }] }),
+      toolNode('tc2', 400),
+      asNode('final', 500),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc1'))
+    assert.equal(g.count, 3)
+    assert.deepEqual(g.keys, ['tc1', 'as-think', 'tc2'])
+    assert.equal(g.toolCount, 2, 'think 不算命令数')
+    // think 节点自己也能定位到同一段
+    const g2 = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('as-think'))
+    assert.equal(g2.leaderKey, 'tc1')
+    assert.equal(g2.isLeader, false)
+  })
+
+  it('text 打断：两侧工具调用不合并（含 text 的消息是段边界）', () => {
     const nodes = [
       userNode('u', 100),
       asNode('as1', 200),
@@ -82,17 +103,30 @@ describe('computeGroup（段级分组）', () => {
     assert.equal(g.anyRunning, true)
   })
 
-  it('autoCollapsed：组尾之后有 Think 且无运行中调用 → true', () => {
+  it('autoCollapsed 恒 true（段级折叠始终默认收起，运行中也不例外）', () => {
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolNode('tc', 300, { running: true }),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
+    assert.equal(g.autoCollapsed, true, '运行中也要默认折叠')
+    assert.equal(g.textAfter, false, '段尾之后无 text → 段未闭合')
+    assert.equal(g.lastActiveKey, 'tc')
+  })
+
+  it('textAfter：段尾之后出现含 text 的节点 → true（段闭合）', () => {
     const nodes = [
       userNode('u', 100),
       asNode('as', 200),
       toolNode('tc', 300),
       asNode('as2', 400),
     ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.equal(g.hasLaterThink, true)
-    assert.equal(g.autoCollapsed, true)
+    assert.equal(g.textAfter, true)
+    assert.equal(g.toolCount, 1)
   })
 
   it('回归 Bug1：store 节点对象被替换后，按 key 仍能定位（不依赖对象身份）', () => {
@@ -117,6 +151,98 @@ describe('computeGroup（段级分组）', () => {
     const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
     const ghost = toolNode('ghost', 999)
     assert.equal(T.computeGroup(s.chat.order, s.chat.nodes, ghost), null)
+  })
+})
+
+// ─────────────────────────── segmentLabel / summarizeArgs（段组头标题） ───────────────────────────
+describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
+  const toolWithArgs = (key, seq, { running = false, name = 'Pwsh', argsRaw } = {}) =>
+    makeNode(key, 'tool-call', seq, {
+      data: { root: running ? { callId: key, name, argsRaw } : { kind: 'tool-result', callId: key, name, argsRaw, isError: false } },
+    })
+  const thinkOnly = (key, seq, text) =>
+    asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
+
+  it('summarizeArgs：取 argsRaw 中最长字符串值（-m 正文 / 路径），截断到上限', () => {
+    assert.equal(T.summarizeArgs(JSON.stringify({ args: ['commit', '-m', 'Commit 1: core +tests'] })), 'Commit 1: core +tests')
+    assert.equal(T.summarizeArgs(JSON.stringify({ path: 'X:\\DeepSeek Harness\\dsh-plugins\\dsh-turn-fold' })), 'X:\\DeepSeek Harness\\dsh-plugins\\dsh-turn-fold')
+    assert.equal(T.summarizeArgs('not-json'), 'not-json')
+    assert.equal(T.summarizeArgs(JSON.stringify({ a: 'x'.repeat(100) }), 20), 'x'.repeat(20) + '…')
+    assert.equal(T.summarizeArgs(''), '')
+    assert.equal(T.summarizeArgs(null), '')
+  })
+
+  it('运行中（段未闭合）：标题 = 正在运行 <工具名> · <参数摘要>', () => {
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithArgs('tc', 300, { running: true, argsRaw: JSON.stringify({ args: ['commit', '-m', 'Commit 1: core +tests'] }) }),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
+    assert.equal(g.textAfter, false)
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在运行Pwsh · Commit 1: core +tests')
+  })
+
+  it('运行中（段未闭合）：最后一个节点是 think → 标题 = 正在思考 · 内容（流式滚动随节点更新）', () => {
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithArgs('tc', 300, { running: false, argsRaw: JSON.stringify({ args: ['x'] }) }),
+      thinkOnly('th', 310, '分析一下仓库结构'),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在思考 · 分析一下仓库结构')
+    // think 内容超过 60 字符 → 截断加省略号
+    const nodes2 = [
+      userNode('u', 100),
+      thinkOnly('th2', 200, '长'.repeat(80)),
+    ]
+    const s2 = buildSnapshot(nodes2, { turnEnds: new Map() })
+    const g2 = T.computeGroup(s2.chat.order, s2.chat.nodes, s2.chat.nodes.get('th2'))
+    assert.equal(T.segmentLabel(g2, s2.chat.nodes), '正在思考 · ' + '长'.repeat(60) + '…')
+  })
+
+  it('段闭合（出现下一个 text）：标题 = 运行了 N 条命令（think 不算命令数）', () => {
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      thinkOnly('th', 300, '思考'),
+      toolWithArgs('tc1', 301, { running: false, argsRaw: '{}' }),
+      toolWithArgs('tc2', 302, { running: false, argsRaw: '{}' }),
+      asNode('as2', 400), // 含 text → 段闭合
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc1'))
+    assert.equal(g.textAfter, true)
+    assert.equal(g.toolCount, 2)
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了 2 条命令')
+  })
+
+  it('段闭合且组内有失败命令：标题追加失败数', () => {
+    const nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolNode('ok', 300),
+      toolNode('err', 301, { isError: true }),
+      asNode('as2', 400),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了 2 条命令——1条执行失败')
+  })
+
+  it('纯 think 段闭合：标题 = 思考（不显示"运行了 0 条命令"）', () => {
+    const nodes = [
+      userNode('u', 100),
+      thinkOnly('th', 200, '思考'),
+      asNode('as2', 300),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('th'))
+    assert.equal(g.toolCount, 0)
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '思考')
   })
 })
 

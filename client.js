@@ -1,9 +1,11 @@
 // dsh-turn-fold: DeepSeek Harness 前端插件（纯插件，不改 DSH 源码）。只负责折叠。
 //
 // 行为：
-//   1. Think 块保持内置默认（收起、点击展开），不做任何改动。
-//   2. 工具调用按 Think 段级分组：下一个 Think 出现后自动折叠成段级组头；运行中保持展开。
-//   3. 大组头在 agent 回复开始就出现（运行中默认展开，回复在其下逐条加载），
+//   1. 段级分组自动折叠：两个 text 之间的所有工具调用和纯 Think 收成一个段级组头，
+//      默认折叠（运行中也不例外）。段未闭合（下一个 text 还没出现）时组头动态显示
+//      "正在运行 Xxx · 参数摘要 / 正在思考 · 内容"；下一个 text 出现后变为
+//      "运行了 N 条命令"（think 不算命令数）。
+//   2. 大组头在 agent 回复开始就出现（运行中默认展开，回复在其下逐条加载），
 //      组头实时显示本轮耗时/token/tok/s/缓存命中率——直播指标按随机间隔刷新
 //      （CONFIG.liveTickMs × 随机数 0.5~1，默认 125~250ms）：耗时秒数走动、tok/s
 //      按已输出 token 实时估算；真实 usage 只在请求完成时到达，"消耗token"在两次
@@ -11,17 +13,17 @@
 //      +1，tick 间隔随机、节奏不规律），真实值到达时只校正基线（数字只增不减）；
 //      数值变化带"滚轮/里程表"式逐位滚动动画（每位数字独立滚动，变化快时用短动画、
 //      慢速变化用 350ms 回弹缓动）；组头下方常驻一条水平分隔线（收起/展开都显示）。
-//   4. 回合结束后，整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头并
+//   3. 回合结束后，整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头并
 //      默认收起，只保留最终总结正文；非正常结束的回合带状态标签（已停止 / 已中断）。
-//   5. 点击组头可手动展开/折叠；展开带平滑过渡动画（高度展开 + 淡入 + 微位移，280ms），
+//   4. 点击组头可手动展开/折叠；展开带平滑过渡动画（高度展开 + 淡入 + 微位移，280ms），
 //      收起带收缩动画（200ms）后卸载内容；尊重 prefers-reduced-motion。
-//   6. 界面文案自动适配中英文（navigator.language(s) 含 zh 即中文），
+//   5. 界面文案自动适配中英文（navigator.language(s) 含 zh 即中文），
 //      组头带 aria-label / aria-expanded，键盘可操作（Enter / Space）。
 //
 // 实现方式：
 //   - 用 priority:-1 覆盖（shadow）内置的 conversation.chat.node 渲染器：
 //       key "tool-call"        -> 段级分组 + 自动折叠
-//       key "assistant-step"   -> 整回合折叠（Think/最终消息）
+//       key "assistant-step"   -> 段级分组（纯 Think）+ 整回合折叠（Think/最终消息）
 //       key "context"          -> 整回合折叠（上下文注入）
 //   - 通过 ctx.slots.entries() 取到内置组件引用做"委托渲染"（展开时原样转发，
 //     工具卡片内容/样式与内置一致）。因为我们的 entry 没声明 children 收不到
@@ -77,7 +79,12 @@ window.__ModuleLoader__.load({
 				ariaGroup: "展开本组",
 				ariaGroupExpanded: "折叠本组",
 				ariaTurn: "展开回合",
-				ariaTurnExpanded: "折叠回合"
+				ariaTurnExpanded: "折叠回合",
+				// 段级折叠运行中标题：当前正在执行的工具 / 思考内容
+				runningTool: "正在运行",
+				runningThink: "正在思考 · ",
+				// 纯 think 段（无工具调用）闭合后的标题
+				thinkOnly: "思考"
 			},
 			en: {
 				headerPrefix: "Ran",
@@ -89,7 +96,10 @@ window.__ModuleLoader__.load({
 				ariaGroup: "Expand group",
 				ariaGroupExpanded: "Collapse group",
 				ariaTurn: "Expand turn",
-				ariaTurnExpanded: "Collapse turn"
+				ariaTurnExpanded: "Collapse turn",
+				runningTool: "Running ",
+				runningThink: "Thinking · ",
+				thinkOnly: "Think"
 			}
 		};
 		/** 取当前语言下的文案；缺失键回退英文，再缺失返回键名本身。 */
@@ -292,14 +302,83 @@ window.__ModuleLoader__.load({
 			var blocks = node.data && node.data.blocks;
 			return Array.isArray(blocks) && blocks.some(function (b) { return !!b && b.kind === "reasoning"; });
 		}
+		/** 是否含实际 text 块（非空文本）——"下一个 text 出现"的判定依据，也是段边界。 */
+		function hasText(node) {
+			if (!node || node.kind !== "assistant-step" || !node.data || !Array.isArray(node.data.blocks)) return false;
+			var blocks = node.data.blocks;
+			for (var i = 0; i < blocks.length; i++) {
+				var b = blocks[i];
+				if (b && b.kind === "text" && typeof b.text === "string" && b.text.trim() !== "") return true;
+			}
+			return false;
+		}
+		/** 纯 think 节点：有 reasoning、无 text（含 text 的消息是段边界，其 think 跟消息走）。 */
+		function isThinkNode(node) {
+			return hasReasoning(node) && !hasText(node);
+		}
+		/** 段成员：tool-call 或纯 think 的 assistant-step（两个 text 之间的内容都入段）。 */
+		function isSegmentMember(node) {
+			if (!node) return false;
+			if (node.kind === "tool-call") return true;
+			return node.kind === "assistant-step" && isThinkNode(node);
+		}
+		/** 拼接节点的 reasoning 块文本（段组头运行中显示 think 内容用）。 */
+		function reasoningText(node) {
+			if (!node || node.kind !== "assistant-step" || !node.data || !Array.isArray(node.data.blocks)) return "";
+			var parts = [];
+			var blocks = node.data.blocks;
+			for (var i = 0; i < blocks.length; i++) {
+				var b = blocks[i];
+				if (b && b.kind === "reasoning" && typeof b.text === "string" && b.text.trim() !== "") parts.push(b.text);
+			}
+			return parts.join("\n");
+		}
+		/** 工具调用信息：名称 / 原始参数 JSON / 是否仍在运行（运行中 root 无 kind）。 */
+		function toolCallInfo(node) {
+			var root = node && node.data && node.data.root;
+			if (!root) return null;
+			if ("kind" in root) {
+				// 已结算：root.kind === "tool-result"，call 字段携带 name/argsRaw（兼容旧数据直接放 root 上）
+				var call = root.call || root;
+				return { name: call.name, argsRaw: call.argsRaw, running: false };
+			}
+			// 运行中（in-flight）：root 就是调用本身
+			return { name: root.name, argsRaw: root.argsRaw, running: true };
+		}
+		/** 参数摘要：取 argsRaw 中最长的字符串值（-m 的正文 / 路径等最有信息量的内容），截断。 */
+		function summarizeArgs(argsRaw, maxLen) {
+			if (!argsRaw) return "";
+			var limit = typeof maxLen === "number" ? maxLen : 60;
+			var best = "";
+			try {
+				var obj = JSON.parse(argsRaw);
+				(function walk(v) {
+					if (typeof v === "string") {
+						if (v.length > best.length) best = v;
+					} else if (Array.isArray(v)) {
+						for (var i = 0; i < v.length; i++) walk(v[i]);
+					} else if (v && typeof v === "object") {
+						for (var k in v) { if (Object.prototype.hasOwnProperty.call(v, k)) walk(v[k]); }
+					}
+				})(obj);
+			} catch (e) {
+				best = String(argsRaw);
+			}
+			best = best.replace(/\s+/g, " ").trim();
+			if (best.length > limit) best = best.slice(0, limit) + "…";
+			return best;
+		}
 		function isRunningRoot(root) {
 			return !!root && !("kind" in root);
 		}
 		/**
-		 * 计算本 tool-call 节点所属的"组"：
-		 *   - 组 = 连续一段 tool-call 节点（被任何其他节点——尤其 Think——打断即新组）。
-		 *   - leader = 组内第一个节点（只有 leader 渲染组头）。
-		 *   - autoCollapsed = 组尾之后已出现 Think 且组内没有仍在运行的调用。
+		 * 计算本节点所属的"段级分组"：
+		 *   - 段 = 两个 text 之间的所有节点（tool-call + 纯 think 的 assistant-step
+		 *     混排成一段；think 不打断段，含 text 的消息才是段边界）。
+		 *   - leader = 段内第一个节点（只有 leader 渲染段组头）。
+		 *   - 段级折叠始终默认收起（autoCollapsed 恒 true）；运行中（textAfter=false）
+		 *     段组头动态显示"正在运行 Xxx · 描述 / 正在思考 · 内容"，出现下一个 text
+		 *     后显示"运行了 N 条命令"（think 不算命令数）。
 		 */
 		function computeGroup(order, nodes, ourNode) {
 			if (!order || !nodes || !ourNode) return null;
@@ -311,29 +390,32 @@ window.__ModuleLoader__.load({
 			var start = ourIdx, end = ourIdx;
 			while (start - 1 >= 0) {
 				var prev = nodes.get(order[start - 1]);
-				if (!prev || prev.kind !== "tool-call") break;
+				if (!isSegmentMember(prev)) break;
 				start--;
 			}
 			while (end + 1 < order.length) {
 				var next = nodes.get(order[end + 1]);
-				if (!next || next.kind !== "tool-call") break;
+				if (!isSegmentMember(next)) break;
 				end++;
 			}
 			var keys = [];
 			for (var k = start; k <= end; k++) keys.push(order[k]);
-			var anyRunning = false;
+			var toolCount = 0;
 			var failures = 0;
+			var anyRunning = false;
 			for (var m = 0; m < keys.length; m++) {
 				var n = nodes.get(keys[m]);
 				if (!n || n.kind !== "tool-call") continue;
+				toolCount++;
 				if (n.data && isRunningRoot(n.data.root)) { anyRunning = true; continue; }
 				// 已结算的命令以 isError=true 标记执行失败（含中断）。
 				var root = n.data && n.data.root;
 				if (root && "kind" in root && root.kind === "tool-result" && root.isError === true) failures++;
 			}
-			var hasLaterThink = false;
+			// 段闭合：段尾之后已出现含 text 的节点（"下一个 text 出现"后标题变"运行了 N 条命令"）。
+			var textAfter = false;
 			for (var j = end + 1; j < order.length; j++) {
-				if (hasReasoning(nodes.get(order[j]))) { hasLaterThink = true; break; }
+				if (hasText(nodes.get(order[j]))) { textAfter = true; break; }
 			}
 			return {
 				start: start,
@@ -342,11 +424,14 @@ window.__ModuleLoader__.load({
 				leaderKey: keys[0],
 				isLeader: ourIdx === start,
 				count: keys.length,
-				// 组内已结算且执行失败（isError=true，含中断）的命令数。
+				toolCount: toolCount,
 				failures: failures,
 				anyRunning: anyRunning,
-				hasLaterThink: hasLaterThink,
-				autoCollapsed: hasLaterThink && !anyRunning
+				textAfter: textAfter,
+				// 运行中段组头标题取段内最后一个节点（当前正在执行的工具 / 思考内容）
+				lastActiveKey: keys[keys.length - 1],
+				// 段级折叠始终默认收起（运行中标题动态变化，不需要展开内容）
+				autoCollapsed: true
 			};
 		}
 		/** 取节点所属回合号；非回合/步骤定位（如 session 级）返回 undefined。 */
@@ -953,27 +1038,57 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 段级分组渲染（现有行为）：单条原样 / 非 leader 隐藏 / leader 渲染组头 ----
-		function renderSegment(props, group, open, sessionId) {
-			if (group.count === 1) return renderBuiltinToolCall(props);
+		/** 段级折叠组头标题：运行中（textAfter=false）取最后一个节点显示当前执行内容，闭合后变"运行了 N 条命令"。 */
+		function segmentLabel(group, nodes) {
+			if (group.textAfter && group.toolCount > 0) {
+				// 段闭合：出现下一个 text → "运行了 N 条命令"（think 不算命令数）
+				var label = _T("headerPrefix") + " " + group.toolCount + " " + _T("headerSuffix");
+				if (group.failures > 0) label += "——" + group.failures + _T("failureSuffix");
+				return label;
+			}
+			if (group.textAfter && group.toolCount === 0) {
+				// 纯 think 段闭合后显示"思考"（"运行了 0 条命令"不好看）
+				return _T("thinkOnly");
+			}
+			// 运行中（段未闭合）：显示段内最后一个节点（当前正在执行的工具 / 思考内容）
+			var last = group.lastActiveKey ? nodes.get(group.lastActiveKey) : null;
+			if (last && last.kind === "tool-call") {
+				var info = toolCallInfo(last);
+				if (info && info.name) {
+					var desc = summarizeArgs(info.argsRaw);
+					return _T("runningTool") + info.name + (desc ? " · " + desc : "");
+				}
+			}
+			if (last && last.kind === "assistant-step") {
+				var text = reasoningText(last);
+				if (text) {
+					var clipped = text.length > 60 ? text.slice(0, 60) + "…" : text;
+					return _T("runningThink") + clipped;
+				}
+			}
+			// 兜底：退回"运行了 N 条命令"
+			var fallback = _T("headerPrefix") + " " + group.toolCount + " " + _T("headerSuffix");
+			if (group.failures > 0) fallback += "——" + group.failures + _T("failureSuffix");
+			return fallback;
+		}
+		/** 段级分组渲染：tool-call 或 think 节点都通过此函数渲染段组头 + 折叠内容。 */
+		function renderSegment(props, group, open, sessionId, nodes, content) {
 			if (!group.isLeader) {
-				return open ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinToolCall(props)) : hiddenMarker();
+				return open ? react.createElement("div", { className: "ccg-member-in" }, content) : hiddenMarker();
 			}
 			var toggle = function () {
 				setGroupOpen(sessionId, group.leaderKey, !open);
 			};
-			// 组内有失败命令时：标题标红，并在"运行了 N 条命令"后追加失败数。
-			var label = _T("headerPrefix") + " " + group.count + " " + _T("headerSuffix");
-			if (group.failures > 0) {
-				label += "——" + group.failures + _T("failureSuffix");
-			}
+			var label = segmentLabel(group, nodes);
+			var danger = group.failures > 0;
 			return react.createElement(
 				"div",
-				{ className: "ccg-group-root", "data-ccg-count": String(group.count), "data-ccg-open": open ? "true" : undefined },
+				{ className: "ccg-group-root", "data-ccg-count": String(group.toolCount), "data-ccg-open": open ? "true" : undefined },
 				react.createElement(
 					GroupHeader,
-					{ count: group.count, open: open, onToggle: toggle, label: label, danger: group.failures > 0, isTurn: false }
+					{ count: group.toolCount, open: open, onToggle: toggle, label: label, danger: danger, isTurn: false }
 				),
-				react.createElement(FoldClip, { open: open }, renderBuiltinToolCall(props))
+				react.createElement(FoldClip, { open: open }, content)
 			);
 		}
 
@@ -1019,7 +1134,7 @@ window.__ModuleLoader__.load({
 				var turnOpen = turnOverride === null ? !closed : turnOverride;
 				if (!fold.isTurnHeader) {
 					// 成员：大组头展开时显示自己的段级内容；收起时隐藏（整行 display:none）。
-					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderSegment(props, group, open, sessionId)) : hiddenMarker();
+					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderSegment(props, group, open, sessionId, nodes, renderBuiltinToolCall(props))) : hiddenMarker();
 				}
 				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签，无数据则退回
 				// "运行了 N 条命令"）；组头下方常驻分隔线（收起/展开都显示），其下接自己的段级内容。
@@ -1036,12 +1151,12 @@ window.__ModuleLoader__.load({
 						{ label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed }
 					),
 					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
-					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderSegment(props, group, open, sessionId))
+					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderSegment(props, group, open, sessionId, nodes, renderBuiltinToolCall(props)))
 				);
 			}
 
-			// 未整回合折叠：现有段级分组逻辑。
-			return renderSegment(props, group, open, sessionId);
+			// 未整回合折叠：段级分组逻辑。
+			return renderSegment(props, group, open, sessionId, nodes, renderBuiltinToolCall(props));
 		}
 
 		// ---- 助手节点（Think / 最终消息）：整回合折叠支持 ----
@@ -1066,6 +1181,10 @@ window.__ModuleLoader__.load({
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
+			// 纯 think 节点也参与段级分组（段 = 两个 text 之间的 tool-call + think）。
+			var segGroup = useMemo(function () { return computeGroup(order, nodes, node); }, [order, nodes, node]);
+			var segManual = useGroupOverride(sessionId, segGroup ? segGroup.leaderKey : "");
+			var segOpen = segManual === null ? !(segGroup && segGroup.autoCollapsed) : segManual;
 
 			// 无法安全定位组头（回合内无任何中间节点）/ 节点在折叠作用域之外（用户消息上方）：
 			// 原样委托内置渲染。不要求本回合必须有工具调用——仅上下文注入/思考的回合同样折叠。
@@ -1082,8 +1201,31 @@ window.__ModuleLoader__.load({
 					renderBuiltinAssistant(props)
 				);
 			}
+			// 纯 think 节点：收进段级折叠（段 = 两个 text 之间的内容，think 与工具混排一段）。
+			if (isThinkNode(node) && segGroup) {
+				var segContent = renderBuiltinAssistant(props);
+				if (fold.isTurnHeader) {
+					// think 是回合第一条中间节点：同时是 turn 组头和段 leader——大组头下方接段级折叠行。
+					var toggleTurn2 = function () {
+						setTurnOpen(sessionId, fold.turn, !turnOpen);
+					};
+					var baseLabel2 = turnHeaderLabel(displayMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+					var turnLabel2 = closed ? turnLabelWithStatus(baseLabel2, fold.turnStatus) : baseLabel2;
+					return react.createElement(
+						"div",
+						{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
+						react.createElement(GroupHeader, { label: turnLabel2, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn2, isTurn: true, live: !closed }),
+						react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
+						react.createElement(FoldClip, { open: turnOpen, live: !closed },
+							renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent)
+						)
+					);
+				}
+				if (!turnOpen) return hiddenMarker();
+				return renderSegment(props, segGroup, segOpen, sessionId, nodes, segContent);
+			}
 			if (!fold.isTurnHeader) {
-				// 中间 Think 节点：大组头展开时显示自己的 Think 行；收起时隐藏。
+				// 中间 Think 节点（含 text 的普通消息）：大组头展开时显示；收起时隐藏。
 				return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinAssistant(props)) : hiddenMarker();
 			}
 			// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；组头下方常驻

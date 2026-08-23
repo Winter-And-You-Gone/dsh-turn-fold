@@ -163,14 +163,28 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
     assert.equal(c.hidden, 7, '4 个工具 + 3 个中间 Think 共 7 个成员应带隐藏标记')
   })
 
-  it('点击大组头展开：工具卡片与中间 Think 全部可见', () => {
+  it('点击大组头展开：段级组头行可见（工具卡片仍默认折叠）', () => {
     clickHeader()
     const c = counts()
-    assert.equal(c.cards, 4, '4 个工具卡片应可见')
+    assert.equal(c.cards, 0, '段级折叠默认收起，工具卡片不可见')
     // 可见的 assistant：组头自身内容(as-1) + 中间成员(as-2..4) + 最终总结(as-5) = 5
     assert.equal(c.assistants, 5, '中间 Think + 组头内容 + 最终总结应可见')
     assert.equal(c.hidden, 0)
     assert.ok(container.querySelector('.ccg-group-root[data-ccg-open="true"]'), '组根应标记展开')
+    // 4 个段级组头行（每个 text 之间一条命令）
+    const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
+    assert.equal(segHeaders.length, 4, '应有 4 个段级组头（tc-revert/check/restore/verify 各一段）')
+    for (const h of segHeaders) {
+      assert.ok(h.textContent.includes('运行了 1 条命令'), '段组头标题应为"运行了 1 条命令"')
+    }
+  })
+
+  it('展开段级组头后工具卡片可见（手动展开覆盖默认折叠）', () => {
+    clickHeader()
+    const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
+    assert.ok(segHeader)
+    act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    assert.equal(counts().cards, 1, '展开该段后其工具卡片可见')
   })
 
   it('再次点击收起：成员全部重新隐藏（回归 Bug2 场景）', () => {
@@ -186,10 +200,14 @@ describe('GroupedToolCallView / GroupedAssistantView 渲染交互（TURN13 真�
 
   it('Bug2 回归：委托渲染内置工具卡片时透传 useHostDescription（不再崩溃/abdicate）', () => {
     clickHeader()
-    assert.ok(lastToolCallProps, '展开时应渲染内置工具卡片')
+    // 先展开一个段级组头，让工具卡片实际挂载
+    const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
+    assert.ok(segHeader)
+    act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    assert.ok(lastToolCallProps, '展开段级折叠后应渲染内置工具卡片')
     assert.equal(typeof lastToolCallProps.useHostDescription, 'function', 'useHostDescription 必须注入并透传')
     const cards = container.querySelectorAll('.mock-tool-card')
-    assert.equal(cards.length, 4)
+    assert.equal(cards.length, 1, '只展开了一段 → 1 张工具卡片')
     for (const card of cards) {
       assert.equal(card.dataset.home, 'C:/Users/Test', '内置组件应能通过 useHostDescription 读到 host home')
     }
@@ -229,14 +247,19 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     Date.now = realDateNow
   })
 
-  it('回复开始即渲染大组头：组头 + 分隔线 + 内容全部可见（默认展开）', () => {
+  it('回复开始即渲染大组头：组头 + 分隔线 + 段级组头（默认折叠），流式 text 可见', () => {
     const c = counts()
-    assert.equal(c.headers, 1, '运行中应恰好一个大组头')
+    assert.equal(c.headers, 2, '运行中应恰好一个回合大组头 + 一个段级组头行')
     assert.ok(container.querySelector('.ccg-turn-divider'), '大组头与内容之间应有分隔线')
     assert.ok(container.querySelector('.ccg-group-root[data-ccg-turn][data-ccg-open="true"]'), '运行中默认展开')
-    assert.equal(c.cards, 1, '运行中的工具调用应可见（回复逐条加载）')
-    assert.equal(c.assistants, 2, '组头自身内容(as-run-1) + 流式消息(as-run-2) 应可见')
-    assert.equal(c.hidden, 0)
+    // 段级折叠默认收起：工具卡片隐藏，段组头行可见
+    assert.equal(c.cards, 0, '段级折叠默认收起，工具卡片应隐藏')
+    const segHeaders = [...container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')]
+    assert.equal(segHeaders.length, 1, '应有一个段级组头（tc-run 单独一段）')
+    assert.ok(segHeaders[0].textContent.includes('运行了 1 条命令'), '段组头标题应为"运行了 1 条命令"（段后有 text 已闭合）')
+    // 大组头自身内容（as-run-1） + 流式 text（as-run-2）应可见
+    assert.equal(c.assistants, 2, '大组头自身内容 + 流式 text 应可见')
+    assert.equal(c.hidden, 0, '段内无非 leader 成员，无 hidden 标记')
   })
 
   it('大组头文案实时显示耗时/token（token 累计确定，耗时随秒表走动）', () => {
@@ -255,16 +278,25 @@ describe('运行中的回合：大组头从回复开始出现 + 实时指标 + �
     clickHeader()
     let c = counts()
     assert.equal(c.headers, 1)
-    assert.equal(c.cards, 0, '收起后工具调用隐藏')
+    assert.equal(c.cards, 0, '收起后工具调用隐藏（段折叠本来就隐藏）')
     assert.equal(c.assistants, 0, '收起后组头内容与流式消息都隐藏')
     assert.equal(c.hidden, 2, '成员 as-run-2 / tc-run 带隐藏标记')
     assert.ok(container.querySelector('.ccg-turn-divider'), '收起后分隔线仍常驻显示')
     clickHeader()
     c = counts()
     assert.ok(container.querySelector('.ccg-turn-divider'), '展开后分隔线仍在')
-    assert.equal(c.cards, 1)
+    assert.equal(c.cards, 0, '展开后段级折叠仍默认收起')
     assert.equal(c.assistants, 2)
     assert.equal(c.hidden, 0)
+  })
+
+  it('点击段级组头展开：工具卡片可见；再点收起', () => {
+    const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
+    assert.ok(segHeader, '段级组头应存在')
+    act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    assert.equal(counts().cards, 1, '展开段级折叠后工具卡片可见')
+    act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    assert.equal(counts().cards, 0, '再点收起后工具卡片隐藏')
   })
 })
 

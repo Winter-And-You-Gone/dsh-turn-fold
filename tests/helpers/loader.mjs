@@ -19,6 +19,8 @@ const TEST_EXPORTS = [
   'projectLiveTokens',
   'turnDisplayMetrics',
   'turnHeaderLabel',
+  'segmentLabel',
+  'summarizeArgs',
   'formatTurnDuration',
   'formatTokPerSec',
   'turnNumber',

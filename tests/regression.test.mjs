@@ -171,7 +171,7 @@ describe('回归 v0.2.2：折叠作用域不越过用户消息', () => {
 })
 
 describe('段级分组：手动展开/收起', () => {
-  it('连续工具调用组：运行中渲染大组头 + 段级组头；段级组头展开/收起成员，大组头收起整回合', () => {
+  it('连续工具调用组：运行中渲染大组头 + 段级组头（默认折叠）；段级组头展开/收起成员，大组头收起整回合', () => {
     T.turnOverrides.clear()
     T.overrides.clear()
     const nodes = [
@@ -183,7 +183,7 @@ describe('段级分组：手动展开/收起', () => {
       asNode('as2', 400),
       asNode('final', 500),
     ]
-    // 回合进行中（turnEnds 为空）→ 大组头从回复开始出现（默认展开），段级组头在其下方
+    // 回合进行中（turnEnds 为空）→ 大组头从回复开始出现（默认展开），段级组头默认折叠
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     try {
       mount(s)
@@ -191,7 +191,8 @@ describe('段级分组：手动展开/收起', () => {
       assert.ok(turnHeader, '运行中应渲染大组头')
       const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
       assert.ok(segHeader, '段级组头应作为独立 flowItem 渲染在大组头下方')
-      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '组内两个非 leader 成员隐藏')
+      assert.ok(segHeader.textContent.includes('运行了 3 条命令'), '段组头标题应为"运行了 3 条命令"（段后有 text 已闭合）')
+      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '组内两个非 leader 成员隐藏（段默认折叠）')
       // 点击段级组头展开
       act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
       assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 0, '展开后成员可见')
@@ -213,7 +214,7 @@ describe('段级分组：手动展开/收起', () => {
     }
   })
 
-  it('单条命令不套段级组头（count=1 原样渲染）', () => {
+  it('单条命令运行中也套段级组头（不再原样渲染）', () => {
     T.turnOverrides.clear()
     T.overrides.clear()
     const nodes = [
@@ -223,11 +224,19 @@ describe('段级分组：手动展开/收起', () => {
       asNode('as2', 400),
       asNode('final', 500),
     ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
+    // 运行中：段级组头出现
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
     mount(s)
-    // 回合折叠状态：无段级组头（成员全部收进大组头）
     const segHeaders = [...container.querySelectorAll('.ccg-header')].filter((h) => !h.closest('[data-ccg-turn]'))
-    assert.equal(segHeaders.length, 0)
+    assert.equal(segHeaders.length, 1, '运行中单条工具调用应套段级组头')
+    assert.ok(segHeaders[0].textContent.includes('运行了 1 条命令'), '段组头标题应为"运行了 1 条命令"')
+    act(() => root.unmount())
+    document.body.innerHTML = ''
+    // 回合结束后：大组头收起，段级组头随大组头隐藏
+    const s2 = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
+    mount(s2)
+    const segHeaders2 = [...container.querySelectorAll('.ccg-header')].filter((h) => !h.closest('[data-ccg-turn]'))
+    assert.equal(segHeaders2.length, 0, '回合结束后段级组头随大组头隐藏')
     act(() => root.unmount())
     document.body.innerHTML = ''
     T.turnOverrides.clear()
@@ -241,9 +250,11 @@ describe('真实会话数据（TURN13）全量折叠', () => {
     assert.equal(c.cards, 0)
     assert.equal(c.assistants, 1)
     assert.equal(c.hidden, 7)
-    // 展开后全部可见
+    // 展开大组头后：段级组头行可见，工具卡片仍默认折叠
     clickHeader()
-    assert.equal(counts().cards, 4)
-    assert.equal(counts().hidden, 0)
+    const expanded = counts()
+    assert.equal(expanded.cards, 0, '段级折叠默认收起，工具卡片不可见')
+    assert.equal(expanded.hidden, 0)
+    assert.equal(container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header').length, 4, '4 个段级组头（每个 text 之间一条命令）')
   }))
 })
