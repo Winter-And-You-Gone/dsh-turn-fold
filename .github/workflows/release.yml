@@ -27,6 +27,14 @@ jobs:
       - run: npm test
       - run: npm pack --dry-run
       - run: npm publish
+      # 包名更名后，已安装旧包的用户其更新仍走旧包名，因此同一份源码
+      # 还要以 dsh-turn-fold 再发布一次（脚本就地替换 package.json /
+      # cordis.patch.yml 的包名，紧接着 npm publish；旧包名与主包名都需
+      # 在 npmjs.com 配置好指向本工作流的 Trusted Publishing）。
+      - name: Publish legacy package name
+        run: |
+          node scripts/publish-legacy.mjs
+          npm publish
 
   github-release:
     needs: publish

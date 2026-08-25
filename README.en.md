@@ -7,10 +7,11 @@
 > Then this plugin is made for you.
 
 A **pure plugin** for DeepSeek Harness (DSH) that only handles **collapsing**:
-1. **Segment-level auto-collapse**: all tool calls and Think blocks between two text messages are grouped into **one segment-level group header**, **collapsed by default**; while running, the header dynamically shows "Running `icon ToolName` · description" or "Thinking `icon Think` · content" (text with a shimmer gloss animation), switching to a tool-type-grouped detailed title (e.g. "Ran pwsh", "Read client.js", "Edited index.js [ +12 -3 ]") once the next text message appears.
-2. **Live big header**: appears **immediately when you send a message** (0-second placeholder, no waiting for the first response); the header shows duration / TTFT / tokens / tok/s / cache-hit rate in real time, with "Turn N" right-aligned on the far right, separated from the content by a divider line.
-3. **Whole-turn collapse**: after a reply finishes, all Think blocks + tool calls + context injections of that turn collapse into **one big group header** (collapsed by default); only the final summary text stays visible.
-4. **Manual expand/collapse**: click a group header to toggle.
+1. **Segment-level auto-collapse**: all tool calls and Think blocks between two text messages are grouped into **one step fold bar**, **collapsed by default**; while running, the header dynamically shows "Running `icon ToolName` · description" or "Thinking `icon Think` · content" (text with a shimmer gloss animation), switching to a tool-type-grouped detailed title (e.g. "Ran pwsh", "Read client.js", "Edited index.js [ +12 -3 ]") once the next text message appears.
+2. **Live turn fold bar**: appears **immediately when you send a message** (0-second placeholder, no waiting for the first response); the header shows duration / TTFT / tokens / tok/s / cache-hit rate in real time, with "Turn N" right-aligned on the far right, separated from the content by a divider line.
+3. **Whole-turn collapse**: after a reply finishes, all Think blocks + tool calls + context injections of that turn collapse into **a turn fold bar** (collapsed by default); only the final summary text stays visible.
+4. **Manual expand/collapse**: click a fold bar to toggle.
+5. **Per-version "What's new" notice**: shows the release notes once, right after each new version is first loaded (read-version is stored locally, so it never nags again).
 
 **Does not modify any `@deepseek-ai/dsh-*` source code.**
 
@@ -27,16 +28,16 @@ text: …                                               ← next text message
 └────────────────────────────────────────────────────┘
 ```
 
-- **Segment = content between two text messages**: consecutive tool calls and Think blocks mix into one segment (Think no longer breaks the group); text-carrying assistant messages are the segment boundaries, and **the text body always renders directly below the segment header** (official rendering, a single copy, not folded — DSH stores think and text blocks in the same node, so the think part folds into the segment while the text part stays outside).
-- **Always collapsed by default**: segment-level headers are **always collapsed by default** (even while running) — while running, only text messages and segment header rows are visible; tool cards and Think content appear only when clicking the segment header.
+- **Segment = content between two text messages**: consecutive tool calls and Think blocks mix into one segment (Think no longer breaks the group); text-carrying assistant messages are the segment boundaries, and **the text body always renders directly below the step fold bar** (official rendering, a single copy, not folded — DSH stores think and text blocks in the same node, so the think part folds into the segment while the text part stays outside).
+- **Always collapsed by default**: step fold bars are **always collapsed by default** (even while running) — while running, only text messages and step fold bar rows are visible; tool cards and Think content appear only when clicking the step fold bar.
 - **Dynamic title while running**: before the next text message appears (segment not closed), the header shows the last node in the segment — tool calls show "Running `icon ToolName` · parameter summary" (tool icons reuse the official VARIANT_ICONS mapping, e.g. Pwsh → API icon, Read → browse icon, Grep → search icon), Think blocks show "Thinking `icon` Think · latest line" (prefix + official Think icon + summary, taking the latest line and scrolling horizontally to follow the tail, advancing with streaming); the running title text has a **shimmer gloss animation** (gray-tone gradient, 1.8s sweep + 2s dwell, per-theme colors).
 - **Closed segment title (grouped by tool type)**: once the next text message appears, the header groups tools by type — commands only: `Ran pwsh` (single, tool name) / `Ran 3 commands` (multiple, count); reads only: `Read client.js` (one file, name) / `Read 2 files` (multiple, count); edits only: `Edited index.js [ +12 -3 ]` (single file with line changes read from official diffs) / `Edited 3 files`; searches: `Searched 2 times`; mixed groups order as "read → edit → search → commands" with **commands always last**, e.g. `Read client.js Edited App.tsx Ran 2 commands`; a Think-only segment shows "Think" when closed.
-- **Manual expand/collapse**: click a segment header to toggle; manual choices override the auto rule.
-- **Failed commands turn red**: when a command in the group **failed** (tool result `isError`, interrupted counts too), the group header text turns red and a failure suffix is appended — a single tool call failing shows " — failed" (no count); with multiple tool calls even 1 failure shows " — 1 failed", 2+ show " — y failed". The failure count covers **all** tool types in the segment (read/edit/search/commands).
+- **Manual expand/collapse**: click a step fold bar to toggle; manual choices override the auto rule.
+- **Failed commands turn red**: when a command in the group **failed** (tool result `isError`, interrupted counts too), the fold bar text turns red and a failure suffix is appended — a single tool call failing shows " — failed" (no count); with multiple tool calls even 1 failure shows " — 1 failed", 2+ show " — y failed". The failure count covers **all** tool types in the segment (read/edit/search/commands).
 
 ### Screenshots
 
-Before/after collapse (left: all tool calls expanded, listed one by one; right: auto-collapsed into segment-level group headers after the next text message):
+Before/after collapse (left: all tool calls expanded, listed one by one; right: auto-collapsed into step fold bars after the next text message):
 
 <table>
   <tr>
@@ -49,50 +50,50 @@ Before/after collapse (left: all tool calls expanded, listed one by one; right: 
   </tr>
 </table>
 
-## Feature 2: Live big header + collapse the whole turn into one big header
+## Feature 2: Live turn fold bar + collapse the whole turn into a turn fold bar
 
 ```
 [User message]
-[▸ 5m12s · TTFT 1.2s · 12345 tokens · 34 tok/s · 80.00% cache hit        Turn 13]  ← big header, appears at reply start
+[▸ 5m12s · TTFT 1.2s · 12345 tokens · 34 tok/s · 80.00% cache hit        Turn 13]  ← turn fold bar, appears at reply start
 ─────────────────────────────────────────────      ← divider line
 [Think / tool calls loading one by one…]            ← expanded by default while running
 [Final summary body]                                ← no Think lines, only body
 [duration · token footer]                           ← official turn-tail
 ```
 
-- **The big header appears the moment you send a message (0-second placeholder)**: a `user`-renderer override renders a placeholder big header (duration counting from the running turn's startTime) while the session is running and the user message is still the last item; once the first intermediate node arrives, the placeholder hands over to the real header in the same visual position;
+- **the turn fold bar appears the moment you send a message (0-second placeholder)**: a `user`-renderer override renders a placeholder turn fold bar (duration counting from the running turn's startTime) while the session is running and the user message is still the last item; once the first intermediate node arrives, the placeholder hands over to the real header in the same visual position;
 - **Metrics update in real time**: **the duration seconds tick every second** (timed from the turn's `turn/start`), **"tokens consumed" refreshes at a randomized interval (125–250ms by default) and keeps growing**, tok/s is estimated live from output tokens / elapsed time, **the cache-hit rate shows two decimal places** (e.g. `80.00%`), and **TTFT** shows the official value as soon as the first request settles (`assistant-step` `finalNode.timing`: `firstTokenTime - stepStartTime`), switching to the official persisted aggregate once the turn ends (the `ttftMs` carried by the turn-tail node, derived from the event log, survives page reloads); only while the first request is still streaming does it fall back to a render-time approximation (turn start → render of the first assistant-step); once the turn ends, everything switches to the official authoritative values (turn-tail tok/s, exact `turn/end` duration);
 - **"Turn N" right-aligned on the header row** (e.g. `Turn 13`, following the DSH UI language);
 - **"Tokens consumed" grows with a continuous animation**: real `usage` only arrives when a request completes, so between two arrivals the number would stall — while running, a purely cosmetic animation offset is added on top of the real baseline, advancing per actual tick in an alternating **+1 / +11** loop (ones digit +1 per tick, tens digit +1 every 2 ticks, higher digits follow via carry); each tick interval is `liveTickMs` × a random factor (`liveTickJitter`…1, 125–250ms by default), so the digits jump at an irregular pace, more like a real generation rate than a metronome; when new usage arrives only the baseline snaps to the real value — the offset keeps accumulating, so the number never steps back. The base interval and the jitter are tunable via `CONFIG.liveTickMs` and `CONFIG.liveTickJitter`;
 - **Odometer-style digit animation**: while the turn is running, each digit of the changing numbers rolls to its new value independently (odometer/slot-wheel effect with springy easing; the roll duration adapts to change frequency — fast-changing digits like the token ones digit use a short roll slightly shorter than the refresh interval so every tick completes cleanly, slow ones like the duration seconds keep the 350ms springy roll) — every digit is its own 1ch-wide window with a vertical 0-9 strip, like a counting drum; a visually hidden sr-only copy keeps the full label readable for screen readers, and the animation degrades to static digits when the system prefers reduced motion;
-- **Divider always below the header**: a 1px horizontal line always sits below the big header text (`.ccg-turn-divider`, colored with the official `--dsw-alias-line-secondary` token, adapting to light/dark themes) — **visible in both collapsed and expanded states**, acting as the visual boundary between the header and the content when expanded;
-- After a turn **finishes** (final summary output, turn end), the big header auto-collapses: all Think blocks, tool calls and context injections of that turn
-  collapse into **one big group header**, keeping only the final summary message and the official duration/token footer visible (turns the user expanded manually stay expanded);
-- **The big header shows this turn's metrics**: `duration (xh xm xs, or just m s under 1 hour, or just s under 1 minute), TTFT x.xs, N tokens, N tok/s, cache hit NN.NN%`; missing items are omitted automatically, and only when all are missing does it fall back to "Ran N commands"; fields are joined with ` · `, with "Turn N" on the right;
-- Click the big header to expand/collapse the whole turn; when reopening a historical session, completed turns stay collapsed as well;
-- **The fold never crosses the user message**: the big header only folds content between the user message and the agent's reply.
+- **Divider always below the header**: a 1px horizontal line always sits below the turn fold bar text (`.ccg-turn-divider`, colored with the official `--dsw-alias-line-secondary` token, adapting to light/dark themes) — **visible in both collapsed and expanded states**, acting as the visual boundary between the header and the content when expanded;
+- After a turn **finishes** (final summary output, turn end), the turn fold bar auto-collapses: all Think blocks, tool calls and context injections of that turn
+  collapse into **a turn fold bar**, keeping only the final summary message and the official duration/token footer visible (turns the user expanded manually stay expanded);
+- **the turn fold bar shows this turn's metrics**: `duration (xh xm xs, or just m s under 1 hour, or just s under 1 minute), TTFT x.xs, N tokens, N tok/s, cache hit NN.NN%`; missing items are omitted automatically, and only when all are missing does it fall back to "Ran N commands"; fields are joined with ` · `, with "Turn N" on the right;
+- Click the turn fold bar to expand/collapse the whole turn; when reopening a historical session, completed turns stay collapsed as well;
+- **The fold never crosses the user message**: the turn fold bar only folds content between the user message and the agent's reply.
   Context rows anchored **above** the user message (e.g. approval-policy change notices) are not part of this turn's output
   interval: they stay visible as-is, never participate in the fold, and are never used as the header anchor — so the big
   header can never fold content sitting above the user message;
 - **Final summary shows only body**: after the turn ends, Think lines inside the final summary message are hidden too;
-- **Status labels**: turns that ended abnormally (user-stopped / interrupted) get a status prefix on the big header,
+- **Status labels**: turns that ended abnormally (user-stopped / interrupted) get a status prefix on the turn fold bar,
   e.g. `Stopped | 5m 12s, ...`; normally completed turns show no extra label;
-- **Single items are grouped too**: when there is only **1** command (or 1 Think block) between two text messages, a segment-level header is still applied — "Running `icon ToolName` · …" while running, "Ran pwsh" once text appears; at turn end it is folded into the big header, and the segment header row is visible after expanding the big header.
+- **Single items are grouped too**: when there is only **1** command (or 1 Think block) between two text messages, a step fold bar is still applied — "Running `icon ToolName` · …" while running, "Ran pwsh" once text appears; at turn end it is folded into the turn fold bar, and the step fold bar row is visible after expanding the turn fold bar.
 
 ### Screenshots
 
-After the turn ends, the whole turn collapses into one big header with metrics, keeping only the final summary body:
+After the turn ends, the whole turn collapses into a turn fold bar with metrics, keeping only the final summary body:
 
 ![Turn-end collapse](docs/images/turn-collapsed.png)
 
 ## Component styles & spacing
 
 - **Group header = official style**: the header reuses the official `DisclosureRow` primitive (`@deepseek-ai/dsh-client-ui-primitives`) — 24px row height, 16px leading, official 14px chevron (right when collapsed / down when expanded), 14px/24px title, pixel-identical to the Think / tool-card collapse rows;
-- **Big header divider**: a 1px horizontal divider line (`.ccg-turn-divider`, colored with the official `--dsw-alias-line-secondary` token) always renders below the big header text — visible in both collapsed and expanded states, with 4px / 8px spacing above and below;
+- **turn fold bar divider**: a 1px horizontal divider line (`.ccg-turn-divider`, colored with the official `--dsw-alias-line-secondary` token) always renders below the turn fold bar text — visible in both collapsed and expanded states, with 4px / 8px spacing above and below;
 - **Compact spacing**: a collapsed group takes one row (24px); folded member nodes are `display:none` entirely, leaving no residual blank rows, so spacing matches official messages exactly (column's 16px rhythm) no matter how much is collapsed.
 - **Transition animations**: expanding smoothly grows the content from 0 to its real height (grid-track `0fr→1fr` transition + fade-in, 280ms; the start frame is committed synchronously via `useLayoutEffect` so the transition always plays); collapsing plays a shrink transition (280ms) before unmounting; animations are disabled automatically when the system prefers reduced motion. During a running turn, the content stays in "live mode" (height auto, no clipping of growing streaming content).
 - **Running-title shimmer**: the text of running segment titles ("Running…" / "Thinking…") has a shimmer gloss animation — gradient background + `background-clip: text` + background-position animation, one unified gradient flowing across the whole row (1.8s sweep + 2s dwell); dark/light themes have their own palette, icons are unaffected.
-- **Odometer digits**: while running, the big header's numbers (duration/TTFT/tokens/tok/s/cache-hit) are split into 1ch-wide rolling windows per digit, rolling to new values on change (350ms springy easing); after the turn ends the label falls back to plain text.
+- **Odometer digits**: while running, the turn fold bar's numbers (duration/TTFT/tokens/tok/s/cache-hit) are split into 1ch-wide rolling windows per digit, rolling to new values on change (350ms springy easing); after the turn ends the label falls back to plain text.
 - **Localization**: UI text **follows the DSH UI language live** (reads `document.documentElement.lang`, Simplified Chinese or English); the browser language is only a fallback.
 - **Accessibility**: headers expose `aria-label` / `aria-expanded` and are keyboard-operable (Enter / Space to toggle).
 
@@ -100,11 +101,12 @@ After the turn ends, the whole turn collapses into one big header with metrics, 
 
 ### Option 1 (recommended): install from npm
 
-This plugin is published on the npm registry: [dsh-turn-fold](https://www.npmjs.com/package/dsh-turn-fold)
+This plugin is published on the npm registry: [@winteries/dsh-turn-fold](https://www.npmjs.com/package/@winteries/dsh-turn-fold)
+(The legacy package name `dsh-turn-fold` keeps receiving synchronized releases so existing installs can keep updating; **new installs should use `@winteries/dsh-turn-fold`**.)
 
 ```sh
 # Official command (recommended)
-dsh plugin --profile web add dsh-turn-fold
+dsh plugin --profile web add @winteries/dsh-turn-fold
 
 # Or install from the GitHub source
 dsh plugin --profile web add github:Winter-And-You-Gone/dsh-turn-fold
@@ -114,7 +116,7 @@ dsh plugin --profile web add github:Winter-And-You-Gone/dsh-turn-fold
 (`dsh.profile.bundles`) automatically — no manual file edits. To verify:
 
 ```sh
-dsh --profile web --dump-config    # confirm a "dsh-turn-fold" layer appears in the output
+dsh --profile web --dump-config    # confirm a "@winteries/dsh-turn-fold" layer appears in the output
 ```
 
 Then **fully exit the DSH process and restart**.
@@ -129,7 +131,7 @@ Then **fully exit the DSH process and restart**.
 ```
 
 The script will:
-1. Create a **Junction** at `~/.dsh/profiles/node_modules/dsh-turn-fold` pointing to the plugin directory;
+1. Create a **Junction** at `~/.dsh/profiles/node_modules/@winteries/dsh-turn-fold` pointing to the plugin directory;
 2. Append a `- insert:` registration line to `~/.dsh/profiles/web/cordis.patch.yml`;
 3. Verify `require.resolve` resolves.
 
@@ -139,13 +141,13 @@ Then **fully exit the DSH process and restart**.
 
 ```sh
 # Official way: removes both the dependency and the plugin layer
-dsh plugin --profile web remove dsh-turn-fold
+dsh plugin --profile web remove @winteries/dsh-turn-fold
 ```
 
 Manual way (when previously installed via `install.ps1`):
 
 ```powershell
-Remove-Item "$env:DSH_HOME\profiles\node_modules\dsh-turn-fold" -Force   # remove the Junction
+Remove-Item "$env:DSH_HOME\profiles\node_modules\@winteries\dsh-turn-fold" -Force   # remove the Junction
 # Manually remove the corresponding insert block from cordis.patch.yml
 ```
 
@@ -163,7 +165,7 @@ injection + `__test` export, no copy-paste drift) and is layered in four parts:
 | File | Coverage |
 | --- | --- |
 | `unit.logic.test.mjs` | Pure functions: `computeGroup` segment grouping, `computeTurnFold` whole-turn fold, `computeTurnMetrics` / `turnHeaderLabel` metrics label, `turnNumber`; includes every historical verify-fix scenario plus real session data (TURN13) |
-| `unit.render.test.mjs` | React rendering: initial collapse → click big header to expand → collapse again; `useHostDescription` kit-hook passthrough during builtin delegated rendering; slot registration contract (inject declaration) |
+| `unit.render.test.mjs` | React rendering: initial collapse → click turn fold bar to expand → collapse again; `useHostDescription` kit-hook passthrough during builtin delegated rendering; slot registration contract (inject declaration) |
 | `unit.css.test.mjs` | CSS `:has()` hiding rules take effect on a real DOM (including the expand → collapse round trip) |
 | `regression.test.mjs` | Historical bug regressions: node-object replacement (Bug1), missing inject crash/abdicate (Bug2), no-tool-call turns also fold (v0.2.3), fold scope never crosses the user message (v0.2.2), manual segment expand/collapse |
 
@@ -181,7 +183,7 @@ long-lived token) and creates a GitHub Release.
 **One-time setup** (bind the npm package to this repository's release workflow):
 
 ```sh
-npx npm@^11.15.0 trust github dsh-turn-fold \
+npx npm@^11.15.0 trust github @winteries/dsh-turn-fold \
   --repo Winter-And-You-Gone/dsh-turn-fold \
   --file release.yml \
   --allow-publish
@@ -205,8 +207,8 @@ git push --follow-tags
 - The DSH session UI is assembled from Cordis plugins + a Slot system; each block of the chat stream is dispatched to its renderer by type through `conversation.chat.node` (keyed slot).
 - The slot registry officially supports **overriding at different priorities** (`register at a different priority to shadow it, lowest renders`). This plugin uses `priority: -1` to shadow the built-in `tool-call` / `assistant-step` / `context` **and `user`** renderers.
 - When expanded, it uses `ctx.slots.entries('conversation.chat.node')` to grab the built-in component references for **delegated rendering**, so tool cards / Think lines / context injections keep exactly the built-in content and styles.
-- Whole-turn collapse determines turn completion via the session snapshot's `turnEnds` (driven by turn/end events), uses `chat.locations.getTurn()` to compute the header/members/final message, then hides member flowItems with CSS `:has()`. While a turn is running, `turnTimings` (the `turn/start` event provides `startTime`) marks it as started, so the big header appears immediately: duration ticks in real time via a clock running at a randomized interval (every `CONFIG.liveTickMs` × 0.5–1, 125–250ms by default, `Date.now()`), "tokens consumed" keeps growing through a per-tick +1/+11 alternating animation offset layered on the real value (the baseline snaps to real `usage` when it arrives), and all metrics switch to authoritative values after `turn/end`.
-- **0-second placeholder**: the `user` renderer override shows a placeholder big header while the session is running and the user message is still the last item (duration counted from the running turn's `startTime`); the first intermediate node hands over to the real header.
+- Whole-turn collapse determines turn completion via the session snapshot's `turnEnds` (driven by turn/end events), uses `chat.locations.getTurn()` to compute the header/members/final message, then hides member flowItems with CSS `:has()`. While a turn is running, `turnTimings` (the `turn/start` event provides `startTime`) marks it as started, so the turn fold bar appears immediately: duration ticks in real time via a clock running at a randomized interval (every `CONFIG.liveTickMs` × 0.5–1, 125–250ms by default, `Date.now()`), "tokens consumed" keeps growing through a per-tick +1/+11 alternating animation offset layered on the real value (the baseline snaps to real `usage` when it arrives), and all metrics switch to authoritative values after `turn/end`.
+- **0-second placeholder**: the `user` renderer override shows a placeholder turn fold bar while the session is running and the user message is still the last item (duration counted from the running turn's `startTime`); the first intermediate node hands over to the real header.
 - **TTFT three sources (official first)**: ① **the official value is readable as soon as a step settles** — the `assistant-step` node's `data.finalNode.timing` (written by DSH after the `assistant/message` event as `{ stepStartTime, firstTokenTime, completedTime }`), taking the lowest-step (first request) `firstTokenTime - stepStartTime` (same semantics as official `deriveTurnMetrics`); ② **after the turn ends** the turn-tail's aggregated `ttftMs` is preferred (same value, derived from the persisted event log, survives page reloads); ③ only when no step has settled yet (first request still streaming) does it fall back to a render-time approximation (`Date.now() - turnTimings.startTime`, error ≈ one frame of render latency, recorded idempotently once per turn).
 - **Closed-segment label cache**: closed-segment titles are memoized by `leaderKey + node keys + locale + tool fingerprint` (name/isError/argsRaw length, without parsing content) to avoid re-parsing argsRaw on every render; edit line changes prefer the official `call.diffs` data (`oldText`/`newText` block line counts), falling back to a single argsRaw parse (path + line counts extracted together).
 - **Session-switch cleanup**: `segmentLabelCache` (closed-segment label cache, one string per segment — can reach hundreds of KB in long sessions), `liveTokenCache` (1–2 entries per turn) and manual open state (`overrides` / `turnOverrides`) are cleared when switching sessions — manual state falls back to the auto rules (finished turns collapsed by default); `ttftCache` is kept (one number per turn, negligible size). Switching back to a session only reverts finished turns to their default collapsed state and recomputes segment titles once.
@@ -215,7 +217,7 @@ git push --follow-tags
 ## Notes
 
 - If a DSH upgrade changes the above slot contracts or built-in component props, this plugin may need small adjustments per version (that is plugin maintenance, not source modification).
-- The group header text is tunable in `CONFIG` at the top of `client.js`.
+- The fold bar text is tunable in `CONFIG` at the top of `client.js`.
 - **Coupling points checklist** (check these when upgrading DSH; any failure degrades gracefully — falls back to built-in rendering / label fallbacks plus a `console.warn`, never a blank screen):
   - Session snapshot fields: `s.chat.order / nodes / locations`, `locations.getTurn()`, `turnEnds`, `turnTimings`, `chat.timeline.turns` (segment/turn grouping, completion detection, duration and status labels);
   - Node data shapes: `tool-call` `data.root` (`call.name / argsRaw / diffs`), `assistant-step` `blocks` (reasoning / text) and `usage`, `turn-tail` `tokensPerSecond` (header labels, think summaries, token/cache-hit metrics);

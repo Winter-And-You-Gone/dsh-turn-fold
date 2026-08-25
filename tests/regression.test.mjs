@@ -3,7 +3,7 @@
 //  - Bug2（inject/useHostDescription）：注册契约 + 委托渲染不崩溃
 //  - 无工具调用回合也折叠（v0.2.3）
 //  - 折叠作用域不越过用户消息（v0.2.2 fix）
-//  - 段级分组手动展开/收起
+//  - 步骤分组手动展开/收起
 //  - 真实会话数据全量折叠断言
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -93,7 +93,7 @@ function mount(snapshot, sessionId = 's1') {
 }
 const clickHeader = () => {
   const el = container.querySelector('.ccg-header')
-  assert.ok(el, '大组头应存在')
+  assert.ok(el, '回合折叠栏应存在')
   act(() => { el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
 }
 const counts = () => ({
@@ -135,12 +135,12 @@ describe('回归 Bug1：store 节点对象替换（渲染级）', () => {
 })
 
 describe('回归 v0.2.3：无工具调用回合也折叠', () => {
-  it('仅 context + Think 的回合收成大组头', () => {
+  it('仅 context + Think 的回合收成回合折叠栏', () => {
     T.turnOverrides.clear()
     T.overrides.clear()
     mount(NO_TOOL)
     const c = counts()
-    assert.equal(c.headers, 1, '无工具调用回合也应渲染大组头')
+    assert.equal(c.headers, 1, '无工具调用回合也应渲染回合折叠栏')
     assert.equal(c.assistants, 1, '最终总结可见')
     assert.equal(c.hidden, 1, '中间的 Think 成员隐藏')
     act(() => root.unmount())
@@ -156,10 +156,10 @@ describe('回归 v0.2.2：折叠作用域不越过用户消息', () => {
     T.overrides.clear()
     mount(OUTSIDE_SCOPE)
     // ctx-approval 渲染为 mock-assistant（ContextMessageNodeView 的 mock 也是 AS 类）
-    // 它不应带 hidden 标记、也不应成为组头
+    // 它不应带 hidden 标记、也不应成为折叠栏
     const ctxEl = container.querySelector('[data-node="ctx-approval"]')
     assert.ok(ctxEl, '作用域外的上下文注入应渲染')
-    // 组头应为 as-o-1
+    // 折叠栏应为 as-o-1
     const header = container.querySelector('.ccg-header .ccg-title')
     assert.ok(header)
     assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 1, '仅中间 Think 成员隐藏')
@@ -170,8 +170,8 @@ describe('回归 v0.2.2：折叠作用域不越过用户消息', () => {
   })
 })
 
-describe('段级分组：手动展开/收起', () => {
-  it('连续工具调用组：运行中渲染大组头 + 段级组头（默认折叠）；段级组头展开/收起成员，大组头收起整回合', () => {
+describe('步骤分组：手动展开/收起', () => {
+  it('连续工具调用组：运行中渲染回合折叠栏 + 步骤折叠栏（默认折叠）；步骤折叠栏展开/收起成员，回合折叠栏收起整回合', () => {
     T.turnOverrides.clear()
     T.overrides.clear()
     // 段边界：纯 text 节点（无 reasoning 块）
@@ -185,28 +185,28 @@ describe('段级分组：手动展开/收起', () => {
       textNode('as2', 400, 'text'),
       textNode('final', 500, 'text'),
     ]
-    // 回合进行中（turnEnds 为空）→ 大组头从回复开始出现（默认展开），段级组头默认折叠
+    // 回合进行中（turnEnds 为空）→ 回合折叠栏从回复开始出现（默认展开），步骤折叠栏默认折叠
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     try {
       mount(s)
       const turnHeader = container.querySelector('.ccg-group-root[data-ccg-turn] > .ccg-header')
-      assert.ok(turnHeader, '运行中应渲染大组头')
+      assert.ok(turnHeader, '运行中应渲染回合折叠栏')
       const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
-      assert.ok(segHeader, '段级组头应作为独立 flowItem 渲染在大组头下方')
-      assert.ok(segHeader.textContent.includes('运行了3条命令'), '段组头标题应为"运行了3条命令"（段后有 text 已闭合）')
+      assert.ok(segHeader, '步骤折叠栏应作为独立 flowItem 渲染在回合折叠栏下方')
+      assert.ok(segHeader.textContent.includes('运行了3条命令'), '步骤折叠栏标题应为"运行了3条命令"（段后有 text 已闭合）')
       assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '组内两个非 leader 成员 flowItem 隐藏（内容由段 leader 统一渲染）')
-      // 点击段级组头展开
+      // 点击步骤折叠栏展开
       act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '展开后非 leader 成员 flowItem 仍隐藏（内容在段组头内）')
-      assert.equal(container.querySelectorAll('.mock-tool-card').length, 3, '3 个工具卡片在段组头内可见')
+      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '展开后非 leader 成员 flowItem 仍隐藏（内容在步骤折叠栏内）')
+      assert.equal(container.querySelectorAll('.mock-tool-card').length, 3, '3 个工具卡片在步骤折叠栏内可见')
       // 再点收起
       act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
       assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '收起后成员 flowItem 仍隐藏')
       assert.equal(container.querySelectorAll('.mock-tool-card').length, 0, '收起后工具卡片隐藏')
-      // 点击大组头收起整回合：段级组头随成员隐藏，只剩大组头
+      // 点击回合折叠栏收起整回合：步骤折叠栏随成员隐藏，只剩回合折叠栏
       act(() => { turnHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-      assert.equal(container.querySelectorAll('.ccg-header').length, 1, '只剩大组头')
-      assert.equal(container.querySelectorAll('.mock-assistant').length, 0, '大组头收起后中间 Think 隐藏')
+      assert.equal(container.querySelectorAll('.ccg-header').length, 1, '只剩回合折叠栏')
+      assert.equal(container.querySelectorAll('.mock-assistant').length, 0, '回合折叠栏收起后中间 Think 隐藏')
       assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 5, 'tc1/tc2/tc3/as2/final 全部带隐藏标记')
     } finally {
       act(() => root.unmount())
@@ -217,7 +217,7 @@ describe('段级分组：手动展开/收起', () => {
     }
   })
 
-  it('单条命令运行中也套段级组头（不再原样渲染）', () => {
+  it('单条命令运行中也套步骤折叠栏（不再原样渲染）', () => {
     T.turnOverrides.clear()
     T.overrides.clear()
     const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
@@ -228,19 +228,19 @@ describe('段级分组：手动展开/收起', () => {
       textNode('as2', 400, 'text'),
       textNode('final', 500, 'text'),
     ]
-    // 运行中：段级组头出现
+    // 运行中：步骤折叠栏出现
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     mount(s)
     const segHeaders = [...container.querySelectorAll('.ccg-header')].filter((h) => !h.closest('[data-ccg-turn]'))
-    assert.equal(segHeaders.length, 1, '运行中单条工具调用应套段级组头')
-    assert.ok(segHeaders[0].textContent.includes('运行了pwsh'), '段组头标题应为"运行了pwsh"（单次命令显示工具名）')
+    assert.equal(segHeaders.length, 1, '运行中单条工具调用应套步骤折叠栏')
+    assert.ok(segHeaders[0].textContent.includes('运行了Pwsh'), '步骤折叠栏标题应为"运行了Pwsh"（单次命令显示工具名）')
     act(() => root.unmount())
     document.body.innerHTML = ''
-    // 回合结束后：大组头收起，段级组头随大组头隐藏
+    // 回合结束后：回合折叠栏收起，步骤折叠栏随回合折叠栏隐藏
     const s2 = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
     mount(s2)
     const segHeaders2 = [...container.querySelectorAll('.ccg-header')].filter((h) => !h.closest('[data-ccg-turn]'))
-    assert.equal(segHeaders2.length, 0, '回合结束后段级组头随大组头隐藏')
+    assert.equal(segHeaders2.length, 0, '回合结束后步骤折叠栏随回合折叠栏隐藏')
     act(() => root.unmount())
     document.body.innerHTML = ''
     T.turnOverrides.clear()
@@ -249,21 +249,21 @@ describe('段级分组：手动展开/收起', () => {
 })
 
 describe('真实会话数据（TURN13）全量折叠', () => {
-  it('所有成员节点 foldable 且非组头/非最终 → 渲染层隐藏', withClean(() => {
+  it('所有成员节点 foldable 且非折叠栏/非最终 → 渲染层隐藏', withClean(() => {
     const c = counts()
     assert.equal(c.cards, 0)
     assert.equal(c.assistants, 1)
     assert.equal(c.hidden, 7)
-    // 展开大组头后：4 个工具段段组头行可见（as-1 纯 think 段直接官方渲染）、
+    // 展开回合折叠栏后：4 个工具段步骤折叠栏行可见（as-1 纯 think 段直接官方渲染）、
     // text 正文段外渲染，工具卡片仍默认折叠
     clickHeader()
     const expanded = counts()
-    assert.equal(expanded.cards, 0, '段级折叠始终默认收起，工具卡片不可见')
+    assert.equal(expanded.cards, 0, '步骤折叠始终默认收起，工具卡片不可见')
     assert.equal(expanded.assistants, 5, 'as-1 官方渲染 + as-2/3/4 text-only + final = 5')
     assert.equal(expanded.hidden, 3, 'as-2/3/4 非 leader 成员隐藏标记')
-    // 4 个工具段段组头（as-1 纯 think 段无段组头）
+    // 4 个工具段步骤折叠栏（as-1 纯 think 段无步骤折叠栏）
     const segHeaders = container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
-    assert.equal(segHeaders.length, 4, '4 个工具段段组头')
+    assert.equal(segHeaders.length, 4, '4 个工具段步骤折叠栏')
     // 3 个 text-only 段外正文（as-2/3/4）
     assert.equal(container.querySelectorAll('.ccg-text-only').length, 3)
   }))

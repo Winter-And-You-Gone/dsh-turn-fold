@@ -1,29 +1,29 @@
 // dsh-turn-fold: DeepSeek Harness 前端插件（纯插件，不改 DSH 源码）。只负责折叠。
 //
 // 行为：
-//   1. 段级分组自动折叠：两个 text 之间的所有工具调用和纯 Think 收成一个段级组头，
-//      默认折叠（运行中也不例外）。段未闭合（下一个 text 还没出现）时组头动态显示
+//   1. 步骤分组自动折叠：两个 text 之间的所有工具调用和纯 Think 收成一个步骤折叠栏，
+//      默认折叠（运行中也不例外）。段未闭合（下一个 text 还没出现）时折叠栏动态显示
 //      "正在运行 Xxx · 参数摘要 / 正在思考 · 内容"；下一个 text 出现后变为
 //      "运行了 N 条命令"（think 不算命令数）。
-//   2. 大组头在 agent 回复开始就出现（运行中默认展开，回复在其下逐条加载），
-//      组头实时显示本轮耗时/token/tok/s/缓存命中率——直播指标按随机间隔刷新
+//   2. 回合折叠栏在 agent 回复开始就出现（运行中默认展开，回复在其下逐条加载），
+//      折叠栏实时显示本轮耗时/token/tok/s/缓存命中率——直播指标按随机间隔刷新
 //      （CONFIG.liveTickMs × 随机数 0.5~1，默认 125~250ms）：耗时秒数走动、tok/s
 //      按已输出 token 实时估算；真实 usage 只在请求完成时到达，"消耗token"在两次
 //      到达之间按固定动画节奏持续增长（+1/+11 交替：个位每 tick +1、十位每 2 tick
 //      +1，tick 间隔随机、节奏不规律），真实值到达时只校正基线（数字只增不减）；
 //      数值变化带"滚轮/里程表"式逐位滚动动画（每位数字独立滚动，变化快时用短动画、
-//      慢速变化用 350ms 回弹缓动）；组头下方常驻一条水平分隔线（收起/展开都显示）。
-//   3. 回合结束后，整回合（所有 Think + 工具调用 + 上下文注入）收成一个大组头并
+//      慢速变化用 350ms 回弹缓动）；折叠栏下方常驻一条水平分隔线（收起/展开都显示）。
+//   3. 回合结束后，整回合（所有 Think + 工具调用 + 上下文注入）收成一个回合折叠栏并
 //      默认收起，只保留最终总结正文；非正常结束的回合带状态标签（已停止 / 已中断）。
-//   4. 点击组头可手动展开/折叠；展开带平滑过渡动画（CSS grid 0fr→1fr 轨道过渡 + 淡入，280ms），
+//   4. 点击折叠栏可手动展开/折叠；展开带平滑过渡动画（CSS grid 0fr→1fr 轨道过渡 + 淡入，280ms），
 //      收起带收缩过渡（280ms）后卸载内容；尊重 prefers-reduced-motion。
 //   5. 界面文案自动适配中英文（navigator.language(s) 含 zh 即中文），
-//      组头带 aria-label / aria-expanded，键盘可操作（Enter / Space）。
+//      折叠栏带 aria-label / aria-expanded，键盘可操作（Enter / Space）。
 //
 // 实现方式：
 //   - 用 priority:-1 覆盖（shadow）内置的 conversation.chat.node 渲染器：
-//       key "tool-call"        -> 段级分组 + 自动折叠
-//       key "assistant-step"   -> 段级分组（纯 Think）+ 整回合折叠（Think/最终消息）
+//       key "tool-call"        -> 步骤分组 + 自动折叠
+//       key "assistant-step"   -> 步骤分组（纯 Think）+ 整回合折叠（Think/最终消息）
 //       key "context"          -> 整回合折叠（上下文注入）
 //   - 通过 ctx.slots.entries() 取到内置组件引用做"委托渲染"（展开时原样转发，
 //     工具卡片内容/样式与内置一致）。因为我们的 entry 没声明 children 收不到
@@ -34,7 +34,7 @@
 // 应静默跳过，而不是抛 ReferenceError 拖垮整个插件树。
 if (typeof window !== "undefined" && window.__ModuleLoader__) {
 window.__ModuleLoader__.load({
-	id: "dsh-turn-fold",
+	id: "@winteries/dsh-turn-fold",
 	factory: (require) => {
 		"use strict";
 		var module = { exports: {} };
@@ -43,11 +43,11 @@ window.__ModuleLoader__.load({
 
 		// ---- 可调配置 ----
 		var CONFIG = {
-			// 组头文案："运行了 N 条命令"；组内有失败命令时追加"——M条执行失败"
+			// 折叠栏文案："运行了 N 条命令"；组内有失败命令时追加"——M条执行失败"
 			headerPrefix: "运行了",
 			headerSuffix: "条命令",
 			failureSuffix: "条执行失败",
-			// 运行中大组头直播指标的刷新间隔基准（毫秒）：耗时秒数、"消耗token"增长
+			// 运行中回合折叠栏直播指标的刷新间隔基准（毫秒）：耗时秒数、"消耗token"增长
 			// 动画都按此频率刷新。"消耗token"在真实 usage 之间按固定节奏增长——偏移
 			// 按 +1/+11 交替循环推进（个位每 tick +1、十位每 2 tick +1），营造
 			// "一直在消耗"的观感；真实 usage 到达时只校正基线、偏移不回退。
@@ -91,7 +91,7 @@ window.__ModuleLoader__.load({
 				ariaGroupExpanded: "折叠本组",
 				ariaTurn: "展开回合",
 				ariaTurnExpanded: "折叠回合",
-				// 段级折叠运行中标题：当前正在执行的工具 / 思考内容（间隔由 CSS margin 控制）
+				// 步骤折叠运行中标题：当前正在执行的工具 / 思考内容（间隔由 CSS margin 控制）
 				runningTool: "正在运行",
 				runningThink: "正在思考",
 				// 纯 think 段（无工具调用）闭合后的标题
@@ -147,12 +147,128 @@ window.__ModuleLoader__.load({
 		var useMemo = react.useMemo;
 		var useSyncExternalStore = react.useSyncExternalStore;
 
+		// ---- react-dom（一次性更新说明通知用） ----
+		// 仅用于把 UpdateNotice 挂到 <body> 上的独立 React 根；极简宿主 / 测试
+		// loader（mockRequire 不提供 react-dom）下静默跳过，不影响插件主体。
+		var ReactDOM = null;
+		try { ReactDOM = require("react-dom"); } catch (e) { /* 无 react-dom 的宿主 */ }
+
+		// ---- 一次性"新版本更新说明"通知 ----
+		// 机制与 dsh-wallpaper-engine 同款：localStorage 记录"已通知过的版本号"，
+		// 每次发布新版本时把 NOTICE_VERSION 改成新版本号并更新 NOTICE_CONTENT 正文，
+		// 加载时存值与当前版本不符就弹一次，点「知道了」后写入当前版本、下次不再弹。
+		// 注意：v0.3.1 是特例——v0.3.0 发布时还没有本通知功能，其大版本更新日志从未
+		// 展示过，因此本版本合并展示 v0.3.0 + v0.3.1 两节内容，仅此一次；之后的版本
+		// 只需写本版本一节，sections 里留一个即可。
+		var NOTICE_KEY = "dsh-turn-fold:notice-version";
+		var NOTICE_VERSION = "0.3.1";
+		var NOTICE_CONTENT = {
+			zh: {
+				title: "v0.3.1 更新说明",
+				sections: [
+					{
+						version: "v0.3.0",
+						note: "大版本更新 · 此前未展示",
+						items: [
+							{ title: "⏱️ 回合折叠栏", detail: "用户发送消息后即时呈现（零秒占位），实时显示回合耗时、首字 TTFT、消耗 token、tok/s 及缓存命中率；数值采用滚轮数字动画逐位滚动，右侧对齐显示回合序号。" },
+							{ title: "🗂️ 步骤分组折叠", detail: "按 text 边界自动分组，运行中动态标题显示官方图标、工具名称及参数摘要（或思考内容），附加 shimmer 光泽动效；默认始终折叠；编辑类工具标题附带行数变更统计。" },
+							{ title: "📦 整回合折叠", detail: "回合结束后自动收拢为一个回合折叠栏，并标注状态标签（已完成 / 已停止 / 已中断）；仅保留最终总结正文可见。" },
+							{ title: "🌐 界面语言适配", detail: "界面语言跟随 DSH 界面语言实时切换，支持简体中文及英语。" },
+							{ title: "✨ 过渡动画", detail: "展开与折叠配备平滑过渡动画（CSS grid 0fr→1fr 轨道过渡配合淡入效果），尊重 prefers-reduced-motion 无障碍设置。" }
+						]
+					},
+					{
+						version: "v0.3.1",
+						items: [
+							{ title: "🏷️ 包名更名", detail: "npm 包名由 dsh-turn-fold 变更为 @winteries/dsh-turn-fold，解决插件市场「已安装」页因同名插件歧义而缺失描述的问题；旧包名 dsh-turn-fold 仍会同步发布，无需迁移。" },
+							{ title: "📣 版本更新说明", detail: "新增「新版本更新说明」机制：每个新版本首次加载时自动弹出一次（本版本合并展示 v0.3.0 大版本更新日志，仅此一次）。" }
+						]
+					}
+				],
+				hint: "本提示每个新版本只出现一次，点下方按钮即可关闭。",
+				dismiss: "知道了"
+			},
+			en: {
+				title: "What's new in v0.3.1",
+				sections: [
+					{
+						version: "v0.3.0",
+						note: "Major release — first shown here",
+						items: [
+							{ title: "⏱️ Live turn header", detail: "Appears immediately when a message is sent (0-second placeholder), displaying turn duration, TTFT, tokens consumed, tok/s, and cache-hit rate in real time with rolling-digit animations; the turn number is right-aligned on the header." },
+							{ title: "🗂️ Segment folding", detail: "Groups tool calls and Think blocks between text boundaries automatically; dynamic running titles show official icons, tool name, and argument summary (or Think content) with a shimmer animation; always collapsed by default; edit tools display line-change statistics." },
+							{ title: "📦 Whole-turn collapse", detail: "Collapses the entire turn into a single turn fold bar after completion, with status tags (Completed / Stopped / Interrupted); only the final summary message remains visible." },
+							{ title: "🌐 Locale adaptation", detail: "The plugin interface language follows the DSH UI language in real time, with support for Simplified Chinese and English." },
+							{ title: "✨ Smooth transitions", detail: "Expand and collapse use smooth CSS grid 0fr→1fr transitions with fade-in animations, respecting prefers-reduced-motion accessibility settings." }
+						]
+					},
+					{
+						version: "v0.3.1",
+						items: [
+							{ title: "🏷️ Package rename", detail: "The npm package was renamed from dsh-turn-fold to @winteries/dsh-turn-fold, resolving the missing description in the market Installed tab caused by a same-name collision; the legacy dsh-turn-fold package keeps receiving synchronized releases, so no migration is needed." },
+							{ title: "📣 Release notes", detail: "Introduced the per-version \"What's new\" notice that appears automatically once after each release (this release merges the v0.3.0 major changelog — just this once)." }
+						]
+					}
+				],
+				hint: "This notice appears once per version — dismiss to close.",
+				dismiss: "Got it"
+			}
+		};
+		function UpdateNotice() {
+			var visibleState = react.useState(function () {
+				try {
+					if (typeof localStorage === "undefined") return true;
+					return (localStorage.getItem(NOTICE_KEY) || "") !== NOTICE_VERSION;
+				} catch (e) { return true; }
+			});
+			var visible = visibleState[0];
+			var setVisible = visibleState[1];
+			function dismiss() {
+				try { localStorage.setItem(NOTICE_KEY, NOTICE_VERSION); } catch (e) { /* ignore */ }
+				setVisible(false);
+			}
+			if (!visible) return null;
+			var content = NOTICE_CONTENT[currentLocale()] || NOTICE_CONTENT.en;
+			// 标题与描述的间隔符号：中文用全角冒号，英文用半角冒号加空格
+			var sep = currentLocale() === "zh" ? "：" : ": ";
+			var secs = [];
+			for (var si = 0; si < content.sections.length; si++) {
+				var sec = content.sections[si];
+				var lis = [];
+				for (var ii = 0; ii < sec.items.length; ii++) {
+					// 每个条目：加粗功能名 + 间隔符 + 正式描述，一眼可扫
+					lis.push(react.createElement("li", { key: "i" + ii },
+						react.createElement("strong", null, sec.items[ii].title),
+						sep + sec.items[ii].detail
+					));
+				}
+				// 小节头：版本号胶囊 + 可选说明（如"大版本更新 · 此前未展示"）
+				var head = [react.createElement("span", { key: "v", className: "ccg-notice-ver" }, sec.version)];
+				if (sec.note) {
+					head.push(react.createElement("span", { key: "n", className: "ccg-notice-ver-note" }, sec.note));
+				}
+				secs.push(react.createElement("div", { key: "s" + si, className: "ccg-notice-sec" },
+					react.createElement("div", { className: "ccg-notice-sec-head" }, head),
+					react.createElement("ul", { className: "ccg-notice-list" }, lis)
+				));
+			}
+			return react.createElement("div", { className: "ccg-notice", role: "alert" },
+				react.createElement("div", { className: "ccg-notice-title" }, content.title),
+				react.createElement("div", { className: "ccg-notice-body" }, secs),
+				react.createElement("p", { className: "ccg-notice-hint" }, content.hint),
+				Button !== null
+					? react.createElement(Button, { variant: "primary", size: "sm", className: "ccg-notice-btn-plat", onClick: dismiss }, content.dismiss)
+					: react.createElement("button", { className: "ccg-notice-btn", type: "button", onClick: dismiss }, content.dismiss)
+			);
+		}
+
 		// ---- 官方 UI 原语（可选依赖） ----
-		// 组头优先用官方 DisclosureRow 渲染（24px 行高、16px 前导、14px 官方 chevron、
+		// 折叠栏优先用官方 DisclosureRow 渲染（24px 行高、16px 前导、14px 官方 chevron、
 		// 14px/24px 标题），与 Think / 工具卡片的折叠行逐像素一致。
 		// @deepseek-ai/dsh-client-ui-primitives 是平台 seed 模块，插件工厂可直接 require；
 		// 若某版本缺失则回退到自带兜底样式，保证插件仍可用。
 		var DisclosureRow = null;
+		var Button = null;
 		var IconChevronDownOutline14 = null;
 		var IconChevronRightOutline14 = null;
 		var IconThinkOutline14 = null;
@@ -165,6 +281,7 @@ window.__ModuleLoader__.load({
 		try {
 			var uiPrimitives = require("@deepseek-ai/dsh-client-ui-primitives");
 			DisclosureRow = uiPrimitives.DisclosureRow;
+			Button = uiPrimitives.Button;
 			IconChevronDownOutline14 = uiPrimitives.IconChevronDownOutline14;
 			IconChevronRightOutline14 = uiPrimitives.IconChevronRightOutline14;
 			IconThinkOutline14 = uiPrimitives.IconThinkOutline14;
@@ -182,15 +299,15 @@ window.__ModuleLoader__.load({
 		var CSS_ID = "dsh-turn-fold/style";
 		if (typeof document !== "undefined" && document.querySelector('style[data-plugin-css="' + CSS_ID + '"]') === null) {
 			var tag = document.createElement("style");
-			tag.dataset.plugin = "dsh-turn-fold";
+			tag.dataset.plugin = "@winteries/dsh-turn-fold";
 			tag.dataset.pluginCss = CSS_ID;
 			tag.textContent = [
 				/* 组容器：不加 margin，行间距完全交给官方 column 的 16px 节奏 */
 				".ccg-group-root{display:flex;flex-direction:column}",
-				/* 展开时组头与内容之间留 8px（折叠时组头独立成行，间距即官方 16px） */
+				/* 展开时折叠栏与内容之间留 8px（折叠时折叠栏独立成行，间距即官方 16px） */
 				".ccg-group-root[data-ccg-open] .ccg-header{margin-bottom:8px}",
-				/* 大组头组头下方常驻 1px 分隔线（收起/展开都显示，参考图：组头文字
-				   下方的水平细线）。段级组头保持原 8px 间距；大组头由分隔线自带
+				/* 回合折叠栏下方常驻 1px 分隔线（收起/展开都显示，参考图：折叠栏文字
+				   下方的水平细线）。步骤折叠栏保持原 8px 间距；回合折叠栏由分隔线自带
 				   上下留白（上 4px / 下 8px）。 */
 				".ccg-group-root[data-ccg-turn][data-ccg-open] .ccg-header{margin-bottom:0}",
 				".ccg-turn-divider{height:1px;flex:none;background:var(--dsw-alias-line-secondary,#d1d5db);margin:4px 0 8px}",
@@ -204,26 +321,31 @@ window.__ModuleLoader__.load({
 				".ccg-fold-body{display:flex;flex-direction:column;gap:16px;min-width:0;min-height:0;overflow:hidden}",
 				".ccg-fold-clip.ccg-fold-clip-open .ccg-fold-body{overflow:visible}",
 				"@media (prefers-reduced-motion: reduce){.ccg-fold-clip{transition:none!important}}",
-				/* 大组头展开时，非第一个段的成员节点不经过 FoldClip 高度动画，
+				/* 回合折叠栏展开时，非第一个段的成员节点不经过 FoldClip 高度动画，
 				   用淡入+微位移入场动画避免"瞬间出现"（.22s ease-out） */
 				"@keyframes ccg-member-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}",
 				".ccg-member-in{animation:ccg-member-in .22s ease-out both}",
-				/* 官方 DisclosureRow 组头微调：标题 400、可省略号（大组头指标文案可能较长）、chevron 用 label-secondary */
+				/* 官方 DisclosureRow 折叠栏微调：标题 400、可省略号（回合折叠栏指标文案可能较长）、chevron 用 label-secondary */
 				".ccg-header-title{font-weight:400;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-				/* 大组头标题占满行宽，指标与"第x轮"两端对齐（右对齐轮次） */
+				/* 回合折叠栏标题占满行宽，指标与"第x轮"两端对齐（右对齐轮次） */
 				".ccg-group-root[data-ccg-turn] .ccg-header-title{flex:1 1 auto}",
 				".ccg-header-flex{display:flex;align-items:center;justify-content:space-between;width:100%;min-width:0;gap:12px}",
 				".ccg-header-flex-metrics{min-width:0}",
 				".ccg-header-round{flex:none;white-space:nowrap}",
 				/* 组内有执行失败命令时标题标红（与官方错误色 token 一致） */
-				".ccg-header-danger{color:var(--dsw-alias-state-error-primary,#ef4444)}",
+				/* 失败提示：仅 "——" 之后的部分标红（整标题不再整体标红） */
+				".ccg-header-failure{color:var(--dsw-alias-state-error-primary,#ef4444)}",
+				/* 编辑行数变更 [ +N -M ]：悬停括号范围时 +N 变绿、-N 变红 */
+				".ccg-diff{transition:color .15s ease}",
+				".ccg-diff:hover .ccg-diff-add{color:var(--dsw-alias-state-success-primary,#16a34a)}",
+				".ccg-diff:hover .ccg-diff-del{color:var(--dsw-alias-state-error-primary,#ef4444)}",
 				".ccg-header-chevron{color:var(--dsw-alias-label-secondary,#9ca3af)}",
-				/* 兜底组头（官方 DisclosureRow 不可用时）：24px 行高 + 14px chevron + 14px/24px 文案 */
+				/* 兜底折叠栏（官方 DisclosureRow 不可用时）：24px 行高 + 14px chevron + 14px/24px 文案 */
 				".ccg-header-fallback{display:flex;align-items:center;gap:6px;height:24px;cursor:pointer;user-select:none;color:var(--dsw-alias-label-secondary,#9ca3af);font-size:14px;line-height:24px;white-space:nowrap}",
 				".ccg-header-fallback .ccg-chevron{flex:none;font-size:14px;width:16px;text-align:center;color:var(--dsw-alias-label-tertiary,#6b7280);transition:transform .12s ease}",
 				".ccg-header-fallback[data-open] .ccg-chevron{transform:rotate(90deg)}",
 				".ccg-header-fallback .ccg-title{font-weight:400;overflow:hidden;text-overflow:ellipsis}",
-				/* 被折叠的成员（段级 + 整回合折叠，tool-call 与 assistant-step 通用）：
+				/* 被折叠的成员（步骤折叠 + 回合折叠，tool-call 与 assistant-step 通用）：
 				   整个 flowItem 必须 display:none，否则空 flowItem 仍会占据 flex 布局
 				   并吃掉 column 的 16px gap。注：每个 flowItem 里永远包着一个
 				   <div data-slot style="display:contents">，所以 :empty 永远匹配不上，
@@ -233,26 +355,30 @@ window.__ModuleLoader__.load({
 				/* 最终总结消息：回合结束后隐藏其内部 Think 行（官方 ReasoningRow 根节点带
 				   data-variant="think"），只显示正文 —— 符合"只显示最终结果"的语义 */
 				"[data-ccg-turn-folded] [data-variant=\"think\"]{display:none}",
-				/* 滚轮数字（大组头直播指标）：每位数 1ch 宽视窗，竖排 0-9 用 transform
+				/* 滚轮数字（回合折叠栏直播指标）：每位数 1ch 宽视窗，竖排 0-9 用 transform
 				   滚动，呈现里程表/滚轮式变化。文字部分保持原样内联。 */
 				".ccg-roll-cell{display:inline-block;width:1ch;height:1em;overflow:hidden;vertical-align:-0.15em;text-align:center}",
 				".ccg-roll-strip{display:flex;flex-direction:column}",
 				".ccg-roll-strip .ccg-roll-d{flex:none;width:1ch;height:1em;line-height:1em;text-align:center}",
 				".ccg-roll-text{display:inline}",
 				".ccg-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}",
-				/* think 运行中摘要（段组头标题）：前缀 + 最新一行，横向自动滚动跟随末尾
-				   （官方 ReasoningRow 同款 data-follow-end） */
-				".ccg-think-title{display:inline-flex;align-items:center;min-width:0;max-width:100%}",
+				/* think 运行中摘要（步骤折叠栏标题）：前缀 + 最新一行，横向自动滚动跟随末尾
+				   （官方 ReasoningRow 同款 data-follow-end）。滚动成立的前提是摘要自身
+				   溢出（scrollWidth > clientWidth）：标题行必须块级 flex 撑满标题区
+				   （width:100%），摘要 flex:1 1 auto + min-width:0 吃掉剩余宽度——
+				   旧实现是 inline-flex/inline-block + max-width:100% 的 shrink-to-fit 链，
+				   摘要从不被约束，溢出发生在祖先容器上，scrollLeft 永远无效。 */
+				".ccg-think-title{display:flex;align-items:center;min-width:0;width:100%}",
 				".ccg-think-prefix{flex:none}",
 				/* 图标与 · 前后统一 4px 间隔：前缀 图标 名称 · 摘要 */
 				".ccg-think-icon{flex:none;display:inline-flex;align-items:center;margin:0 4px}",
-				/* 名称不设显式颜色：继承组头标题色（label-secondary），与"运行了 N 条命令"
+				/* 名称不设显式颜色：继承折叠栏标题色（label-secondary），与"运行了 N 条命令"
 				   纯文本标题视觉一致（此前设 label-primary 白色导致观感字号不同） */
 				".ccg-think-name{flex:none;font-weight:400}",
 				".ccg-think-sep{flex:none;color:var(--dsw-alias-label-tertiary,#9ca3af);margin:0 4px}",
-				".ccg-think-summary{display:inline-block;min-width:0;max-width:100%;vertical-align:bottom;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+				".ccg-think-summary{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 				".ccg-think-summary[data-follow-end]{text-overflow:clip}",
-				/* 运行中段组头标题：整行统一 shimmer 高光（官方 TurnStatus "Deep diving..."
+				/* 运行中步骤折叠栏标题：整行统一 shimmer 高光（官方 TurnStatus "Deep diving..."
 				   同款）——渐变挂在父容器上，整行一个渐变背景 + background-clip:text +
 				   背景位移动画，光泽扫过整个标题。
 				   颜色方案：基线用 Codex 同款深灰 rgb(104,104,104) + 纯白高光
@@ -269,10 +395,33 @@ window.__ModuleLoader__.load({
 				/* 含 think+text 节点拆分渲染：段外 text 正文的官方 think 行隐藏
 				   （段外只显示 text 正文，段内展开时官方渲染含完整 think 行） */
 				".ccg-text-only [data-variant=\"think\"]{display:none}",
-				/* 段外 text 正文：顶部 16px 与段组头行拉开（官方 MarkdownText 的 p 首尾 margin 为 0）；
-				   底部不额外加 padding——text 到下一个段组头 flowItem 之间由官方 column 的
+				/* 段外 text 正文：顶部 16px 与步骤折叠栏行拉开（官方 MarkdownText 的 p 首尾 margin 为 0）；
+				   底部不额外加 padding——text 到下一个步骤折叠栏 flowItem 之间由官方 column 的
 				   16px gap 承担，避免 16px + 16px 叠加成 32px 造成间距过大 */
-				".ccg-text-only{padding:16px 0 0}"
+				".ccg-text-only{padding:16px 0 0}",
+				/* 一次性更新说明通知：右下角浮动卡片（独立于折叠样式，自成一类 ccg-notice） */
+				".ccg-notice{position:fixed;right:16px;bottom:16px;z-index:9999;max-width:360px;max-height:70vh;overflow-y:auto;background:var(--dsw-alias-bg-layer-2,#ffffff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:12px 14px;font-size:13px;line-height:1.6;color:var(--dsw-alias-label-primary,#1f2328);animation:ccg-notice-in .24s ease-out}",
+				".ccg-notice-title{font-weight:600;margin-bottom:8px}",
+				".ccg-notice-body{display:flex;flex-direction:column;opacity:.92}",
+				/* 版本小节：版本号胶囊标签 + 说明文字并排，区块之间用间距分隔 */
+				".ccg-notice-sec + .ccg-notice-sec{margin-top:12px}",
+				".ccg-notice-sec-head{display:flex;align-items:center;gap:6px;margin-bottom:6px;min-width:0}",
+				".ccg-notice-ver{flex:none;background:var(--dsw-alias-bg-layer-3,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:999px;padding:1px 9px;font-size:11px;font-weight:600;line-height:1.7;color:var(--dsw-alias-label-secondary,#6b7280)}",
+				".ccg-notice-ver-note{font-size:11px;color:var(--dsw-alias-label-tertiary,#9ca3af);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+				/* 条目列表：自定义圆点 + 悬挂缩进（换行对齐），拉开条目间距 */
+				".ccg-notice-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}",
+				".ccg-notice-list li{position:relative;margin:0;padding:0 0 0 14px;color:var(--dsw-alias-label-secondary,#6b7280)}",
+				".ccg-notice-list li strong{font-weight:600;color:var(--dsw-alias-label-primary,#1f2328)}",
+				".ccg-notice-list li::before{content:\"\";position:absolute;left:1px;top:8px;width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-label-tertiary,#9ca3af)}",
+				".ccg-notice-hint{font-size:12px;opacity:.6;margin:6px 0 0}",
+				/* 兜底按钮（平台 Button 缺失时）：用官方 button-primary token 对，暗色主题下
+				   自动变浅底深字，而不是写死的品牌色+白字 */
+				".ccg-notice-btn{display:block;margin:8px 0 0 auto;background:var(--dsw-alias-button-primary-fill,var(--dsw-alias-brand-primary,#4f6ef7));color:var(--dsw-alias-label-primary-foreground,#fff);border:none;border-radius:14px;padding:4px 12px;font-size:12px;line-height:18px;cursor:pointer}",
+				".ccg-notice-btn:hover{background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-brand-primary,#4f6ef7))}",
+				/* 平台 Button 路径：只补右对齐与上间距，颜色/圆角由官方 primary/sm 类负责 */
+				".ccg-notice-btn-plat{display:block;margin:8px 0 0 auto}",
+				"@keyframes ccg-notice-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}",
+				"@media (prefers-reduced-motion:reduce){.ccg-notice{animation:none!important}}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
@@ -305,8 +454,8 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 整回合折叠状态（模块级；按 sessionId+turn 记忆） ----
-		// 回合进行中：大组头在回复开始就出现，默认展开；回合结束后整回合收成一个
-		// 大组头，默认折叠；点击大组头展开/收起。手动选择永久记忆（三态：null=未干预）。
+		// 回合进行中：回合折叠栏在回复开始就出现，默认展开；回合结束后整回合收成一个
+		// 回合折叠栏，默认折叠；点击回合折叠栏展开/收起。手动选择永久记忆（三态：null=未干预）。
 		var turnOverrides = new Map();
 		var turnOverrideListeners = new Set();
 		function turnKeyOf(sessionId, turn) { return sessionId + "::turn:" + turn; }
@@ -332,7 +481,7 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		// ---- 实时直播时钟（回合运行中，大组头指标按随机间隔刷新） ----
+		// ---- 实时直播时钟（回合运行中，回合折叠栏指标按随机间隔刷新） ----
 		// 运行中回合的 turnTimings 只有 startTime，没有 endTime：耗时秒数需要时钟
 		// 驱动，"消耗token"的持续增长动画同样依赖这个时钟（每 tick 前进 1）。
 		// 间隔 = liveTickMs × 随机数（liveTickJitter ~ 1），数字跳动节奏不规律。
@@ -413,7 +562,7 @@ window.__ModuleLoader__.load({
 			return false;
 		}
 		/** think 节点：有 reasoning 块即算（含 think+text 同一节点的消息——DSH 把 think 和
-		 *  text 放在同一 assistant-step 的 blocks 里；think 部分收进段组头，text 部分在
+		 *  text 放在同一 assistant-step 的 blocks 里；think 部分收进步骤折叠栏，text 部分在
 		 *  段外单独渲染保持可见）。 */
 		function isThinkNode(node) {
 			return hasReasoning(node);
@@ -424,7 +573,7 @@ window.__ModuleLoader__.load({
 			if (node.kind === "tool-call") return true;
 			return node.kind === "assistant-step" && isThinkNode(node);
 		}
-		/** 拼接节点的 reasoning 块文本（段组头运行中显示 think 内容用）。 */
+		/** 拼接节点的 reasoning 块文本（步骤折叠栏运行中显示 think 内容用）。 */
 		function reasoningText(node) {
 			if (!node || node.kind !== "assistant-step" || !node.data || !Array.isArray(node.data.blocks)) return "";
 			var parts = [];
@@ -476,14 +625,14 @@ window.__ModuleLoader__.load({
 			return !!root && !("kind" in root);
 		}
 		/**
-		 * 计算本节点所属的"段级分组"：
+		 * 计算本节点所属的"步骤分组"：
 		 *   - 段 = 两个 text 之间的所有内容（tool-call + 含 reasoning 的 assistant-step
 		 *     混排成一段；think 不打断段，text 是段边界）。含 think+text 的同一节点是
 		 *     段的"收尾成员"：think 部分入段，text 部分使段闭合（text 正文在段外单独
 		 *     渲染保持始终可见）。
-		 *   - leader = 段内第一个节点（只有 leader 渲染段组头）。
-		 *   - 段级折叠始终默认收起（autoCollapsed 恒 true）；运行中（textAfter=false）
-		 *     段组头动态显示"正在运行 Xxx · 描述 / 正在思考 · 内容"，出现下一个 text
+		 *   - leader = 段内第一个节点（只有 leader 渲染步骤折叠栏）。
+		 *   - 步骤折叠始终默认收起（autoCollapsed 恒 true）；运行中（textAfter=false）
+		 *     步骤折叠栏动态显示"正在运行 Xxx · 描述 / 正在思考 · 内容"，出现下一个 text
 		 *     后显示"运行了 N 条命令"（think 不算命令数）。
 		 */
 		function computeGroup(order, nodes, ourNode) {
@@ -543,9 +692,9 @@ window.__ModuleLoader__.load({
 				failures: failures,
 				anyRunning: anyRunning,
 				textAfter: textAfter,
-				// 运行中段组头标题取段内最后一个节点（当前正在执行的工具 / 思考内容）
+				// 运行中步骤折叠栏标题取段内最后一个节点（当前正在执行的工具 / 思考内容）
 				lastActiveKey: keys[keys.length - 1],
-				// 段级折叠始终默认收起（含 think+text 节点的 text 正文在段外单独渲染）
+				// 步骤折叠始终默认收起（含 think+text 节点的 text 正文在段外单独渲染）
 				autoCollapsed: true
 			};
 		}
@@ -556,15 +705,15 @@ window.__ModuleLoader__.load({
 			return (loc.kind === "turn" || loc.kind === "step") ? loc.turn.turn : undefined;
 		}
 		/**
-		 * 计算"整回合折叠"信息：把本回合所有 Think + 工具调用 + 上下文注入收成一个大组头。
-		 * 运行中的回合同样成立（大组头在回复开始就出现、默认展开），只保留最终总结消息
+		 * 计算"整回合折叠"信息：把本回合所有 Think + 工具调用 + 上下文注入收成一个回合折叠栏。
+		 * 运行中的回合同样成立（回合折叠栏在回复开始就出现、默认展开），只保留最终总结消息
 		 * （+官方 turn-tail 脚注）可见发生在回合结束后（默认收起）。
 		 *   - closed：回合是否已结束（turnEnds 里有记录，turn/end 事件驱动）。
-		 *   - toolCount：回合内工具调用总数（大组头文案"运行了 N 条命令"的 N）。
+		 *   - toolCount：回合内工具调用总数（回合折叠栏文案"运行了 N 条命令"的 N）。
 		 *   - finalAssistantKey：回合结束后回合内最后一条 assistant-step（最终总结，绝不
 		 *     折叠）；运行中的回合为 null——当前流式消息只是"最后一条中间节点"，同样可以
-		 *     作为大组头锚点，保证大组头从回复第一条内容起就出现。
-		 *   - headerKey：回合内第一条"中间节点"（tool-call / context / 非最终 assistant-step），由它渲染大组头。
+		 *     作为回合折叠栏锚点，保证回合折叠栏从回复第一条内容起就出现。
+		 *   - headerKey：回合内第一条"中间节点"（tool-call / context / 非最终 assistant-step），由它渲染回合折叠栏。
 		 */
 		function computeTurnFold(order, nodes, locations, turnEnds, ourNode, timeline) {
 			if (!order || !nodes || !locations || !turnEnds || !ourNode) return null;
@@ -585,14 +734,14 @@ window.__ModuleLoader__.load({
 				else if (n.kind === "tool-call") toolCount++;
 			}
 			// 运行中的回合没有"最终总结"：最后一条 assistant-step 只是当前流式消息，
-			// 它同样可以作为大组头锚点（回复开始即出现大组头），不豁免于组头候选。
+			// 它同样可以作为回合折叠栏锚点（回复开始即出现回合折叠栏），不豁免于折叠栏候选。
 			if (!closed) finalAssistantKey = null;
 			// 折叠作用域 = (最后一个 user 节点, 当前 agent 回合]：
 			// DSH 会把上下文注入（source 非 user 的 user/message 事件，如批准
 			// 策略 / 权限 / skills 提醒）排到用户首条消息之前（anchorSeq 更小）。
 			// 整回合折叠只能折叠"用户消息之后"的内容——锚定在最后一个 user 节点
 			// 之前（含）的节点（如审批策略变更通知）不属于本回合的输出区间，
-			// 绝不参与折叠、也绝不作组头候选，否则大组头会"跨过"用户消息去折叠
+			// 绝不参与折叠、也绝不作折叠栏候选，否则回合折叠栏会"跨过"用户消息去折叠
 			// 其上方的内容，破坏"折叠 = 收起用户消息与 agent 回复之间内容"的语义。
 			var lastUserSeq = -1;
 			for (var u = 0; u < keys.length; u++) {
@@ -608,7 +757,7 @@ window.__ModuleLoader__.load({
 				if (key === finalAssistantKey) continue;
 				var node = nodes.get(key);
 				if (!node || !(node.kind === "tool-call" || node.kind === "assistant-step" || node.kind === "context")) continue;
-				// 组头必须锚定在用户消息之后（anchorSeq > lastUserSeq）；
+				// 折叠栏必须锚定在用户消息之后（anchorSeq > lastUserSeq）；
 				// assistant-step / tool-call 在 settle 后必然位于用户消息之后。
 				if (lastUserSeq >= 0 && typeof node.anchorSeq === "number" && node.anchorSeq <= lastUserSeq) continue;
 				headerKey = key;
@@ -657,8 +806,8 @@ window.__ModuleLoader__.load({
 				ourKey: ourKey,
 				outsideScope: outsideScope,
 				turnStatus: turnStatus,
-				// 只有能同时定位到"自己的 key"和"作用域内的组头"时才允许折叠。
-				// 运行中：finalAssistantKey 为 null（当前流式消息也是组头候选），
+				// 只有能同时定位到"自己的 key"和"作用域内的折叠栏"时才允许折叠。
+				// 运行中：finalAssistantKey 为 null（当前流式消息也是折叠栏候选），
 				// 只要 headerKey 存在即可折叠。回合结束后额外要求 finalAssistantKey
 				// 存在，避免 turn/end 与最终消息索引的瞬时竞态导致最终消息被误隐藏。
 				foldable: ourKey !== null && headerKey !== null && (closed ? finalAssistantKey !== null : true),
@@ -667,7 +816,7 @@ window.__ModuleLoader__.load({
 			};
 		}
 
-		// ---- 回合性能指标（大组头文案） ----
+		// ---- 回合性能指标（回合折叠栏文案） ----
 		/** 缓存命中率：固定两位小数（如 "66.67"、"99.99"、"100.00"），比官方
 		 *  仅接近 100% 才提精度的方案更高；无可计费输入返回 null。 */
 		function cacheHitPercent(uncachedInputTokens, cacheReadTokens, cacheWriteTokens) {
@@ -818,7 +967,7 @@ window.__ModuleLoader__.load({
 			var animOffset = (tickCount % 10) + Math.floor(tickCount / 2) * 10;
 			return Math.floor(c.lastTokens) + animOffset;
 		}
-		/** 大组头展示指标：运行中把"消耗token"按动画节奏持续增长（真实 usage 到达时校正基线）。
+		/** 回合折叠栏展示指标：运行中把"消耗token"按动画节奏持续增长（真实 usage 到达时校正基线）。
 		 *  兜底：回合运行中但尚无任何 usage（第一条 response 到达前/首节点无 usage）时，
 		 *  token 从 0 按同一动画节奏增长——"第一个 response 就出现 token"；
 		 *  真实 usage 到达后用独立缓存 key 切换，直接以真实值为基线。 */
@@ -873,7 +1022,7 @@ window.__ModuleLoader__.load({
 			var v = Math.max(0, tps);
 			return v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
 		}
-		/** 大组头文案："耗时…，消耗…token，…tok/s，缓存命中…%"；无数据返回空串。 */
+		/** 回合折叠栏文案："耗时…，消耗…token，…tok/s，缓存命中…%"；无数据返回空串。 */
 		function turnHeaderLabel(metrics) {
 			if (!metrics) return "";
 			var parts = [];
@@ -903,7 +1052,7 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 回合状态标签 ----
-		/** 已结束的回合在大组头前置状态文本（如"已完成 | 耗时…"、"已停止 | 耗时…"）。 */
+		/** 已结束的回合在回合折叠栏前置状态文本（如"已完成 | 耗时…"、"已停止 | 耗时…"）。 */
 		function turnLabelWithStatus(baseLabel, turnStatus) {
 			var key = "status" + (turnStatus || "completed").charAt(0).toUpperCase() + (turnStatus || "completed").slice(1);
 			var text = _T(key);
@@ -1083,7 +1232,7 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		// ---- 滚轮数字（大组头直播指标的逐位滚动动画） ----
+		// ---- 滚轮数字（回合折叠栏直播指标的逐位滚动动画） ----
 		// 每个数位是一个 1ch 宽、1em 高的视窗（overflow:hidden），内部竖排 0-9
 		// （flex column，每格恰好 1em）；数值变化时用 Web Animations API 从旧数位
 		// 滚到新数位（回弹缓动），呈现"滚轮/里程表"效果——耗时秒数每秒变化一次，
@@ -1190,32 +1339,84 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		/** 回合轮次文案：大组头最右侧右对齐显示（"第3轮" / "Turn 3"，官方用 turns 一词）。 */
+		/** 回合轮次文案：回合折叠栏最右侧右对齐显示（"第3轮" / "Turn 3"，官方用 turns 一词）。 */
 		function turnRoundLabel(turn) {
 			if (turn === undefined || turn === null) return "";
 			return currentLocale() === "zh" ? "第" + turn + "轮" : "Turn " + turn;
 		}
 
-		// ---- 组头组件 ----
+		// ---- 折叠栏组件 ----
 		// 优先用官方 DisclosureRow（24px 行高、16px 前导、14px 官方 chevron、14px/24px 标题），
 		// 与 Think / 工具卡片的折叠行样式一致；平台原语缺失时回退到自带兜底行。
 		// 无障碍：两种路径都带 aria-label / aria-expanded，键盘可操作。
-		// live：运行中的大组头——标题里的数字用滚轮动画逐位滚动；回合结束后纯文本。
+		// live：运行中的回合折叠栏——标题里的数字用滚轮动画逐位滚动；回合结束后纯文本。
+		/** 段闭合标题拆分：把"编辑了b.js [ +12 -3 ] 运行了pwsh —— 1条执行失败"拆成
+		 *  { base, after, diff, failure }——diff（编辑行数变更）供悬停高亮并保留原始位置
+		 *  （diff 只跟在编辑文件名后，后面可能还有"运行了pwsh"等片段），failure（失败提示）
+		 *  恒在末尾、独立标红。格式由本插件自建（" [ +N -M ]" 与 failurePrefix），拆分可靠。 */
+		function splitLabelParts(label) {
+			var base = label, after = "", failure = null, diff = null;
+			var fi = base.lastIndexOf(_T("failurePrefix"));
+			if (fi !== -1) {
+				failure = base.slice(fi);
+				base = base.slice(0, fi);
+			}
+			var m = / \[ ([+-]\d+(?: [+-]\d+)?) \]/.exec(base);
+			if (m) {
+				var nums = m[1].match(/[+-]\d+/g) || [];
+				var added = 0, removed = 0;
+				for (var ni = 0; ni < nums.length; ni++) {
+					if (nums[ni].charAt(0) === "+") added = parseInt(nums[ni].slice(1), 10);
+					else removed = parseInt(nums[ni].slice(1), 10);
+				}
+				diff = { added: added, removed: removed };
+				after = base.slice(m.index + m[0].length);
+				base = base.slice(0, m.index);
+			}
+			return { base: base, after: after, diff: diff, failure: failure };
+		}
+		/** 编辑行数变更 [ +N -M ]：悬停括号范围时 +N 变绿、-N 变红（官方 success/error token）。 */
+		function renderDiff(diff) {
+			var kids = [" [ "];
+			if (diff.added > 0) {
+				kids.push(react.createElement("span", { key: "a", className: "ccg-diff-add" }, "+" + diff.added));
+				if (diff.removed > 0) kids.push(" ");
+			}
+			if (diff.removed > 0) kids.push(react.createElement("span", { key: "r", className: "ccg-diff-del" }, "-" + diff.removed));
+			kids.push(" ]");
+			return react.createElement("span", { className: "ccg-diff" }, kids);
+		}
 		function GroupHeader(props) {
 			var count = props.count;
 			var open = props.open;
 			var onToggle = props.onToggle;
-			// label 可选：大组头传指标文案；缺省用"运行了 N 条命令"（多语言）。
+			// label 可选：回合折叠栏传指标文案；缺省用"运行了 N 条命令"（多语言）。
 			var label = props.label || (_T("headerPrefix") + " " + count + " " + _T("headerSuffix"));
-			// danger：组内有执行失败的命令时标题标红。
-			var danger = props.danger === true;
-			// isTurn：大组头（整回合折叠）用回合语义的无障碍标签。
+			// isTurn：回合折叠栏（整回合折叠）用回合语义的无障碍标签。
 			var isTurn = props.isTurn === true;
-			// live：运行中的大组头数值实时变化，用滚轮动画渲染（DisclosureRow 的
+			// live：运行中的回合折叠栏数值实时变化，用滚轮动画渲染（DisclosureRow 的
 			// title 直接作为 children 渲染，传 React 元素即可）。
 			var live = props.live === true;
-			var titleContent = live ? react.createElement(AnimatedLabel, { label: label }) : label;
-			// right：右对齐的尾部元素（大组头的"第x轮"）——flex 容器两端对齐，指标在左、轮次在右
+			// 纯文本标题拆分：编辑行数变更 [ +N -M ] 悬停高亮；"——"之后的失败提示单独标红
+			// （整标题不再整体标红；运行中 JSX 标题无失败后缀，保持原色）。
+			var titleContent;
+			if (live) {
+				titleContent = react.createElement(AnimatedLabel, { label: label });
+			} else if (typeof label === "string") {
+				var parts = splitLabelParts(label);
+				if (parts.diff !== null || parts.failure !== null) {
+					var kids = [parts.base];
+					if (parts.diff !== null) kids.push(renderDiff(parts.diff));
+					kids.push(parts.after);
+					if (parts.failure !== null) kids.push(react.createElement("span", { key: "fail", className: "ccg-header-failure" }, parts.failure));
+					titleContent = react.createElement.apply(react, [react.Fragment, null].concat(kids));
+				} else {
+					titleContent = label;
+				}
+			} else {
+				titleContent = label;
+			}
+			// right：右对齐的尾部元素（回合折叠栏的"第x轮"）——flex 容器两端对齐，指标在左、轮次在右
 			if (props.right !== undefined && props.right !== null && props.right !== "") {
 				titleContent = react.createElement(
 					"span",
@@ -1224,7 +1425,7 @@ window.__ModuleLoader__.load({
 					react.createElement("span", { className: "ccg-header-round" }, props.right)
 				);
 			}
-			var titleClass = "ccg-header-title" + (danger ? " ccg-header-danger" : "");
+			var titleClass = "ccg-header-title";
 			var ariaLabel = isTurn
 				? (open ? _T("ariaTurnExpanded") : _T("ariaTurn"))
 				: (open ? _T("ariaGroupExpanded") : _T("ariaGroup"));
@@ -1267,11 +1468,11 @@ window.__ModuleLoader__.load({
 					}
 				},
 				react.createElement("span", { className: "ccg-chevron" }, "›"),
-				react.createElement("span", { className: "ccg-title" + (danger ? " ccg-header-danger" : "") }, titleContent)
+				react.createElement("span", { className: "ccg-title" }, titleContent)
 			);
 		}
 
-		// ---- 段级分组渲染（现有行为）：单条原样 / 非 leader 隐藏 / leader 渲染组头 ----
+		// ---- 步骤分组渲染（现有行为）：单条原样 / 非 leader 隐藏 / leader 渲染折叠栏 ----
 				/** 取 think 文本最后一行（运行中摘要跟随最新内容，官方 ReasoningRow 同款）。 */
 		function latestLine(text) {
 			var visible = String(text).trimEnd();
@@ -1383,7 +1584,10 @@ window.__ModuleLoader__.load({
 					filePath = extractFilePathFromParsed(parsed);
 					lineChanges = extractLineChangesFromParsed(parsed);
 				}
-				stats[kind].push({ name: name, filePath: filePath, fileName: pathBasename(filePath), lineChanges: lineChanges });
+				var item = { name: name, filePath: filePath, fileName: pathBasename(filePath), lineChanges: lineChanges };
+				// 单条命令标题需要命令详情（"运行了Pwsh · cd x:/abc"），command 条目带上 argsRaw
+				if (kind === "command") item.argsRaw = info ? info.argsRaw : undefined;
+				stats[kind].push(item);
 			}
 			return stats;
 		}
@@ -1417,11 +1621,31 @@ window.__ModuleLoader__.load({
 			}
 			return label;
 		}
-		/** 组内 command 类的描述：单次用工具名，多次用次数+单位。 */
+		/** 单条命令详情：优先取 argsRaw 的 command 字段（DSH bash/pwsh 的标准形状），
+		 *  兜底取最长字符串值（summarizeArgs 行为）；空白折叠 + 60 字截断。
+		 *  仅在段内只有一次命令调用时显示。 */
+		function commandDetail(argsRaw) {
+			if (!argsRaw) return "";
+			var fallback = summarizeArgs(argsRaw);
+			try {
+				var obj = JSON.parse(argsRaw);
+				if (obj && typeof obj.command === "string" && obj.command.trim() !== "") {
+					var c = obj.command.replace(/\s+/g, " ").trim();
+					return c.length > 60 ? c.slice(0, 60) + "…" : c;
+				}
+			} catch (e) { /* 非 JSON 走兜底 */ }
+			return fallback;
+		}
+		/** 组内 command 类的描述：单次命令显示"运行了Pwsh · 命令详情"（工具名首字母大写），
+		 *  多次显示次数+单位。 */
 		function commandPartLabel(stats) {
 			var items = stats.command;
 			if (!items || items.length === 0) return "";
-			if (items.length === 1) return _T("segmentCommand") + (items[0].name || "");
+			if (items.length === 1) {
+				var name = capitalizeFirst(items[0].name || "");
+				var detail = commandDetail(items[0].argsRaw);
+				return _T("segmentCommand") + name + (detail ? " · " + detail : "");
+			}
 			return _T("segmentCommand") + items.length + _T("segmentCommandSuffix");
 		}
 		// 段闭合标题缓存：段闭合后（textAfter=true）标题不再随流式变化，按
@@ -1435,21 +1659,25 @@ window.__ModuleLoader__.load({
 				var n = nodes.get(group.keys[i]);
 				if (!n || n.kind !== "tool-call") continue;
 				var root = n.data && n.data.root;
-				var name = "", isErr = "0", rawLen = 0;
+				var name = "", isErr = "0", rawLen = 0, raw = "";
 				if (root && "kind" in root) {
 					var call = root.call || root;
 					name = call.name || "";
 					if (root.isError === true) isErr = "1";
-					if (typeof call.argsRaw === "string") rawLen = call.argsRaw.length;
+					if (typeof call.argsRaw === "string") { raw = call.argsRaw; rawLen = raw.length; }
 				} else if (root) {
 					name = root.name || "";
-					if (typeof root.argsRaw === "string") rawLen = root.argsRaw.length;
+					if (typeof root.argsRaw === "string") { raw = root.argsRaw; rawLen = raw.length; }
 				}
-				parts.push(name + ":" + isErr + ":" + rawLen);
+				// 单条命令标题含命令详情（argsRaw 内容），command 工具必须把内容写进指纹，
+				// 否则同长度不同命令会命中错误缓存（如 "cd x" 与 "cd y"）。
+				var kind = TOOL_KINDS[name.toLowerCase()] || "others";
+				if (kind === "command" && raw !== "") parts.push(name + ":" + isErr + ":" + rawLen + ":" + raw);
+				else parts.push(name + ":" + isErr + ":" + rawLen);
 			}
 			return parts.join("|");
 		}
-		/** 段组头标题：运行中（textAfter=false）取最后一个节点显示当前执行内容，闭合后按
+		/** 步骤折叠栏标题：运行中（textAfter=false）取最后一个节点显示当前执行内容，闭合后按
 		 *  工具类型分组显示详细标题（命令最后）。 */
 		function segmentLabel(group, nodes) {
 			if (group.textAfter && group.toolCount > 0) {
@@ -1506,29 +1734,49 @@ window.__ModuleLoader__.load({
 			return fallback;
 		}
 		/** think 摘要行：运行中横向自动滚动跟随末尾（官方 ReasoningRow 的 data-follow-end 行为）。
-		 *  滚动位置用 rAF 节流（每帧至多一次 layout 读写）——think 流式 chunk 高频更新时，
-		 *  若每次渲染都同步读 scrollWidth / 写 scrollLeft 会造成 layout thrashing、阻塞主线程
-		 *  （表现：标题卡住不动、几秒后一次性刷出全部内容）。官方 ReasoningRow 同样用
-		 *  useThrottledVisualUpdate 节流。 */
+		 *  节流逻辑与官方 useThrottledVisualUpdate 一致：变化时排队一条 3 帧的 rAF 链，
+		 *  链到期后执行"最新"闭包（读最新 scrollWidth / 写 scrollLeft）；链已排队则合并，
+		 *  绝不中途 cancel——旧实现每帧渲染先 cancel 再排队，流式高频渲染下 rAF 永远
+		 *  来不及触发，滚动卡死在几个单词处（换行后新行开头尤为明显）。 */
 		function ThinkSummary(props) {
 			var text = props.text;
 			var running = props.running === true;
 			var ref = react.useRef(null);
-			var rafRef = react.useRef(null);
+			var rafRef = react.useRef(null);     // 待执行的 rAF 链
+			var updateRef = react.useRef(null);  // 始终指向最新滚动闭包
 			var line = running ? latestLine(text) : firstLine(text);
-			react.useEffect(function () {
+
+			// 每帧渲染都刷新最新闭包：链到期时读到的是当前 DOM 尺寸与 running 状态
+			updateRef.current = function () {
 				var el = ref.current;
 				if (!el) return;
-				if (rafRef.current !== null) return; // 本帧已排队，合并多次渲染
-				rafRef.current = raf(function () {
+				el.scrollLeft = running ? el.scrollWidth - el.clientWidth : 0;
+			};
+
+			// 调度：仅当显示内容（line）或运行状态变化时启动/合并一条 3 帧链。
+			// 父级指标 tick 等无关渲染不会触发（依赖收窄），也不会 cancel 已排队的链。
+			react.useEffect(function () {
+				if (rafRef.current !== null) return; // 链已排队，合并本次变化
+				var remaining = 3;
+				var advance = function () {
+					remaining -= 1;
+					if (remaining > 0) {
+						rafRef.current = raf(advance);
+						return;
+					}
 					rafRef.current = null;
-					if (running) el.scrollLeft = el.scrollWidth - el.clientWidth;
-					else el.scrollLeft = 0;
-				});
+					updateRef.current();
+				};
+				rafRef.current = raf(advance);
+			}, [line, running]);
+
+			// 仅卸载时取消未触发的链
+			react.useEffect(function () {
 				return function () {
 					if (rafRef.current !== null) { caf(rafRef.current); rafRef.current = null; }
 				};
-			});
+			}, []);
+
 			return react.createElement(
 				"span",
 				{ ref: ref, className: "ccg-think-summary" + (running ? " ccg-think-summary-live" : ""), "data-follow-end": running || undefined },
@@ -1563,7 +1811,7 @@ window.__ModuleLoader__.load({
 		function capitalizeFirst(s) {
 			return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 		}
-		/** 段组头标题元素：think / 工具运行中用"前缀 + 官方图标 + 名称 + 摘要"（官方行风格），
+		/** 步骤折叠栏标题元素：think / 工具运行中用"前缀 + 官方图标 + 名称 + 摘要"（官方行风格），
 		 *  其余情况为纯文本。 */
 		function segmentTitle(group, nodes) {
 			if (!group.textAfter) {
@@ -1600,9 +1848,9 @@ window.__ModuleLoader__.load({
 			}
 			return segmentLabel(group, nodes);
 		}
-		/** 段级分组渲染：只有 leader 渲染（成员渲染 hiddenMarker，内容由 leader 统一渲染，
-		 *  保证 DOM 顺序：段组头行 → 段内内容（工具卡片 / think 完整内容）→ text 正文）。
-		 *  段内所有含 text 的节点的 text 正文统一在段组头下方渲染（始终显示、不折叠、
+		/** 步骤分组渲染：只有 leader 渲染（成员渲染 hiddenMarker，内容由 leader 统一渲染，
+		 *  保证 DOM 顺序：步骤折叠栏行 → 段内内容（工具卡片 / think 完整内容）→ text 正文）。
+		 *  段内所有含 text 的节点的 text 正文统一在步骤折叠栏下方渲染（始终显示、不折叠、
 		 *  唯一一份——官方渲染 + CSS 隐藏 think 行）。
 		 *  finalKey：回合最终总结节点（由 turn 级单独渲染，段内跳过避免重复）。 */
 		function renderSegment(props, group, open, sessionId, nodes, finalKey) {
@@ -1639,7 +1887,7 @@ window.__ModuleLoader__.load({
 			};
 			var title = segmentTitle(group, nodes);
 			var danger = group.failures > 0;
-			// 顺序：段组头行 → 段内内容（think 完整内容 / 工具卡片，折叠时不可见）
+			// 顺序：步骤折叠栏行 → 段内内容（think 完整内容 / 工具卡片，折叠时不可见）
 			// → 段内 text 正文（始终显示）——think 在 text 上方，符合"先思考后正文"的阅读顺序
 			return react.createElement(
 				"div",
@@ -1653,7 +1901,7 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		// ---- 工具调用节点：段级分组 + 整回合折叠 ----
+		// ---- 工具调用节点：步骤分组 + 整回合折叠 ----
 		function GroupedToolCallView(props) {
 			var node = props.node;
 			var useSession = props.useSession;
@@ -1673,8 +1921,8 @@ window.__ModuleLoader__.load({
 			var manual = useGroupOverride(sessionId, leaderKey);
 			var turn = fold ? fold.turn : undefined;
 			var turnOverride = useTurnOverride(sessionId, turn);
-			// 运行中：大组头默认展开（回复逐条加载、指标实时刷新）；回合结束后默认收起。
-			// 只有大组头节点需要实时秒表（成员不渲染组头）。
+			// 运行中：回合折叠栏默认展开（回复逐条加载、指标实时刷新）；回合结束后默认收起。
+			// 只有回合折叠栏节点需要实时秒表（成员不渲染折叠栏）。
 			var closed = fold ? fold.closed : true;
 			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
 			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
@@ -1697,20 +1945,20 @@ window.__ModuleLoader__.load({
 			// 有效展开状态 = 手动选择优先；否则跟随自动规则。
 			var open = manual === null ? !group.autoCollapsed : manual;
 
-			// 整回合折叠成一个大组头（段级组头不再各自显示）：回合进行中同样成立——
-			// 大组头在 agent 回复开始就出现（默认展开），组头实时显示耗时/token 指标。
+			// 整回合折叠成一个回合折叠栏（步骤折叠栏不再各自显示）：回合进行中同样成立——
+			// 回合折叠栏在 agent 回复开始就出现（默认展开），折叠栏实时显示耗时/token 指标。
 			// 折叠作用域之外（用户消息上方）的节点不参与整回合折叠。
 			// 判定只看"是否存在可折叠的中间节点"（foldable），不要求本回合必须有
-			// 工具调用：仅上下文注入/思考的纯问答回合同样收成一个大组头。
+			// 工具调用：仅上下文注入/思考的纯问答回合同样收成一个回合折叠栏。
 			if (fold && fold.foldable && !fold.outsideScope) {
 				var turnOpen = turnOverride === null ? !closed : turnOverride;
 				var finalKey = fold.finalAssistantKey;
 				if (!fold.isTurnHeader) {
-					// 成员：大组头展开时显示自己的段级内容（非 leader 由段 leader 统一渲染）；收起时隐藏。
+					// 成员：回合折叠栏展开时显示自己的段内内容（非 leader 由段 leader 统一渲染）；收起时隐藏。
 					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderSegment(props, group, open, sessionId, nodes, finalKey)) : hiddenMarker();
 				}
-				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签，无数据则退回
-				// "运行了 N 条命令"）；组头下方常驻分隔线（收起/展开都显示），其下接自己的段级内容。
+				// 折叠栏节点：渲染回合折叠栏（文案 = 本回合性能指标 + 状态标签，无数据则退回
+				// "运行了 N 条命令"）；折叠栏下方常驻分隔线（收起/展开都显示），其下接自己的段内内容。
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnOpen);
 				};
@@ -1725,13 +1973,13 @@ window.__ModuleLoader__.load({
 				);
 			}
 
-			// 未整回合折叠：段级分组逻辑。
+			// 未整回合折叠：步骤分组逻辑。
 			return renderSegment(props, group, open, sessionId, nodes, fold ? fold.finalAssistantKey : undefined);
 		}
 
 		// ---- 助手节点（Think / 最终消息）：整回合折叠支持 ----
-		// 回合进行中：大组头在回复开始就出现，默认展开，内容原样流式加载；
-		// 回合结束后，除最终总结消息外的所有 assistant-step（即 Think 行）都收进大组头。
+		// 回合进行中：回合折叠栏在回复开始就出现，默认展开，内容原样流式加载；
+		// 回合结束后，除最终总结消息外的所有 assistant-step（即 Think 行）都收进回合折叠栏。
 		function GroupedAssistantView(props) {
 			var node = props.node;
 			var useSession = props.useSession;
@@ -1760,12 +2008,12 @@ window.__ModuleLoader__.load({
 			var approxTtft = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
 			var ttftMs = officialTtft !== undefined ? officialTtft : approxTtft;
 			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
-			// 纯 think 节点也参与段级分组（段 = 两个 text 之间的 tool-call + think）。
+			// 纯 think 节点也参与步骤分组（段 = 两个 text 之间的 tool-call + think）。
 			var segGroup = useMemo(function () { return computeGroup(order, nodes, node); }, [order, nodes, node]);
 			var segManual = useGroupOverride(sessionId, segGroup ? segGroup.leaderKey : "");
 			var segOpen = segManual === null ? !(segGroup && segGroup.autoCollapsed) : segManual;
 
-			// 无法安全定位组头（回合内无任何中间节点）/ 节点在折叠作用域之外（用户消息上方）：
+			// 无法安全定位折叠栏（回合内无任何中间节点）/ 节点在折叠作用域之外（用户消息上方）：
 			// 原样委托内置渲染。不要求本回合必须有工具调用——仅上下文注入/思考的回合同样折叠。
 			if (!fold || !fold.foldable || fold.outsideScope) {
 				return renderBuiltinAssistant(props);
@@ -1780,14 +2028,14 @@ window.__ModuleLoader__.load({
 					renderBuiltinAssistant(props)
 				);
 			}
-			// think 节点（含 think+text 同一节点）：纯 think 段（段内无工具调用）不套段组头，
+			// think 节点（含 think+text 同一节点）：纯 think 段（段内无工具调用）不套步骤折叠栏，
 			// 直接官方渲染（官方 Think 行 + text 正文，与官方一致）；工具段（段内有工具）
-			// 收进段级折叠，think 用官方 Think 行、text 正文由 renderSegment 统一在段外渲染。
+			// 收进步骤折叠，think 用官方 Think 行、text 正文由 renderSegment 统一在段外渲染。
 			if (isThinkNode(node) && segGroup) {
 				if (segGroup.toolCount === 0) {
-					// 纯 think 段：不套段组头，直接官方渲染（无重复、无双层折叠）
+					// 纯 think 段：不套步骤折叠栏，直接官方渲染（无重复、无双层折叠）
 					if (fold.isTurnHeader) {
-						// think 是回合第一条中间节点：大组头下方直接接官方 think 行。
+						// think 是回合第一条中间节点：回合折叠栏下方直接接官方 think 行。
 						var toggleTurn3 = function () {
 							setTurnOpen(sessionId, fold.turn, !turnOpen);
 						};
@@ -1804,7 +2052,7 @@ window.__ModuleLoader__.load({
 					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinAssistant(props)) : hiddenMarker();
 				}
 				if (fold.isTurnHeader) {
-					// think 是回合第一条中间节点：同时是 turn 组头和段 leader——大组头下方接段级折叠行。
+					// think 是回合第一条中间节点：同时是 turn 折叠栏和段 leader——回合折叠栏下方接步骤折叠行。
 					var toggleTurn2 = function () {
 						setTurnOpen(sessionId, fold.turn, !turnOpen);
 					};
@@ -1824,10 +2072,10 @@ window.__ModuleLoader__.load({
 				return renderSegment(props, segGroup, segOpen, sessionId, nodes, fold.finalAssistantKey);
 			}
 			if (!fold.isTurnHeader) {
-				// 中间 Think 节点（含 text 的普通消息）：大组头展开时显示；收起时隐藏。
+				// 中间 Think 节点（含 text 的普通消息）：回合折叠栏展开时显示；收起时隐藏。
 				return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinAssistant(props)) : hiddenMarker();
 			}
-			// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；组头下方常驻
+			// 折叠栏节点：渲染回合折叠栏（文案 = 本回合性能指标 + 状态标签）；折叠栏下方常驻
 			// 分隔线（收起/展开都显示），其下接自己的内容（Think 行）。
 			var toggleTurn = function () {
 				setTurnOpen(sessionId, fold.turn, !turnOpen);
@@ -1843,8 +2091,8 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		// ---- 上下文注入节点（context）：整回合折叠时收进大组头 ----
-		// 若上下文注入恰好是回合第一条"中间节点"，则由它渲染大组头。
+		// ---- 上下文注入节点（context）：整回合折叠时收进回合折叠栏 ----
+		// 若上下文注入恰好是回合第一条"中间节点"，则由它渲染回合折叠栏。
 		function GroupedContextView(props) {
 			var node = props.node;
 			var useSession = props.useSession;
@@ -1874,7 +2122,7 @@ window.__ModuleLoader__.load({
 			var ttftMs = officialTtft !== undefined ? officialTtft : approxTtft;
 			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
 
-			// 无法安全定位组头（回合内无任何中间节点）/ 折叠作用域之外（用户消息上方）的
+			// 无法安全定位折叠栏（回合内无任何中间节点）/ 折叠作用域之外（用户消息上方）的
 			// 上下文行不参与折叠，始终原样渲染。不要求本回合必须有工具调用——仅上下文
 			// 注入/思考的回合同样折叠。
 			if (!fold || !fold.foldable || fold.outsideScope) {
@@ -1882,7 +2130,7 @@ window.__ModuleLoader__.load({
 			}
 			var turnOpen = turnOverride === null ? !closed : turnOverride;
 			if (fold.isTurnHeader) {
-				// 组头节点：渲染大组头（文案 = 本回合性能指标 + 状态标签）；组头下方常驻
+				// 折叠栏节点：渲染回合折叠栏（文案 = 本回合性能指标 + 状态标签）；折叠栏下方常驻
 				// 分隔线（收起/展开都显示），其下接自己的内容（上下文注入行）。
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnOpen);
@@ -1907,12 +2155,12 @@ window.__ModuleLoader__.load({
 			return react.createElement(Builtin, props);
 		}
 
-		// ---- 大组头 0 秒占位 ----
+		// ---- 回合折叠栏 0 秒占位 ----
 		// 用户发送消息后、agent 输出第一条中间节点前，会话处于"运行中且最后一条消息是
-		// user"：此时没有任何节点承载大组头（官方大组头由回合第一条中间节点渲染），
-		// 模型响应前的等待期大组头迟迟不出现。这里在 user 消息下方渲染大组头占位
+		// user"：此时没有任何节点承载回合折叠栏（官方回合折叠栏由回合第一条中间节点渲染），
+		// 模型响应前的等待期回合折叠栏迟迟不出现。这里在 user 消息下方渲染回合折叠栏占位
 		// （耗时从回合开始计时，0 秒即出现）；第一条中间节点到达后条件失效，占位消失，
-		// 大组头转交中间节点正式渲染（位置连续：都在 user 消息下方）。
+		// 回合折叠栏转交中间节点正式渲染（位置连续：都在 user 消息下方）。
 		function GroupedUserView(props) {
 			var node = props.node;
 			var useSession = props.useSession;
@@ -1961,6 +2209,26 @@ window.__ModuleLoader__.load({
 		// 我们的条目"abdicate"（踢出槽位），折叠随即永久失效。
 		exports.inject = ["slots", "connection"];
 		exports.apply = function (ctx) {
+			// 一次性"新版本更新说明"通知：独立 React 根挂在 <body> 上，与折叠渲染无关。
+			// 特性检测（document / react-dom createRoot / ctx.effect）让极简宿主与
+			// 测试环境（mock ctx 无 effect、loader 不提供 react-dom）静默跳过。
+			if (typeof document !== "undefined" && ReactDOM !== null && typeof ReactDOM.createRoot === "function" && typeof ctx.effect === "function") {
+				ctx.effect(function () {
+					var host = document.getElementById("__dsh-turn-fold-notice");
+					if (!host && document.body && typeof document.createElement === "function") {
+						host = document.createElement("div");
+						host.id = "__dsh-turn-fold-notice";
+						document.body.appendChild(host);
+					}
+					if (!host) return undefined;
+					var root = ReactDOM.createRoot(host);
+					root.render(react.createElement(UpdateNotice));
+					return function () {
+						try { root.unmount(); } catch (e) { /* already gone */ }
+						if (host.parentNode) host.parentNode.removeChild(host);
+					};
+				});
+			}
 			ctx.inject(["slots", "connection"], function (scope) {
 				slotsService = scope.slots;
 				var connection = scope.connection;

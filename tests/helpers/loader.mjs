@@ -32,6 +32,7 @@ const TEST_EXPORTS = [
   'GroupHeader',
   'RollDigit',
   'AnimatedLabel',
+  'ThinkSummary',
   'renderBuiltinToolCall',
   'renderToolview',
   'builtinComponent',
@@ -84,7 +85,7 @@ export function loadPlugin(options = {}) {
   win.__ModuleLoader__ = {
     load(registration) {
       registrations.push(registration)
-      if (registration.id === 'dsh-turn-fold') capturedFactory = registration.factory
+      if (registration.id === '@winteries/dsh-turn-fold') capturedFactory = registration.factory
     },
   }
 
@@ -102,7 +103,7 @@ export function loadPlugin(options = {}) {
   const fn = new Function('window', 'document', 'require', injected)
   fn(win, doc, mockRequire)
 
-  if (!capturedFactory) throw new Error('client.js 未注册 dsh-turn-fold factory（window/__ModuleLoader__ 条件未命中）')
+  if (!capturedFactory) throw new Error('client.js 未注册 @winteries/dsh-turn-fold factory（window/__ModuleLoader__ 条件未命中）')
 
   const moduleExports = capturedFactory(mockRequire)
   if (!moduleExports || typeof moduleExports.apply !== 'function') {

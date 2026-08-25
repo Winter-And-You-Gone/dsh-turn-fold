@@ -27,7 +27,18 @@ if (-not $pkg.'dsh'.client -or $pkg.'dsh'.client.platform -ne 'web') {
 }
 if (-not $pkg.exports.'./client') { throw "$name 缺少 exports['./client']，客户端模块系统找不到 bundle" }
 
+# 入口 id 是插件的稳定标识（client.js 按它注册、bundle 补丁按它插入），
+# 与 npm 包名无关——scoped 包名（如 @scope/name）不得作为 id 使用。
+# 从插件自带的 bundle 补丁里读第一个 `- id:`，读不到时回退到包名。
+$entryId = $name
+$bundlePatch = Join-Path $PluginSource 'cordis.patch.yml'
+if (Test-Path -LiteralPath $bundlePatch) {
+  $idMatch = [regex]::Match([IO.File]::ReadAllText($bundlePatch), '(?m)^\s*-\s+id:\s*([^\s#]+)')
+  if ($idMatch.Success) { $entryId = $idMatch.Groups[1].Value.Trim().Trim("'").Trim('"') }
+}
+
 Write-Host "-> plugin : $name ($PluginSource)"
+Write-Host "-> entry  : $entryId"
 Write-Host "-> profile: $ProfileDir"
 
 # ---- 1) 链接到 profile node_modules ----
@@ -35,6 +46,9 @@ $nmDir = Split-Path -Parent $ProfileDir
 $target = Join-Path $nmDir ('node_modules' ) 
 if (-not (Test-Path -LiteralPath $target)) { New-Item -ItemType Directory -Path $target -Force | Out-Null }
 $link = Join-Path $target $name
+# scoped 包名（@scope/name）需要先建 @scope 父目录，mklink 不会自动创建
+$linkParent = Split-Path -Parent $link
+if (-not (Test-Path -LiteralPath $linkParent)) { New-Item -ItemType Directory -Path $linkParent -Force | Out-Null }
 if (Test-Path -LiteralPath $link) {
   $it = Get-Item -LiteralPath $link -Force
   if ($it.LinkType -eq 'Junction' -and $it.Target -eq $PluginSource) {
@@ -68,8 +82,8 @@ $patchFile = Join-Path $ProfileDir 'cordis.patch.yml'
 $patchText = if (Test-Path -LiteralPath $patchFile) { [IO.File]::ReadAllText($patchFile) } else { '' }
 # 去掉文件顶部可能的空 `[]`（空 profile 占位）
 $patchText = [regex]::Replace($patchText, '(?m)^\s*\[\s*\]\s*\r?\n?', '')
-if ($patchText -notmatch "(?m)^\s*- id: $([regex]::Escape($name))\s*$") {
-  $patchText = $patchText.TrimEnd() + "`n`n- insert:`n    - id: $name`n      name: '$name'`n"
+if ($patchText -notmatch "(?m)^\s*- id: $([regex]::Escape($entryId))\s*$") {
+  $patchText = $patchText.TrimEnd() + "`n`n- insert:`n    - id: $entryId`n      name: '$name'`n"
   [IO.File]::WriteAllText($patchFile, $patchText, [Text.UTF8Encoding]::new($false))
   Write-Host "-> registered in $patchFile"
 } else {

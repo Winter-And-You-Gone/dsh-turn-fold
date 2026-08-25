@@ -31,11 +31,11 @@ describe('CSS 折叠隐藏规则', () => {
     assert.match(css, /\[data-ccg-turn-folded\] \[data-variant="think"\]\{display:none\}/)
   })
 
-  it('注入的 style 标签包含大组头分隔线规则（组头与内容之间的水平细线）', () => {
+  it('注入的 style 标签包含回合折叠栏分隔线规则（折叠栏与内容之间的水平细线）', () => {
     const tag = document.querySelector('style[data-plugin-css="dsh-turn-fold/style"]')
     const css = tag.textContent
     assert.match(css, /\.ccg-turn-divider\{height:1px/, '分隔线应为 1px 水平细线')
-    assert.match(css, /\.ccg-group-root\[data-ccg-turn\]\[data-ccg-open\] \.ccg-header\{margin-bottom:0\}/, '大组头展开时组头底距由分隔线接管')
+    assert.match(css, /\.ccg-group-root\[data-ccg-turn\]\[data-ccg-open\] \.ccg-header\{margin-bottom:0\}/, '回合折叠栏展开时折叠栏底距由分隔线接管')
   })
 
   it('注入的 style 标签包含滚轮数字规则与 sr-only 规则', () => {

@@ -13,7 +13,7 @@ Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', lan
 const { test: T } = loadPlugin()
 
 // ─────────────────────────── computeGroup ───────────────────────────
-describe('computeGroup（段级分组）', () => {
+describe('computeGroup（步骤分组）', () => {
   it('单条工具调用：count=1 · 自身为 leader', () => {
     const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
     const nodes = [
@@ -109,7 +109,7 @@ describe('computeGroup（段级分组）', () => {
     assert.equal(g.anyRunning, true)
   })
 
-  it('autoCollapsed 恒 true（段级折叠始终默认收起 · 运行中也不例外）', () => {
+  it('autoCollapsed 恒 true（步骤折叠始终默认收起 · 运行中也不例外）', () => {
     const nodes = [
       userNode('u', 100),
       asNode('as', 200),
@@ -161,8 +161,8 @@ describe('computeGroup（段级分组）', () => {
   })
 })
 
-// ─────────────────────────── segmentLabel / summarizeArgs（段组头标题） ───────────────────────────
-describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
+// ─────────────────────────── segmentLabel / summarizeArgs（步骤折叠栏标题） ───────────────────────────
+describe('segmentLabel / summarizeArgs（步骤折叠栏标题）', () => {
   // 段闭合标题缓存按 leaderKey+keys 记忆；测试复用节点 key（如 e1/r1） · 需清理防串
   beforeEach(() => { T.segmentLabelCache.clear() })
   const toolWithArgs = (key, seq, { running = false, name = 'Pwsh', argsRaw } = {}) =>
@@ -270,7 +270,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     let s = buildSnapshot(nodes, { turnEnds: new Map() })
     let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 运行了pwsh —— 1条执行失败', 'read 失败计入失败数（多条工具调用时 1 条也带条数）')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 运行了Pwsh —— 1条执行失败', 'read 失败计入失败数（多条工具调用时 1 条也带条数）')
     // edit + pwsh 都失败 → 2 条执行失败
     nodes = [
       userNode('u', 100),
@@ -281,7 +281,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     s = buildSnapshot(nodes, { turnEnds: new Map() })
     g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js 运行了pwsh —— 2条执行失败', 'edit+pwsh 失败计入失败数')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js 运行了Pwsh —— 2条执行失败', 'edit+pwsh 失败计入失败数')
   })
 
   it('段闭合：单条工具调用失败 → 显示"执行失败"（不带条数）', () => {
@@ -293,7 +293,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('err'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了pwsh —— 执行失败', '单条工具调用失败不带条数')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了Pwsh —— 执行失败', '单条工具调用失败不带条数')
   })
 
   it('段闭合：单次命令显示工具名 · 多次显示次数+单位', () => {
@@ -305,7 +305,43 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了pwsh', '单次命令显示工具名')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了Pwsh', '单次命令显示工具名')
+  })
+
+  it('段闭合：单次命令显示"运行了Pwsh · 命令详情"（command 字段）· 多次命令不显示详情', () => {
+    const toolWithArgs = (key, seq, argsRaw) =>
+      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name: 'pwsh', argsRaw, isError: false } } })
+    // 单次命令：优先取 command 字段
+    let nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithArgs('c1', 300, JSON.stringify({ command: 'cd x:/abc' })),
+      asNode('as2', 400),
+    ]
+    let s = buildSnapshot(nodes, { turnEnds: new Map() })
+    let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('c1'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了Pwsh · cd x:/abc', '单次命令显示命令详情')
+    // 无 command 字段：兜底取最长字符串值
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithArgs('c2', 300, JSON.stringify({ args: ['cd', 'x:/abc'] })),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('c2'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了Pwsh · x:/abc', '无 command 字段时兜底最长字符串')
+    // 两次命令：只显示次数，不显示详情
+    nodes = [
+      userNode('u', 100),
+      asNode('as', 200),
+      toolWithArgs('c3', 300, JSON.stringify({ command: 'cd x:/abc' })),
+      toolWithArgs('c4', 301, JSON.stringify({ command: 'git status' })),
+      asNode('as2', 400),
+    ]
+    s = buildSnapshot(nodes, { turnEnds: new Map() })
+    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('c3'))
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令', '多次命令不显示详情')
   })
 
   it('段闭合：仅读取工具——同一文件显示文件名 · 多个文件显示数量', () => {
@@ -347,7 +383,7 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了client.js 运行了pwsh', '读取在前、命令在最后')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了client.js 运行了Pwsh', '读取在前、命令在最后')
   })
 
   it('段闭合：混合 读取+编辑+命令 —— 读取、编辑按序 · 命令始终最后', () => {
@@ -484,9 +520,9 @@ describe('segmentLabel / summarizeArgs（段级折叠组头标题）', () => {
 
 // ─────────────────────────── computeTurnFold ───────────────────────────
 describe('computeTurnFold（整回合折叠）', () => {
-  it('运行中：finalAssistantKey 为 null · 第一条中间节点即组头 · foldable=true', () => {
-    // 回合进行中（turnEnds 为空）：大组头应从回复开始就出现——
-    // 当前流式 assistant-step 不作为"最终总结"豁免 · 第一条中间节点就是组头。
+  it('运行中：finalAssistantKey 为 null · 第一条中间节点即折叠栏 · foldable=true', () => {
+    // 回合进行中（turnEnds 为空）：回合折叠栏应从回复开始就出现——
+    // 当前流式 assistant-step 不作为"最终总结"豁免 · 第一条中间节点就是折叠栏。
     const nodes = [
       userNode('u-run', 100),
       asNode('as-run-1', 200, { status: 'running' }),
@@ -503,16 +539,16 @@ describe('computeTurnFold（整回合折叠）', () => {
     assert.equal(h.headerKey, 'as-run-1')
     assert.equal(h.isTurnHeader, true)
     assert.equal(h.foldable, true, '运行中只要存在作用域内中间节点即可折叠')
-    // 其余节点都是成员（非组头、非最终）
+    // 其余节点都是成员（非折叠栏、非最终）
     for (const key of ['tc-run', 'as-run-2']) {
       const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get(key))
-      assert.equal(f.isTurnHeader, false, `${key} 不是组头`)
+      assert.equal(f.isTurnHeader, false, `${key} 不是折叠栏`)
       assert.equal(f.isFinalAssistant, false, `${key} 不是最终消息`)
       assert.equal(f.foldable, true, `${key} 参与折叠`)
     }
   })
 
-  it('运行中单条消息：该消息自身即组头（回复开始即出现大组头）', () => {
+  it('运行中单条消息：该消息自身即折叠栏（回复开始即出现回合折叠栏）', () => {
     const nodes = [userNode('u-solo', 100), asNode('as-solo', 200, { status: 'running' })]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-solo'))
@@ -565,7 +601,7 @@ describe('computeTurnFold（整回合折叠）', () => {
     const fold = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-step1'))
     assert.equal(fold.headerKey, 'as-step1')
     assert.equal(fold.outsideScope, false)
-    // ctx-approval 在作用域外：绝不作组头
+    // ctx-approval 在作用域外：绝不作折叠栏
     const ctxFold = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('ctx-approval'))
     assert.equal(ctxFold.outsideScope, true)
     assert.equal(ctxFold.isTurnHeader, false)
@@ -615,7 +651,7 @@ describe('computeTurnFold（整回合折叠）', () => {
     assert.equal(mid.outsideScope, true)
   })
 
-  it('真实数据 TURN13：as-1 为组头、as-5 为最终消息、其余全部成员且 foldable', () => {
+  it('真实数据 TURN13：as-1 为折叠栏、as-5 为最终消息、其余全部成员且 foldable', () => {
     for (const n of TURN13_NODES) {
       if (n.kind === 'user' || n.kind === 'turn-tail') continue
       const fold = T.computeTurnFold(TURN13.chat.order, TURN13.chat.nodes, TURN13.chat.locations, TURN13.turnEnds, n)
@@ -631,7 +667,7 @@ describe('computeTurnFold（整回合折叠）', () => {
     assert.equal(final.isFinalAssistant, true)
     for (const key of ['tc-revert', 'tc-check', 'tc-restore', 'tc-verify', 'as-2', 'as-3', 'as-4']) {
       const f = T.computeTurnFold(TURN13.chat.order, TURN13.chat.nodes, TURN13.chat.locations, TURN13.turnEnds, TURN13.chat.nodes.get(key))
-      assert.equal(f.isTurnHeader, false, `${key} 不是组头`)
+      assert.equal(f.isTurnHeader, false, `${key} 不是折叠栏`)
       assert.equal(f.isFinalAssistant, false, `${key} 不是最终消息`)
     }
   })
@@ -656,7 +692,7 @@ describe('computeTurnFold（整回合折叠）', () => {
     assert.equal(as.headerKey, 'as-o-1')
   })
 
-  it('TWO_USERS fixture：ctx-mid 在作用域外 · as-1 是组头', () => {
+  it('TWO_USERS fixture：ctx-mid 在作用域外 · as-1 是折叠栏', () => {
     const mid = T.computeTurnFold(TWO_USERS.chat.order, TWO_USERS.chat.nodes, TWO_USERS.chat.locations, TWO_USERS.turnEnds, TWO_USERS.chat.nodes.get('ctx-mid'))
     assert.equal(mid.outsideScope, true)
     const as = T.computeTurnFold(TWO_USERS.chat.order, TWO_USERS.chat.nodes, TWO_USERS.chat.locations, TWO_USERS.turnEnds, TWO_USERS.chat.nodes.get('as-2u-1'))
@@ -672,7 +708,7 @@ describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
     assert.deepEqual(m, TURN13_METRICS)
   })
 
-  it('TURN13 大组头文案与真实会话一致', () => {
+  it('TURN13 回合折叠栏文案与真实会话一致', () => {
     const m = T.computeTurnMetrics(13, TURN13.chat.nodes, TURN13.chat.locations, TURN13.turnTimings)
     assert.equal(T.turnHeaderLabel(m), TURN13_LABEL)
   })
