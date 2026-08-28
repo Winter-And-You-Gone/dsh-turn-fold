@@ -19,3 +19,6 @@ Thumbs.db
 
 # Tooling
 .workbuddy/
+
+# Local session-data scratch (never commit conversations)
+.session-extract/
