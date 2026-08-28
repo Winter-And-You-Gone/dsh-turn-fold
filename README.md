@@ -333,4 +333,9 @@ git push --follow-tags
   - CSS 选择器：`[data-chat-flow-kind]`、`[data-variant="think"]`（隐藏折叠成员 flowItem
     与最终总结的 Think 行）；
   - Slot 系统：`conversation.chat.node` 内置条目（`priority: 0`）、
-    `slotsService.entriesOfSlot()`（委托渲染与 `tool.call.toolview` 子视图分发）。
+    `slotsService.entriesOfSlot()`（委托渲染与 `tool.call.toolview` 子视图分发）；
+  - Locale 命名空间：条目的 `locale:` 声明决定注入的 `t` 词典——0.1.2+ 官方对话词典在
+    `'chat'` 命名空间（`message.think` / `row.running` 等 key），旧版在 `'conversation'`；
+    插件注册时探测官方条目声明或 `ctx.locale`（`detectChatLocale`），转发给官方组件的
+    `t` 一律过 `wrapLocaleT` 兜底（查不到 key 时用内置双语小词典，不再裸显
+    `"message.think"`）。

@@ -29,10 +29,12 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const { test: T, exports: pluginExports, React } = loadPlugin({ window: dom.window })
 
 // ── 模拟内置组件 / slots service（与 unit.render.test.mjs 同款的最小 mock） ──
+const assistantNodes = []
 function MockToolCallTree(props) {
   return React.createElement('div', { className: 'mock-tool-card', 'data-call': props.node?.key }, 'TOOL')
 }
 function MockAssistantNodeView(props) {
+  assistantNodes.push(props.node)
   return React.createElement('div', { className: 'mock-assistant', 'data-node': props.node?.key }, 'AS')
 }
 function MockUserNodeView(props) {
@@ -110,8 +112,35 @@ function setFoldMode(mode) {
 beforeEach(() => {
   // 折叠模式是模块级状态 + localStorage 持久化：每个用例前回到默认 turn-fold
   setFoldMode('turn-fold')
+  assistantNodes.length = 0
 })
 afterEach(unmount)
+
+describe('正文渲染不含 Think 行（textOnlyNode 结构级过滤，防运行版本差异露出）', () => {
+  it('收起回合（仅最终总结可见）：内置渲染不收到 reasoning+text 混合块', () => {
+    mount({})
+    assert.ok(assistantNodes.length > 0, '应有内置 assistant 渲染调用')
+    for (const n of assistantNodes) {
+      const kinds = (n?.data?.blocks || []).map((b) => b && b.kind)
+      assert.ok(!kinds.includes('text') || !kinds.includes('reasoning'),
+        '内置渲染不应收到 reasoning+text 混合块（Think 行会露出）: ' + kinds.join(','))
+    }
+  })
+
+  it('展开回合（段内 think 行 + 段外正文）：同上，且段外正文只含 text 块', () => {
+    mount({})
+    act(() => { T.setTurnOpen('sess-1', 13, true) })
+    assert.ok(container.querySelector('.mock-assistant'), '展开后应有内置 assistant 内容')
+    let sawTextBody = false
+    for (const n of assistantNodes) {
+      const kinds = (n?.data?.blocks || []).map((b) => b && b.kind)
+      assert.ok(!kinds.includes('text') || !kinds.includes('reasoning'),
+        '内置渲染不应收到 reasoning+text 混合块: ' + kinds.join(','))
+      if (kinds.length > 0 && kinds.every((k) => k === 'text')) sawTextBody = true
+    }
+    assert.ok(sawTextBody, '应存在仅 text 块的段外正文渲染（textOnlyNode）')
+  })
+})
 
 describe('0.1.1 路径：useSession 快照（.chat + 顶层 turnEnds/turnTimings）', () => {
   it('整回合折叠照常工作（适配层回归：顶层字段兜底）', () => {
@@ -226,5 +255,58 @@ describe('官方 diffs 读取链（0.1.1 callView/resultView · 0.1.2 meta.diffs
     assert.equal(T.validDiffHunks(HUNKS), HUNKS)
     // oldText 为 null 合法（新建文件），只要有 newText
     assert.deepEqual(T.validDiffHunks([{ path: 'new.ts', oldText: null, newText: 'x' }]), [{ path: 'new.ts', oldText: null, newText: 'x' }])
+  })
+})
+
+describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "message.think" 裸 key 露出）', () => {
+  it('wrapLocaleT：宿主 t 全部未命中时用内置词典兜底（zh/en 随界面语言）', () => {
+    const broken = (key) => key // locale 服务 ?? key 的未命中行为
+    assert.equal(T.wrapLocaleT(broken)('message.think'), '思考')
+    assert.equal(T.wrapLocaleT(broken)('row.running'), '运行中')
+    const prev = dom.window.document.documentElement.lang
+    dom.window.document.documentElement.lang = 'en' // 用插件实例自己的 dom（isolation=none 下 global document 属于最后加载的文件）
+    try {
+      assert.equal(T.wrapLocaleT(broken)('message.think'), 'Think')
+      assert.equal(T.wrapLocaleT(broken)('row.failed'), 'Failed')
+    } finally {
+      dom.window.document.documentElement.lang = prev
+    }
+  })
+
+  it('wrapLocaleT：命中原样透传、params 透传、t 缺失/抛错走兜底、未知 key 返回键名', () => {
+    let gotParams = null
+    const working = (key, params) => { gotParams = params; return key === 'message.think' ? '思考' : key }
+    assert.equal(T.wrapLocaleT(working)('message.think'), '思考')
+    T.wrapLocaleT(working)('message.think', { count: 3 })
+    assert.deepEqual(gotParams, { count: 3 })
+    assert.equal(T.wrapLocaleT(undefined)('message.think'), '思考', 't 缺失（测试/极简宿主）走兜底')
+    assert.equal(T.wrapLocaleT(() => { throw new Error('boom') })('message.think'), '思考', 't 抛错不外泄')
+    assert.equal(T.wrapLocaleT(undefined)('nope.key'), 'nope.key', '词典外的 key 原样返回')
+  })
+
+  it('注册条目 locale 跟随官方条目声明（新版 chat），无官方条目且无 chat 词典时回退 conversation', () => {
+    const regsChat = []
+    const officialSlots = {
+      entries: () => [{ component: function Official() {}, options: { key: 'tool-call', priority: 0, locale: 'chat' } }],
+      entriesOfSlot: () => [],
+      inject: (name, factory) => { regsChat.push(factory()) },
+      register: (options, component) => ({ component, options }),
+    }
+    pluginExports.apply({ inject(deps, cb) { cb({ slots: officialSlots, connection: {} }) } })
+    const oursChat = regsChat.filter((r) => r.options.priority === -1 && r.options.name === 'conversation.chat.node')
+    assert.ok(oursChat.length >= 4, '注册了 4 个 chat 节点 shadow 条目')
+    for (const r of oursChat) assert.equal(r.options.locale, 'chat', '跟随官方声明的 chat 命名空间')
+
+    const regsFallback = []
+    const emptySlots = {
+      entries: () => [],
+      entriesOfSlot: () => [],
+      inject: (name, factory) => { regsFallback.push(factory()) },
+      register: (options, component) => ({ component, options }),
+    }
+    pluginExports.apply({ inject(deps, cb) { cb({ slots: emptySlots, connection: {} }) } })
+    const oursFallback = regsFallback.filter((r) => r.options.priority === -1 && r.options.name === 'conversation.chat.node')
+    assert.ok(oursFallback.length >= 4)
+    for (const r of oursFallback) assert.equal(r.options.locale, 'conversation', '回退 conversation（0.1.1 行为不变）')
   })
 })

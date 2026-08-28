@@ -95,6 +95,8 @@ const TEST_EXPORTS = [
   'settledToolDiffs',
   'runningToolDiffs',
   'useChatSnapshotData',
+  'wrapLocaleT',
+  'CHAT_T_FALLBACK',
 ]
 
 /**

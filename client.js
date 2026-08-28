@@ -218,6 +218,28 @@ window.__ModuleLoader__.load({
 			return dict[key] !== undefined ? dict[key] : key;
 		}
 
+		// ---- 官方组件 t 座席兜底（修复 "message.think" 裸 key 露出）----
+		// 新版 ui-chat 把对话词典挪进 'chat' 命名空间（'message.think'/'row.running' 等
+		// key），官方 ReasoningRow 等组件用注入的 t 取标题；locale 服务查不到 key 时
+		// 原样返回 key（`?? key` 兜底）。我们 shadow 条目若拿到错误命名空间（旧版是
+		// 'conversation'）或宿主词典偏旧，转发给官方组件的 t 就会裸显 "message.think"。
+		// 包装策略：查到原样透传；未命中（返回 key 本身 / 非 string / 抛错 / t 缺失）
+		// 时用内置双语小词典兜底，覆盖委托渲染里高频可见的 key。
+		var CHAT_T_FALLBACK = {
+			zh: { "message.think": "思考", "row.running": "运行中", "row.failed": "失败" },
+			en: { "message.think": "Think", "row.running": "Running", "row.failed": "Failed" }
+		};
+		function wrapLocaleT(t) {
+			return function (key, params) {
+				var out;
+				try { out = t ? t(key, params) : undefined; } catch (e) { out = undefined; }
+				if (typeof out === "string" && out !== key) return out;
+				var dict = CHAT_T_FALLBACK[currentLocale()] || CHAT_T_FALLBACK.en;
+				if (dict && Object.prototype.hasOwnProperty.call(dict, key)) return dict[key];
+				return typeof out === "string" ? out : key;
+			};
+		}
+
 		// ---- React ----
 		var react = require("react");
 		var useMemo = react.useMemo;
@@ -391,12 +413,14 @@ window.__ModuleLoader__.load({
 			tag.textContent = [
 				/* 组容器：不加 margin，行间距完全交给官方 column 的 16px 节奏 */
 				".ccg-group-root{display:flex;flex-direction:column}",
-				/* 展开时折叠栏与内容之间留 8px（折叠时折叠栏独立成行，间距即官方 16px） */
-				".ccg-group-root[data-ccg-open] .ccg-header{margin-bottom:8px}",
-				/* 回合折叠栏下方常驻 1px 分隔线（收起/展开都显示，参考图：折叠栏文字
-				   下方的水平细线）。步骤折叠栏保持原 8px 间距；回合折叠栏由分隔线自带
-				   上下留白（上 4px / 下 8px）。 */
-				".ccg-group-root[data-ccg-turn][data-ccg-open] .ccg-header{margin-bottom:0}",
+				/* 展开时折叠栏与内容之间留 16px——与 .ccg-fold-body 的成员间距 gap:16px 同节奏。
+				   间距必须挂在 .ccg-fold-clip（group-root 的直接子元素）上而非 .ccg-header：
+				   GroupHeader 渲染的是 DisclosureRow，"ccg-header" 类在其内部 DOM、不是
+				   group-root 的直接子元素——header 上用后代选择器会跨层泄漏（回合 FoldClip
+				   内嵌套的步骤折叠栏被回合规则命中：0 规则压扁间距、16px 规则误加间距），
+				   用 > 直接子选择器则什么都匹配不上。fold-clip 天然锚定最近的 group-root；
+				   :not([data-ccg-turn]) 排除回合栏（其折叠栏-内容间距由分隔线 4px/8px 承担）。 */
+				".ccg-group-root[data-ccg-open]:not([data-ccg-turn]) > .ccg-fold-clip{margin-top:16px}",
 				/* 分隔线颜色：--dsw-alias-line-secondary 在 DSH 0.1.1/0.1.2 均无定义（官方自身
 				   也有悬空引用），两版的线 token 是 --dsw-alias-border-l1，var() 链式兜底后
 				   仍回退字面量（老版本/未知主题） */
@@ -409,7 +433,7 @@ window.__ModuleLoader__.load({
 				/* 折叠内容：flex column + 16px gap——段内命令（工具卡片 / Think 行）之间的
 				   间距与官方聊天流 column 节奏一致 */
 				".ccg-fold-body{display:flex;flex-direction:column;gap:16px;min-width:0;min-height:0;overflow:hidden}",
-				".ccg-fold-clip.ccg-fold-clip-open .ccg-fold-body{overflow:visible}",
+				".ccg-fold-clip.ccg-fold-clip-open > .ccg-fold-body{overflow:visible}",
 				"@media (prefers-reduced-motion: reduce){.ccg-fold-clip{transition:none!important}}",
 				/* 回合折叠栏展开时，非第一个段的成员节点不经过 FoldClip 高度动画，
 				   用淡入+微位移入场动画避免"瞬间出现"（.22s ease-out） */
@@ -436,8 +460,8 @@ window.__ModuleLoader__.load({
 				   !important：DisclosureRow 官方 title 样式的 color 优先级更高，
 				   不加 !important 时 hover 变色会被覆盖。不可用 CSS 变量
 				   --dsw-alias-brand-primary（暗色主题下解析为白色）。 */
-				".ccg-file-link{cursor:pointer;transition:color .15s ease}",
-				".ccg-file-link:hover{color:#4D6BFE!important}",
+				".ccg-file-link{cursor:pointer;transition:color .15s ease,text-decoration-color .15s ease;text-decoration-line:underline;text-decoration-style:solid;text-decoration-color:transparent;text-underline-offset:3px}",
+				".ccg-file-link:hover{color:#4D6BFE!important;text-decoration-color:#fff!important}",
 				".ccg-header-chevron{color:var(--dsw-alias-label-secondary,#9ca3af)}",
 				/* 步骤折叠栏扑克牌图标：前导区隐藏（内建 chevron 一并消失），图标并入标题；
 				   同一套牌张元素，开合时按 data-ccg-open 改写 transform，逐张牌形变过渡。
@@ -518,10 +542,20 @@ window.__ModuleLoader__.load({
 				/* 含 think+text 节点拆分渲染：段外 text 正文的官方 think 行隐藏
 				   （段外只显示 text 正文，段内展开时官方渲染含完整 think 行） */
 				".ccg-text-only [data-variant=\"think\"]{display:none}",
-				/* 段外 text 正文：顶部 16px 与步骤折叠栏行拉开（官方 MarkdownText 的 p 首尾 margin 为 0）；
-				   底部不额外加 padding——text 到下一个步骤折叠栏 flowItem 之间由官方 column 的
-				   16px gap 承担，避免 16px + 16px 叠加成 32px 造成间距过大 */
+				/* 段外 text 正文：顶部 16px 与步骤折叠栏行拉开。官方 MarkdownText 的 p 是
+				   margin:16px 0，靠其自身 first/last-child 重置归零——但运行中的官方 bundle
+				   该重置未必生效（版本差异），p 的上下 margin 会与这里的 16px padding、
+				   官方 column 的 16px gap 叠加成 32~48px。插件侧用结构选择器镜像官方重置
+				   （CSS Modules 哈希类名不可依赖，p/子元素用 >*>*>*> 定位到
+				   .ccg-text-only > AssistantMarkdown root > body > .markdown > 首尾块），
+				   保证 折叠栏→正文 = 16px、正文→下一元素 = 16px，不随官方版本漂移。 */
 				".ccg-text-only{padding:16px 0 0}",
+				".ccg-text-only>*>*>*>:first-child{margin-top:0!important}",
+				".ccg-text-only>*>*>*>:last-child{margin-bottom:0!important}",
+				/* 最终总结正文同理：think 行隐藏后首块即正文，p 的上下 margin 会额外叠加
+				   （分隔线→正文应为本插件设计的 8px；展开回合内 上一成员→正文 = 官方 16px gap） */
+				"[data-ccg-turn-folded]>*>*>*>:first-child{margin-top:0!important}",
+				"[data-ccg-turn-folded]>*>*>*>:last-child{margin-bottom:0!important}",
 				/* 一次性更新说明通知：右下角浮动卡片（独立于折叠样式，自成一类 ccg-notice） */
 				".ccg-notice{position:fixed;right:16px;bottom:16px;z-index:9999;max-width:360px;max-height:70vh;overflow-y:auto;background:var(--dsw-alias-bg-layer-2,#ffffff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:12px 14px;font-size:13px;line-height:1.6;color:var(--dsw-alias-label-primary,#1f2328);animation:ccg-notice-in .24s ease-out}",
 				".ccg-notice-title{font-weight:600;margin-bottom:8px}",
@@ -1574,13 +1608,14 @@ window.__ModuleLoader__.load({
 		function renderBuiltinToolCall(props) {
 			var Builtin = builtinComponent("tool-call");
 			if (!Builtin) return null;
+			// t 一律走 wrapLocaleT 包装：宿主 t 命名空间/词典错位时官方组件不再裸显 key
 			var kit = {
 				useSession: props.useSession,
 				sessionId: props.sessionId,
 				useSessions: props.useSessions,
 				useProjection: props.useProjection,
 				useWorkspaces: props.useWorkspaces,
-				t: props.t,
+				t: wrapLocaleT(props.t),
 				useHostDescription: props.useHostDescription,
 				useConnectionGeneration: props.useConnectionGeneration
 			};
@@ -1588,21 +1623,21 @@ window.__ModuleLoader__.load({
 				if (key !== "tool.call.toolview") return options && options.fallback ? options.fallback : null;
 				return renderToolview(kit, owner, options.entryKey, options.fallback);
 			};
-			return react.createElement(Builtin, Object.assign({}, props, { renderSlot: customRenderSlot }));
+			return react.createElement(Builtin, Object.assign({}, props, { renderSlot: customRenderSlot, t: wrapLocaleT(props.t) }));
 		}
 
 		// 内置 AssistantNodeView 无需 renderSlot（只用 useTurnData 等注入 props），原样转发即可。
 		function renderBuiltinAssistant(props) {
 			var Builtin = builtinComponent("assistant-step");
 			if (!Builtin) return null;
-			return react.createElement(Builtin, props);
+			return react.createElement(Builtin, Object.assign({}, props, { t: wrapLocaleT(props.t) }));
 		}
 
 		// 内置 ContextMessageNodeView 同样无 renderSlot，原样转发即可。
 		function renderBuiltinContext(props) {
 			var Builtin = builtinComponent("context");
 			if (!Builtin) return null;
-			return react.createElement(Builtin, props);
+			return react.createElement(Builtin, Object.assign({}, props, { t: wrapLocaleT(props.t) }));
 		}
 
 		// ---- 折叠隐藏标记 ----
@@ -3095,6 +3130,21 @@ window.__ModuleLoader__.load({
 			}
 			return segmentLabel(group, nodes);
 		}
+		/** 构造「仅正文」节点：过滤掉 reasoning（think）块——段外 text 正文与最终总结用
+		 *  它渲染官方 AssistantMarkdown，从结构上不产生 Think 行。此前依赖 CSS
+		 *  `.ccg-text-only [data-variant="think"]{display:none}` 隐藏完整节点里的 Think 行，
+		 *  但运行中的官方构建 ReasoningRow 属性/结构有版本差异，隐藏失效时 Think 行
+		 *  （24px + 上下 gap）会露在折叠栏与正文之间——正是"行间距过高"的主因。
+		 *  保留 text / image 块（图属于正文），过滤 reasoning / tool-call。 */
+		function textOnlyNode(n) {
+			return Object.assign({}, n, {
+				data: Object.assign({}, n.data, {
+					blocks: (n.data.blocks || []).filter(function (b) {
+						return !!b && (b.kind === "text" || b.kind === "image");
+					})
+				})
+			});
+		}
 		/** 步骤分组渲染：只有 leader 渲染（成员渲染 hiddenMarker，内容由 leader 统一渲染，
 		 *  保证 DOM 顺序：步骤折叠栏行 → 段内内容（工具卡片 / think 完整内容）→ text 正文）。
 		 *  段内所有含 text 的节点的 text 正文统一在步骤折叠栏下方渲染（始终显示、不折叠、
@@ -3110,9 +3160,9 @@ window.__ModuleLoader__.load({
 				if (n.kind === "tool-call") {
 					inner.push(react.createElement("div", { key: "c" + n.key }, renderBuiltinToolCall(Object.assign({}, props, { node: n }))));
 				} else if (n.kind === "assistant-step" && hasText(n)) {
-					// 含 think+text：构造仅含 reasoning 块的节点，官方渲染只出 Think 行
-					// （官方 ReasoningRow：收起显示"Think · 摘要"，点击展开完整内容）；
-					// text 正文进段外（官方渲染 + CSS 隐藏 think 行）
+					// 含 think+text：段内构造仅含 reasoning 块的节点，官方渲染只出 Think 行
+					//（官方 ReasoningRow：收起显示"Think · 摘要"，点击展开完整内容）；
+					// text 正文进段外（textOnlyNode：官方渲染且结构上无 Think 行）
 					var thinkOnlyNode = Object.assign({}, n, {
 						data: Object.assign({}, n.data, {
 							blocks: (n.data.blocks || []).filter(function (b) { return !b || b.kind !== "text"; })
@@ -3122,7 +3172,7 @@ window.__ModuleLoader__.load({
 					textBodies.push(react.createElement(
 						"div",
 						{ key: "x" + n.key, className: "ccg-text-only" },
-						renderBuiltinAssistant(Object.assign({}, props, { node: n }))
+						renderBuiltinAssistant(Object.assign({}, props, { node: textOnlyNode(n) }))
 					));
 				} else if (n.kind === "assistant-step" && hasReasoning(n)) {
 					// 纯 think：官方渲染（官方 Think 行）
@@ -3366,11 +3416,15 @@ window.__ModuleLoader__.load({
 			}
 			var turnOpen = turnOverride === null ? !closed : turnOverride;
 			if (fold.isFinalAssistant) {
+				// 最终总结只显示正文：渲染过滤掉 reasoning 块的节点（textOnlyNode），官方
+				// 组件结构上不产生 Think 行。此前依赖 CSS
+				// [data-ccg-turn-folded] [data-variant="think"]{display:none} 隐藏，运行中
+				// 的官方构建属性有版本差异时会露出 Think 行（保留 CSS 作兜底）。
+				var finalBodyNode = textOnlyNode(node);
 				if (fold.isTurnHeader) {
 					// 单节点回合：该节点既是回合折叠栏又是最终总结消息（headerKey 兜底自
 					// finalAssistantKey）。渲染回合折叠栏 + 分隔线 + 最终总结正文——正文始终
-					// 可见（回合折叠栏收起也保留），think 行由 CSS
-					// [data-ccg-turn-folded] [data-variant="think"]{display:none} 隐藏。
+					// 可见（回合折叠栏收起也保留）。
 					var toggleTurnF = function () {
 						setTurnOpen(sessionId, fold.turn, !turnOpen);
 					};
@@ -3382,16 +3436,16 @@ window.__ModuleLoader__.load({
 						react.createElement(GroupHeader, { label: turnLabelF, count: fold.toolCount, open: turnOpen, onToggle: toggleTurnF, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn), pokerIcon: turnPokerIcon(fold, closed, turnOpen) }),
 						react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 						react.createElement("div", { "data-ccg-turn-folded": "true", style: { display: "contents" } },
-							renderBuiltinAssistant(props)
+							renderBuiltinAssistant(Object.assign({}, props, { node: finalBodyNode }))
 						)
 					);
 				}
-				// 最终总结消息保持可见；回合结束后隐藏其内部的 Think 行（"只显示最终结果"）。
+				// 最终总结消息保持可见（"只显示最终结果"）。
 				// 运行中（isFinalAssistant 恒为 false）不会走到这里，流式 Think 保持内置行为。
 				return react.createElement(
 					"div",
 					{ "data-ccg-turn-folded": "true", style: { display: "contents" } },
-					renderBuiltinAssistant(props)
+					renderBuiltinAssistant(Object.assign({}, props, { node: finalBodyNode }))
 				);
 			}
 			// think 节点（含 think+text 同一节点）：统一收进步骤折叠栏——纯 think 段同样套
@@ -3775,12 +3829,34 @@ window.__ModuleLoader__.load({
 					}
 					return { hooks: { hostDescription: connection && connection.hostDescription } };
 				};
+				// shadow 条目的 locale 命名空间跟随宿主：新版 ui-chat 词典在 'chat'
+				//（'message.think' / 'row.running' 等 key），旧版在 'conversation'。声明错
+				// 命名空间时注入的 t 查不到词 → 官方组件裸显 key（如 "message.think"）。
+				// 探测顺序：官方 conversation.chat.node 条目自己声明的 locale → ctx.locale
+				// 的 'chat' 命名空间是否真的有词（bind 后试查 message.think）→ 回退
+				// 'conversation'（0.1.1 行为不变）。残余错位由 wrapLocaleT 兜底词典兜住。
+				var detectChatLocale = function (slots) {
+					try {
+						var entries = slots && typeof slots.entries === "function" ? slots.entries("conversation.chat.node") : null;
+						for (var i = 0; entries && i < entries.length; i++) {
+							var o = entries[i] && entries[i].options;
+							if (o && (o.priority || 0) === 0 && typeof o.locale === "string") return o.locale;
+						}
+					} catch (e) { /* 旧版 entries 不可用时忽略 */ }
+					try {
+						if (ctx.locale && typeof ctx.locale.bind === "function") {
+							var probe = ctx.locale.bind("chat");
+							if (typeof probe === "function" && probe("message.think") !== "message.think") return "chat";
+						}
+					} catch (e) { /* 旧版无 chat 命名空间或 bind 抛错 */ }
+					return "conversation";
+				};
 				scope.slots.inject("conversation.chat.node", function () {
 					return scope.slots.register({
 						name: "conversation.chat.node",
 						key: "tool-call",
 						priority: -1,
-						locale: "conversation",
+						locale: detectChatLocale(scope.slots),
 						inject: hostDescriptionInject
 					}, GroupedToolCallView);
 				});
@@ -3789,7 +3865,7 @@ window.__ModuleLoader__.load({
 						name: "conversation.chat.node",
 						key: "assistant-step",
 						priority: -1,
-						locale: "conversation",
+						locale: detectChatLocale(scope.slots),
 						inject: hostDescriptionInject
 					}, GroupedAssistantView);
 				});
@@ -3798,7 +3874,7 @@ window.__ModuleLoader__.load({
 						name: "conversation.chat.node",
 						key: "context",
 						priority: -1,
-						locale: "conversation",
+						locale: detectChatLocale(scope.slots),
 						inject: hostDescriptionInject
 					}, GroupedContextView);
 				});
@@ -3807,7 +3883,7 @@ window.__ModuleLoader__.load({
 						name: "conversation.chat.node",
 						key: "user",
 						priority: -1,
-						locale: "conversation",
+						locale: detectChatLocale(scope.slots),
 						inject: hostDescriptionInject
 					}, GroupedUserView);
 				});
