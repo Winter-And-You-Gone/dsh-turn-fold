@@ -3829,18 +3829,21 @@ window.__ModuleLoader__.load({
 					}
 					return { hooks: { hostDescription: connection && connection.hostDescription } };
 				};
-				// shadow 条目的 locale 命名空间跟随宿主：新版 ui-chat 词典在 'chat'
-				//（'message.think' / 'row.running' 等 key），旧版在 'conversation'。声明错
-				// 命名空间时注入的 t 查不到词 → 官方组件裸显 key（如 "message.think"）。
-				// 探测顺序：官方 conversation.chat.node 条目自己声明的 locale → ctx.locale
-				// 的 'chat' 命名空间是否真的有词（bind 后试查 message.think）→ 回退
-				// 'conversation'（0.1.1 行为不变）。残余错位由 wrapLocaleT 兜底词典兜住。
-				var detectChatLocale = function (slots) {
+				// shadow 条目的 locale 命名空间按条目 key 对应跟随官方——新版同一个 slot 上
+				// 官方条目的 locale 不一致：tool-call 由 ui-tool 注册、声明 'conversation'
+				//（工具标题词 tool.title.read=读取 / tool.title.write=写入 在 conversation
+				// 词典），assistant-step/context/user 由 ui-chat 注册、声明 'chat'
+				//（message.think=思考 在 chat 词典）。声明错命名空间时注入的 t 查不到词，
+				// locale 服务原样返回 key → 官方组件裸显 "message.think"/"tool.title.read"。
+				// 探测顺序：同 key 官方条目声明的 locale → ctx.locale 的 'chat' 词典是否
+				// 有词（bind 后试查 message.think）→ 回退 'conversation'（0.1.1 行为不变）。
+				// 残余错位由 wrapLocaleT 兜底词典兜住。
+				var detectChatLocale = function (slots, key) {
 					try {
 						var entries = slots && typeof slots.entries === "function" ? slots.entries("conversation.chat.node") : null;
 						for (var i = 0; entries && i < entries.length; i++) {
 							var o = entries[i] && entries[i].options;
-							if (o && (o.priority || 0) === 0 && typeof o.locale === "string") return o.locale;
+							if (o && o.key === key && (o.priority || 0) === 0 && typeof o.locale === "string") return o.locale;
 						}
 					} catch (e) { /* 旧版 entries 不可用时忽略 */ }
 					try {
@@ -3856,7 +3859,7 @@ window.__ModuleLoader__.load({
 						name: "conversation.chat.node",
 						key: "tool-call",
 						priority: -1,
-						locale: detectChatLocale(scope.slots),
+						locale: detectChatLocale(scope.slots, "tool-call"),
 						inject: hostDescriptionInject
 					}, GroupedToolCallView);
 				});
@@ -3865,7 +3868,7 @@ window.__ModuleLoader__.load({
 						name: "conversation.chat.node",
 						key: "assistant-step",
 						priority: -1,
-						locale: detectChatLocale(scope.slots),
+						locale: detectChatLocale(scope.slots, "assistant-step"),
 						inject: hostDescriptionInject
 					}, GroupedAssistantView);
 				});
@@ -3874,7 +3877,7 @@ window.__ModuleLoader__.load({
 						name: "conversation.chat.node",
 						key: "context",
 						priority: -1,
-						locale: detectChatLocale(scope.slots),
+						locale: detectChatLocale(scope.slots, "context"),
 						inject: hostDescriptionInject
 					}, GroupedContextView);
 				});
@@ -3883,7 +3886,7 @@ window.__ModuleLoader__.load({
 						name: "conversation.chat.node",
 						key: "user",
 						priority: -1,
-						locale: detectChatLocale(scope.slots),
+						locale: detectChatLocale(scope.slots, "user"),
 						inject: hostDescriptionInject
 					}, GroupedUserView);
 				});

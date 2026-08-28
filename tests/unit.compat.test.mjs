@@ -284,19 +284,32 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
     assert.equal(T.wrapLocaleT(undefined)('nope.key'), 'nope.key', '词典外的 key 原样返回')
   })
 
-  it('注册条目 locale 跟随官方条目声明（新版 chat），无官方条目且无 chat 词典时回退 conversation', () => {
-    const regsChat = []
+  it('注册条目 locale 按 key 对应跟随官方条目（tool-call=conversation / 其余=chat）', () => {
+    // 新版真机形态：tool-call 由 ui-tool 注册声明 'conversation'（tool.title.* 词典），
+    // assistant-step/context 由 ui-chat 注册声明 'chat'（message.* 词典）——同 slot 混两种。
+    const regs = []
     const officialSlots = {
-      entries: () => [{ component: function Official() {}, options: { key: 'tool-call', priority: 0, locale: 'chat' } }],
+      entries: () => [
+        { component: function OfficialTool() {}, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
+        { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
+        { component: function OfficialContext() {}, options: { key: 'context', priority: 0, locale: 'chat' } },
+      ],
       entriesOfSlot: () => [],
-      inject: (name, factory) => { regsChat.push(factory()) },
+      inject: (name, factory) => { regs.push(factory()) },
       register: (options, component) => ({ component, options }),
     }
     pluginExports.apply({ inject(deps, cb) { cb({ slots: officialSlots, connection: {} }) } })
-    const oursChat = regsChat.filter((r) => r.options.priority === -1 && r.options.name === 'conversation.chat.node')
-    assert.ok(oursChat.length >= 4, '注册了 4 个 chat 节点 shadow 条目')
-    for (const r of oursChat) assert.equal(r.options.locale, 'chat', '跟随官方声明的 chat 命名空间')
+    const ours = {}
+    for (const r of regs) {
+      if (r.options.priority === -1 && r.options.name === 'conversation.chat.node') ours[r.options.key] = r.options.locale
+    }
+    assert.equal(ours['tool-call'], 'conversation', '工具卡标题词（tool.title.read=读取）在 conversation 词典')
+    assert.equal(ours['assistant-step'], 'chat', 'message.think=思考 在 chat 词典')
+    assert.equal(ours['context'], 'chat')
+    assert.equal(ours['user'], 'conversation', '无同 key 官方条目且无 ctx.locale 探针 → 回退 conversation')
+  })
 
+  it('无官方条目且无 chat 词典时全部回退 conversation（0.1.1 行为不变）', () => {
     const regsFallback = []
     const emptySlots = {
       entries: () => [],

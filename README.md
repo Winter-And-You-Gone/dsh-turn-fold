@@ -334,8 +334,10 @@ git push --follow-tags
     与最终总结的 Think 行）；
   - Slot 系统：`conversation.chat.node` 内置条目（`priority: 0`）、
     `slotsService.entriesOfSlot()`（委托渲染与 `tool.call.toolview` 子视图分发）；
-  - Locale 命名空间：条目的 `locale:` 声明决定注入的 `t` 词典——0.1.2+ 官方对话词典在
-    `'chat'` 命名空间（`message.think` / `row.running` 等 key），旧版在 `'conversation'`；
-    插件注册时探测官方条目声明或 `ctx.locale`（`detectChatLocale`），转发给官方组件的
-    `t` 一律过 `wrapLocaleT` 兜底（查不到 key 时用内置双语小词典，不再裸显
-    `"message.think"`）。
+  - Locale 命名空间：条目的 `locale:` 声明决定注入的 `t` 词典，且**同一个 slot 上官方
+    条目混用两种命名空间**——`tool-call`（ui-tool 注册）声明 `'conversation'`（工具标题词
+    `tool.title.read`=读取 等），`assistant-step`/`context`/`user`（ui-chat 注册）声明
+    `'chat'`（`message.think`=思考 等）；旧版全在 `'conversation'`。插件注册时**按条目 key
+    对应复制**同 key 官方条目的声明（`detectChatLocale`，无对应时 `ctx.locale` 试查后回退
+    `'conversation'`），转发给官方组件的 `t` 一律过 `wrapLocaleT` 兜底（查不到 key 时用
+    内置双语小词典，不再裸显 `"message.think"` / `"tool.title.read"`）。
