@@ -49,15 +49,15 @@ const slotsService = {
 }
 pluginExports.apply({
   inject(deps, cb) {
-    cb({ slots: slotsService, connection: { hostDescription: { getSnapshot: () => ({ home: 'C:/Users/Test' }), subscribe: () => () => {} } } })
+    cb({ slots: slotsService, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
   },
 })
 
 // 模拟 cachedSlotInject：inject 声明的 hooks → use<Name> props
 const injectedHooks = (() => {
-  const source = slotRegistrations[0].options.inject().hooks.hostDescription
+  const source = slotRegistrations[0].options.inject().hooks.connectionGeneration
   return {
-    useHostDescription: (selector) =>
+    useConnectionGeneration: (selector) =>
       React.useSyncExternalStore(
         (fn) => source.subscribe(fn),
         () => selector(source.getSnapshot()),
@@ -254,17 +254,63 @@ describe('真实会话数据（TURN13）全量折叠', () => {
     assert.equal(c.cards, 0)
     assert.equal(c.assistants, 1)
     assert.equal(c.hidden, 7)
-    // 展开回合折叠栏后：4 个工具段步骤折叠栏行可见（as-1 纯 think 段直接官方渲染）、
+    // 展开回合折叠栏后：as-1 纯 think 段 + 4 个工具段步骤折叠栏行可见、
     // text 正文段外渲染，工具卡片仍默认折叠
     clickHeader()
     const expanded = counts()
     assert.equal(expanded.cards, 0, '步骤折叠始终默认收起，工具卡片不可见')
-    assert.equal(expanded.assistants, 5, 'as-1 官方渲染 + as-2/3/4 text-only + final = 5')
+    assert.equal(expanded.assistants, 5, 'as-1 段外 text + as-2/3/4 段外 text + final = 5')
     assert.equal(expanded.hidden, 3, 'as-2/3/4 非 leader 成员隐藏标记')
-    // 4 个工具段步骤折叠栏（as-1 纯 think 段无步骤折叠栏）
+    // as-1 纯 think 段 + 4 个工具段步骤折叠栏 = 5
     const segHeaders = container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
-    assert.equal(segHeaders.length, 4, '4 个工具段步骤折叠栏')
-    // 3 个 text-only 段外正文（as-2/3/4）
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 3)
+    assert.equal(segHeaders.length, 5, 'as-1 纯 think 段 + 4 个工具段步骤折叠栏')
+    // 4 个 text-only 段外正文（as-1/2/3/4）
+    assert.equal(container.querySelectorAll('.ccg-text-only').length, 4)
   }))
+})
+
+describe('connection 双版本兼容（DSH 0.1.2+ generation / 旧版 hostDescription）', () => {
+  // 旧版 API：connection.hostDescription（含 .home）
+  it('旧版 connection.hostDescription → inject 声明 hostDescription hook', () => {
+    const regs = []
+    const svc = {
+      entries() { return [] },
+      entriesOfSlot() { return [] },
+      inject(name, factory) { regs.push(factory()) },
+      register(options, component) { return { component, options } },
+    }
+    pluginExports.apply({
+      inject(deps, cb) {
+        cb({ slots: svc, connection: { hostDescription: { getSnapshot: () => ({ home: 'C:/Users/Test' }), subscribe: () => () => {} } } })
+      },
+    })
+    assert.equal(regs.length, 4, '旧版也应注册 4 个条目')
+    for (const entry of regs) {
+      const hooks = entry.options.inject().hooks
+      assert.ok(hooks.hostDescription, `条目 ${entry.options.key} 应声明 hostDescription（旧版）`)
+      assert.equal(hooks.connectionGeneration, undefined, '旧版不注入 connectionGeneration')
+    }
+  })
+
+  // 新版 API：connection.generation（含 .host.home）
+  it('新版 connection.generation → inject 声明 connectionGeneration hook', () => {
+    const regs = []
+    const svc = {
+      entries() { return [] },
+      entriesOfSlot() { return [] },
+      inject(name, factory) { regs.push(factory()) },
+      register(options, component) { return { component, options } },
+    }
+    pluginExports.apply({
+      inject(deps, cb) {
+        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
+      },
+    })
+    assert.equal(regs.length, 4, '新版也应注册 4 个条目')
+    for (const entry of regs) {
+      const hooks = entry.options.inject().hooks
+      assert.ok(hooks.connectionGeneration, `条目 ${entry.options.key} 应声明 connectionGeneration（新版）`)
+      assert.equal(hooks.hostDescription, undefined, '新版不注入 hostDescription')
+    }
+  })
 })

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>扑克牌折叠图标 · 两态动画演示</title>
+<title>扑克牌折叠图标 · 动态透明遮挡实验</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -13,12 +13,34 @@
     font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
     margin: 0;
     padding: 28px 32px 48px;
+    --card-fill: #1a1d23;
+    --card-stroke: #fff;
   }
+  body.wallpaper {
+    background: linear-gradient(135deg, #2b1055 0%, #7597de 55%, #ff6e7f 100%);
+    --card-fill: transparent;
+  }
+  body.wallpaper .card { background: transparent; border-color: rgba(255, 255, 255, 0.28); }
+  /* 唯一遮挡方案：动态蒙版遮挡。卡面始终透明。 */
+  .card-rect { fill: none; }
+  .anim-card { fill: transparent; }
+
+  /*
+    每张牌保持完整轮廓/花色，再由上层牌的动态 silhouette
+    通过 SVG mask 从下层牌中 knockout，因此：
+      - 页面/壁纸仍然能从卡面透出；
+      - SVG 内部下层牌的 stroke / pip 不会透出；
+      - 动画中间帧的遮挡关系与真实牌层级同步。
+  */
+  .mask-card-i {
+    transition: transform .45s cubic-bezier(.22, 1, .36, 1);
+  }
+
   h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; letter-spacing: .2px; }
   .sub { color: #8b93a1; font-size: 13px; margin: 0 0 18px; line-height: 1.6; }
   .sub b { color: #b6bcc8; font-weight: 600; }
 
-  .toolbar { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; flex-wrap: wrap; }
   .btn {
     background: #23272f;
     color: #cdd3dc;
@@ -30,8 +52,26 @@
     transition: border-color .15s, color .15s;
   }
   .btn:hover { border-color: #4f6ef7; color: #fff; }
+  .btn.on { border-color: #4f6ef7; color: #fff; }
 
   .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .anim-row {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .toggle-anim-row {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .toggle-anim-card .state-label { color: #4f6ef7 !important; font-weight: 600 !important; }
+  @media (max-width: 980px) { .anim-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 620px) {
+    .anim-row, .toggle-anim-row { grid-template-columns: 1fr; }
+  }
 
   .card {
     background: #1a1d23;
@@ -40,9 +80,29 @@
     padding: 16px 16px 14px;
     cursor: pointer;
     user-select: none;
+    position: relative;
     transition: border-color .15s ease, transform .15s ease;
   }
   .card:hover { border-color: #4f6ef7; transform: translateY(-1px); }
+  /* 右上角复制按钮：复制当前状态 SVG（去掉演示外框），不触发卡片切换 */
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: #23272f;
+    border: 1px solid #343a45;
+    color: #cdd3dc;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1;
+    padding: 4px 8px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .15s, color .15s, border-color .15s;
+  }
+  .card:hover .copy-btn { opacity: 0.85; }
+  .copy-btn:hover { border-color: #4f6ef7; color: #fff; opacity: 1; }
+  .copy-btn.copied { border-color: #22c55e; color: #22c55e; }
 
   .name { font-size: 13px; font-weight: 600; }
   .demo {
@@ -53,7 +113,7 @@
     height: 84px;
     margin: 6px 0 2px;
   }
-  .ic { display: inline-flex; align-items: center; justify-content: center; color: #9aa3b2; flex: none; }
+  .ic { display: inline-flex; align-items: center; justify-content: center; color: #fff; flex: none; }
   .ic svg { display: block; }
 
   .state-label {
@@ -75,110 +135,148 @@
   }
   .tag.rec { color: #4f6ef7; border-color: #3b4a80; }
 
-  /* 动画：CSS transition 驱动 transform 属性变化（SVG 原生 rotate(角度, cx, cy) 指定旋转中心，
-     不依赖 transform-origin / transform-box——它们在部分浏览器对 SVG <g> 不生效）。
-     所有牌同步过渡：无交错延迟，同时开始、同时到达终态。 */
-  .card-i {
-    transition: transform .6s cubic-bezier(.22, 1, .36, 1);
-  }
+  .card-motion, .mask-card-i { transition: transform .45s cubic-bezier(.22, 1, .36, 1); }
 </style>
 </head>
-<body>
+<body data-shape="square">
 
-<h1>扑克牌 · 折叠/展开图标（两态动画演示）</h1>
+<h1>扑克牌 · 动态蒙版遮挡</h1>
 <p class="sub">
-  <b>收起 = 牌堆</b>，<b>展开 = 扇形</b>（绕<b>牌底边中点</b>旋转，最右的牌在最上层）。点击卡片或「切换全部」查看动画；
-  展开时牌从底层开始扇形散开（交错延迟），收起时顶层先落回牌堆。每项展示 <b>16px</b>（实际尺寸）与 <b>40px</b>（放大预览），虚线为 viewBox 外框（正式实现不含）。
+  <b>收起 = 牌堆</b>，<b>展开 = 扇形</b>。点击卡片切换。
+  当前统一采用<b>动态蒙版遮挡</b>：卡面保持透明，通过上层牌的动态 silhouette 在 SVG mask 中实时扣除下层牌的轮廓与花色，避免下层内容透出。
+  「形状」可在<b>方形</b>与真实扑克牌常用的 <b>5:7</b> 比例之间切换；「背景：透明」用于检查透明背景下的遮挡效果。
 </p>
 
 <div class="toolbar">
+  <button class="btn" id="bgToggle">背景：正常</button>
+  <button class="btn" id="shapeToggle">形状：方形</button>
   <button class="btn" id="toggleAll">切换全部</button>
   <button class="btn" id="autoDemo">▶ 自动演示</button>
 </div>
 
 <div class="grid" id="grid"></div>
 
-<div class="note" style="margin-top:28px;font-size:12px;color:#8b93a1;line-height:1.7;border-top:1px solid #23262d;padding-top:16px">
-  <b>几何说明</b>：收起（牌堆）与展开（扇形）两态的包围盒中心都精确对齐到 (8,8)，
-  切换状态时图标整体不跳动。正式实现时把填充色 <code>#1a1d23</code> 换成折叠栏背景的
-  主题 token，并按状态切换 <code>transform</code> 即可。
-</div>
-
 <script>
-  const SPADE = '<path d="M12 2 C9 6.5, 4.5 8, 4.5 11.5 C4.5 13.4, 5.8 14.4, 7.2 13.9 C7.2 15.3, 8.4 16.5, 9.8 16.5 L9.8 17.5 L14.2 17.5 L14.2 16.5 C15.6 16.5, 16.8 15.3, 16.8 13.9 C18.2 14.4, 19.5 13.4, 19.5 11.5 C19.5 8, 15 6.5, 12 2 Z" fill="currentColor"/>'
-  const HEART = '<path d="M12 20.5 C6.8 15.9, 2.8 12.6, 2.8 8.9 C2.8 6.1, 5 4, 7.4 4 C9.3 4, 10.9 5.1, 12 6.9 C13.1 5.1, 14.7 4, 16.6 4 C19 4, 21.2 6.1, 21.2 8.9 C21.2 12.6, 17.2 15.9, 12 20.5 Z" fill="currentColor"/>'
-  const DIAMOND = '<path d="M12 2 L21 12 L12 22 L3 12 Z" fill="currentColor"/>'
-  const CLUB = '<circle cx="12" cy="6.5" r="4.5" fill="currentColor"/><circle cx="8" cy="14.5" r="4.5" fill="currentColor"/><circle cx="16" cy="14.5" r="4.5" fill="currentColor"/><path d="M11.2 12.8 L12.8 12.8 L14.2 20.5 L9.8 20.5 Z" fill="currentColor"/>'
-  // 花色信息：path + 自身包围盒中心（24 单位空间）+ 宽度系数（与黑桃等宽显示）
+  // 统一重绘的 24×24 花色。所有花色共用同一视觉中心与占位尺度，
+  // 黑桃/梅花使用“主体 + 独立宽柄”，在 16px 小图标下也能读清底部轮廓。
+  const SPADE = '<path d="M12 2.35 C10.25 5.05 4.15 8.65 4.15 13.05 C4.15 15.65 6.05 17.35 8.45 17.35 C9.75 17.35 10.75 16.82 11.35 15.88 C11.28 18.05 10.55 19.48 8.55 21.45 H15.45 C13.45 19.48 12.72 18.05 12.65 15.88 C13.25 16.82 14.25 17.35 15.55 17.35 C17.95 17.35 19.85 15.65 19.85 13.05 C19.85 8.65 13.75 5.05 12 2.35 Z" fill="currentColor"/>'
+  const HEART = '<path d="M12 21.25 C10.35 19.35 4 15.1 4 9.65 C4 6.55 6.1 4.4 8.75 4.4 C10.25 4.4 11.35 5.18 12 6.45 C12.65 5.18 13.75 4.4 15.25 4.4 C17.9 4.4 20 6.55 20 9.65 C20 15.1 13.65 19.35 12 21.25 Z" fill="currentColor"/>'
+  const DIAMOND = '<path d="M12 2.45 L20.1 12 L12 21.55 L3.9 12 Z" fill="currentColor"/>'
+  const CLUB = '<circle cx="12" cy="7.05" r="4.15" fill="currentColor"/><circle cx="7.45" cy="14.05" r="4.15" fill="currentColor"/><circle cx="16.55" cy="14.05" r="4.15" fill="currentColor"/><path d="M10.25 13.65 C10.85 16.55 10.7 18.7 8.45 21.45 H15.55 C13.3 18.7 13.15 16.55 13.75 13.65 Z" fill="currentColor"/>'
   const PIP_INFO = {
-    spade: { path: SPADE, cx: 12, cy: 9.75, factor: 1 },
-    heart: { path: HEART, cx: 12, cy: 12.25, factor: 15 / 18.4 },
-    diamond: { path: DIAMOND, cx: 12, cy: 12, factor: 15 / 18 },
-    club: { path: CLUB, cx: 12, cy: 11.25, factor: 15 / 17 },
+    spade: { path: SPADE, cx: 12, cy: 12, factor: 1 },
+    heart: { path: HEART, cx: 12, cy: 12, factor: 1 },
+    diamond: { path: DIAMOND, cx: 12, cy: 12, factor: 1 },
+    club: { path: CLUB, cx: 12, cy: 12, factor: 1 },
   }
 
-  // 3 张牌：rect (3.75,3.5)-(12.25,12)，底边中点 = (8,12)
-  // 5 张牌：rect (4,4)-(12,12)，底边中点 = (8,12)
-  const RX3 = 3.75, RY3 = 3.5, RW3 = 8.5, RH3 = 8.5, CX3 = 8, CY3 = 12
-  const RX5 = 4, RY5 = 4, RW5 = 8, RH5 = 8, CX5 = 8, CY5 = 12
+  const RX3 = 3.75, RY3 = 3.5, RW3 = 8.5, RH3 = 8.5
+  const RX5 = 4, RY5 = 4, RW5 = 8, RH5 = 8
+  const R = 1.5 // 方形卡牌圆角半径
+  const POKER_RATIO = 5 / 7 // 标准 poker size 2.5 × 3.5 in
 
-  // 牌堆（收起）和扇形（展开）的变换，包围盒中心均已对齐到 (8,8)
+  // 保持牌的中心点不变，只改变牌宽；花色本身不做横向缩放。
+  function cardGeom(five, shape = document.body.dataset.shape || 'square') {
+    const y = five ? RY5 : RY3
+    const h = five ? RH5 : RH3
+    const squareW = five ? RW5 : RW3
+    const w = shape === 'poker' ? h * POKER_RATIO : squareW
+    const x = 8 - w / 2
+    const r = shape === 'poker' ? 1.08 : R
+    return { x, y, w, h, r }
+  }
+
   const STACK3 = { 1: `translate(1, 2.25)`, 2: `translate(0, 0.25)`, 3: `translate(-1, -1.75)` }
   const STACK5 = { 1: `translate(1.6, 1.6)`, 2: `translate(0.8, 0.8)`, 3: `translate(0, 0)`, 4: `translate(-0.8, -0.8)`, 5: `translate(-1.6, -1.6)` }
-  // 展开态 = 扇形（绕底边中点）。注意：中心牌（card-3）的变换必须保持纯 translate，
-  // 否则牌堆→扇形时 translate→translate+rotate(0) 的列表形态变化会让浏览器跳过过渡。
   const FAN3 = { 1: `translate(0, -0.18) rotate(-26 8 12)`, 2: `translate(0, -0.18) rotate(26 8 12)`, 3: `translate(0, -0.18)` }
   const FAN5 = { 1: `translate(0, -0.608) rotate(-32 8 12)`, 2: `translate(0, -0.608) rotate(-16 8 12)`, 3: `translate(0, -0.608)`, 4: `translate(0, -0.608) rotate(16 8 12)`, 5: `translate(0, -0.608) rotate(32 8 12)` }
-  // 水平镜像的牌堆（第二行用）：顶层牌在右上角，下层牌向左下角偏移（dx 取反，中心不变）
   const STACK3M = { 1: `translate(-1, 2.25)`, 2: `translate(0, 0.25)`, 3: `translate(1, -1.75)` }
   const STACK5M = { 1: `translate(-1.6, 1.6)`, 2: `translate(-0.8, 0.8)`, 3: `translate(0, 0)`, 4: `translate(0.8, -0.8)`, 5: `translate(1.6, -1.6)` }
 
-  // 叠放顺序：牌堆顶牌最后画，扇形最右的牌最后画（右手握牌）
   const ORDER_STACK3 = [1, 2, 3]
   const ORDER_FAN3 = [1, 3, 2]
   const ORDER_STACK5 = [1, 2, 3, 4, 5]
   const ORDER_FAN5 = [1, 2, 3, 4, 5]
 
-  function cardG(i, x, y, w, h, five, suit) {
-    // 花色画在"每态的最上层牌"上：3 张版 = 牌堆顶 card-3 + 扇形顶（最右）card-2；
-    // 5 张版 = 牌堆顶/扇形最右 card-5 + 扇形中心 card-3
-    const info = PIP_INFO[suit] || PIP_INFO.spade
-    const hasPip = five ? (i === 5 || i === 3) : (i === 2 || i === 3)
-    // 图标画在卡牌中心：translate(牌中心) scale(缩放) translate(-花色中心)，缩放按宽度系数与黑桃等宽
-    const pipScale = (five ? 0.24 : 0.28) * info.factor
-    const pipInner = hasPip
-      ? `<g transform="translate(${x + w / 2}, ${y + h / 2}) scale(${pipScale}) translate(${-info.cx}, ${-info.cy})">${info.path}</g>`
-      : ''
-    return `<g class="card-i" data-i="${i}" transform="translate(0, 0)">` +
-      // 牌身用字面量背景色填充（上层牌实体遮挡下层牌）；正式实现时改为 CSS class + 主题 token
-      `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1.5" fill="#1a1d23" stroke="currentColor" stroke-width="0.7"/>` +
-      pipInner + `</g>`
+  // 静态牌组统一使用动态 knockout mask。
+
+  /*
+    为某一张牌生成动态遮挡 mask。
+    mask 默认全白（完整显示 owner 牌），然后为每一张“可能处于 owner 上方”的牌
+    预留一个黑色圆角矩形 occluder。applyState() 会：
+      1. 让 occluder 使用与真实牌完全相同的 transform；
+      2. 根据当前 DOM 绘制顺序决定哪些 occluder 可见。
+    黑色区域只从下层牌自身扣除，不修改 SVG 后面的页面背景。
+  */
+  function dynamicMask(maskId, owner, n, x, y, w, h, r) {
+    let cuts = ''
+    for (let j = 1; j <= n; j++) {
+      if (j === owner) continue
+      cuts +=
+        `<g class="mask-card-i" data-i="${j}" data-mask-owner="${owner}" ` +
+        `visibility="hidden" transform="translate(0, 0)">` +
+          `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" ` +
+          `fill="black" stroke="black" stroke-width="0.7"/>` +
+        `</g>`
+    }
+    return `<mask id="${maskId}" x="-4" y="-4" width="24" height="24" ` +
+      `maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" style="mask-type:luminance">` +
+        `<rect x="-4" y="-4" width="24" height="24" fill="white"/>` +
+        cuts +
+      `</mask>`
   }
 
-  function svg(s, five, suit) {
-    const x = five ? RX5 : RX3, y = five ? RY5 : RY3, w = five ? RW5 : RW3, h = five ? RH5 : RH3
+  let clipSeq = 0
+  function cardG(i, x, y, w, h, r, five, suit, mirror, maskId) {
+    const info = PIP_INFO[suit] || PIP_INFO.spade
+    const hasPip = five ? (i === 5 || i === 3) : (i === 2 || i === 3)
+    const pipScale = (five ? 0.24 : 0.28) * info.factor
+    const pipInner = hasPip
+      ? `<g class="card-pip" transform="translate(${x + w / 2}, ${y + h / 2}) scale(${pipScale}) translate(${-info.cx}, ${-info.cy})">${info.path}</g>`
+      : ''
+
+    return `<g class="card-i" data-i="${i}" ` +
+      `data-mask-id="${maskId}">` +
+      `<g class="card-motion" transform="translate(0, 0)">` +
+        `<rect class="card-rect" x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" ` +
+        `fill="var(--card-fill, #1a1d23)" stroke="currentColor" stroke-width="0.7"/>` +
+        pipInner +
+      `</g></g>`
+  }
+
+  function svg(s, five, suit, mirror, shape = document.body.dataset.shape || 'square') {
+    const { x, y, w, h, r } = cardGeom(five, shape)
     const n = five ? 5 : 3
+    const seq = ++clipSeq
+    const maskBase = 'ccg-demo-mask-' + seq
+
+    let defs = ''
     let inner = ''
-    for (let i = 1; i <= n; i++) inner += cardG(i, x, y, w, h, five, suit)
-    // 外边框（demo 专用，方便判断图标相对显示区域的位置，正式实现中不包含）
-    return `<svg viewBox="0 0 16 16" width="${s}" height="${s}">` +
+
+    for (let i = 1; i <= n; i++) {
+      const mid = maskBase + '-' + i
+
+      defs += dynamicMask(mid, i, n, x, y, w, h, r)
+      inner += cardG(i, x, y, w, h, r, five, suit, mirror, mid)
+    }
+
+    return `<svg data-card-shape="${shape}" viewBox="0 0 16 16" width="${s}" height="${s}">` +
+      `<defs>${defs}</defs>` +
       `<rect class="demo-border" x="0.5" y="0.5" width="15" height="15" fill="none" stroke="#39404d" stroke-width="0.5" stroke-dasharray="2 1.5"/>` +
       inner + `</svg>`
   }
 
-  // 四种花色 × 3 张/5 张 = 8 个变体
   const SUIT_LABEL = { spade: '♠', heart: '♥', diamond: '♦', club: '♣' }
   const SUIT_NAME = { spade: '黑桃', heart: '红心', diamond: '方块', club: '梅花' }
   const cards = []
   for (const five of [false, true]) {
     for (const suit of ['spade', 'heart', 'diamond', 'club']) {
       cards.push({
-        name: `扑克牌 · ${five ? 5 : 3} 张 ${SUIT_LABEL[suit]}`,
-        five,
-        suit,
+        name: `牌组展开 · ${five ? 5 : 3} 张 · ${SUIT_NAME[suit]}`,
+        five, suit,
         rec: suit === 'spade' && !five,
         tag: `${five ? 5 : 3} 张 · ${SUIT_NAME[suit]}`,
-        desc: `${five ? 5 : 3} 张${SUIT_NAME[suit]}版，花色在每态最上层牌上，居中绘制。`,
+        desc: `${five ? 5 : 3} 张${SUIT_NAME[suit]}版。`,
       })
     }
   }
@@ -187,59 +285,1674 @@
   const renderCards = (mirror) => cards.map((c) => `
     <div class="card">
       <div class="name">${c.name}${mirror ? '（镜像）' : ''}</div>
-      <div class="demo ${c.five ? 'five' : ''} ${mirror ? 'mirror' : ''}" data-state="collapsed">
-        <span class="ic">${svg(16, c.five, c.suit)}</span>
-        <span class="ic">${svg(40, c.five, c.suit)}</span>
+      <div class="demo ${c.five ? 'five' : ''} ${mirror ? 'mirror' : ''}" data-state="collapsed"
+           data-five="${c.five ? '1' : '0'}" data-suit="${c.suit}" data-mirror="${mirror ? '1' : '0'}">
+        <span class="ic">${svg(16, c.five, c.suit, mirror)}</span>
+        <span class="ic">${svg(40, c.five, c.suit, mirror)}</span>
       </div>
       <div class="state-label">收起 · 牌堆</div>
       <div class="desc">${c.desc}</div>
       <span class="tag ${c.rec ? 'rec' : ''}">${c.tag}</span>
     </div>
   `).join('');
-  // 第二行：牌堆水平镜像（顶层右上、下层向左下偏移），扇形不变
-  grid.innerHTML = renderCards(false) + renderCards(true);
+  // ── 第三行：五牌面轮换动画（四花色 + DeepSeek，动态透明遮挡 内联） ──
+  // 每实例给 defs 的 id 与 use href 加唯一前缀，避免同一页面多个实例 id 冲突。
+  const ANIM_SVG = `<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 16 16"
+  width="16"
+  height="16"
+  style="color:var(--card-stroke,#fff)">
+
+  <defs>
+    <g id="pip-heart">
+      <path d="M12 21.25 C10.35 19.35 4 15.1 4 9.65 C4 6.55 6.1 4.4 8.75 4.4 C10.25 4.4 11.35 5.18 12 6.45 C12.65 5.18 13.75 4.4 15.25 4.4 C17.9 4.4 20 6.55 20 9.65 C20 15.1 13.65 19.35 12 21.25 Z"/>
+    </g>
+
+    <g id="pip-diamond">
+      <path d="M12 2.45 L20.1 12 L12 21.55 L3.9 12 Z"/>
+    </g>
+
+    <g id="pip-spade">
+      <path d="M12 2.35 C10.25 5.05 4.15 8.65 4.15 13.05 C4.15 15.65 6.05 17.35 8.45 17.35 C9.75 17.35 10.75 16.82 11.35 15.88 C11.28 18.05 10.55 19.48 8.55 21.45 H15.45 C13.45 19.48 12.72 18.05 12.65 15.88 C13.25 16.82 14.25 17.35 15.55 17.35 C17.95 17.35 19.85 15.65 19.85 13.05 C19.85 8.65 13.75 5.05 12 2.35 Z"/>
+    </g>
+
+    <g id="pip-club">
+      <circle cx="12" cy="7.05" r="4.15"/>
+      <circle cx="7.45" cy="14.05" r="4.15"/>
+      <circle cx="16.55" cy="14.05" r="4.15"/>
+      <path d="M10.25 13.65 C10.85 16.55 10.7 18.7 8.45 21.45 H15.55 C13.3 18.7 13.15 16.55 13.75 13.65 Z"/>
+    </g>
+
+    <!-- 第五种牌面：DeepSeek 标准 24×24 鲸鱼 Logo，作为 currentColor 单色花色。 -->
+    <path id="pip-deepseek" d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 0 1-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 0 0-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 0 1-.465.137 9.597 9.597 0 0 0-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 0 0 1.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 0 1 1.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 0 1 .415-.287.302.302 0 0 1 .2.288.306.306 0 0 1-.31.307.303.303 0 0 1-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 0 1-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 0 1 .016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 0 1-.254-.078.253.253 0 0 1-.114-.358c.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"/>
+
+    <!-- 不在这里写 fill：
+         卡面透明度由统一的动态蒙版遮挡样式控制。 -->
+    <g id="card-base">
+      <rect class="anim-base-rect"
+        x="-4" y="-4"
+        width="8" height="8"
+        rx="1.5"
+        stroke="currentColor"
+        stroke-width="0.7"/>
+    </g>
+
+    <g id="card-diamond">
+      <use href="#card-base"/>
+      <g transform="scale(.1956521739130435) translate(-12 -12)">
+        <use href="#pip-diamond" fill="currentColor"/>
+      </g>
+    </g>
+
+    <g id="card-club">
+      <use href="#card-base"/>
+      <g transform="scale(.1956521739130435) translate(-12 -12)">
+        <use href="#pip-club" fill="currentColor"/>
+      </g>
+    </g>
+
+    <g id="card-spade">
+      <use href="#card-base"/>
+      <g transform="scale(.1956521739130435) translate(-12 -12)">
+        <use href="#pip-spade" fill="currentColor"/>
+      </g>
+    </g>
+
+    <g id="card-heart">
+      <use href="#card-base"/>
+      <g transform="scale(.1956521739130435) translate(-12 -12)">
+        <use href="#pip-heart" fill="currentColor"/>
+      </g>
+    </g>
+
+    <g id="card-deepseek">
+      <use href="#card-base"/>
+      <g transform="scale(.18) translate(-12 -12)">
+        <use href="#pip-deepseek" fill="currentColor"/>
+      </g>
+    </g>
+
+    <!--
+      关键修复：
+      mask 只作用于“下层卡牌”本身，不画任何背景色。
+      因此动态蒙版遮挡方案下：
+      1. 卡面仍然透明，页面/壁纸可透出；
+      2. 上层牌覆盖范围内的下层 stroke + pip 会被扣掉。
+    -->
+    
+    <mask
+      id="mask-plus-out"
+      x="-2" y="-2" width="20" height="20"
+      maskUnits="userSpaceOnUse"
+      maskContentUnits="userSpaceOnUse"
+      style="mask-type:luminance">
+      <rect x="-2" y="-2" width="20" height="20" fill="white"/>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><rect class="anim-mask-rect" x="-4.36" y="-4.36" width="8.72" height="8.72" rx="1.86" fill="black"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </mask>
+    
+    <mask
+      id="mask-plus-in"
+      x="-2" y="-2" width="20" height="20"
+      maskUnits="userSpaceOnUse"
+      maskContentUnits="userSpaceOnUse"
+      style="mask-type:luminance">
+      <rect x="-2" y="-2" width="20" height="20" fill="white"/>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><rect class="anim-mask-rect" x="-4.36" y="-4.36" width="8.72" height="8.72" rx="1.86" fill="black"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </mask>
+    
+    <mask
+      id="mask-minus-out"
+      x="-2" y="-2" width="20" height="20"
+      maskUnits="userSpaceOnUse"
+      maskContentUnits="userSpaceOnUse"
+      style="mask-type:luminance">
+      <rect x="-2" y="-2" width="20" height="20" fill="white"/>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><rect class="anim-mask-rect" x="-4.36" y="-4.36" width="8.72" height="8.72" rx="1.86" fill="black"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </mask>
+    
+    <mask
+      id="mask-minus-in"
+      x="-2" y="-2" width="20" height="20"
+      maskUnits="userSpaceOnUse"
+      maskContentUnits="userSpaceOnUse"
+      style="mask-type:luminance">
+      <rect x="-2" y="-2" width="20" height="20" fill="white"/>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><rect class="anim-mask-rect" x="-4.36" y="-4.36" width="8.72" height="8.72" rx="1.86" fill="black"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </mask>
+  </defs>
+
+  
+    <rect class="demo-border"
+    x="0.5" y="0.5" width="15" height="15"
+    fill="none"
+    stroke="#39404d"
+    stroke-width="0.5"
+    stroke-dasharray="2 1.5"/>
+
+<g id="phase-1">
+    <animate
+      attributeName="opacity"
+      values="1;0;0;0;0"
+      keyTimes="0;0.2;0.4;0.6;0.8"
+      dur="4s"
+      repeatCount="indefinite"
+      calcMode="discrete"/>
+
+    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="1;0"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-plus-out)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-club"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-diamond"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
+    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="0;1"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-plus-in)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-diamond"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-club"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+  
+  <g id="phase-2">
+    <animate
+      attributeName="opacity"
+      values="0;1;0;0;0"
+      keyTimes="0;0.2;0.4;0.6;0.8"
+      dur="4s"
+      repeatCount="indefinite"
+      calcMode="discrete"/>
+
+    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="1;0"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-minus-out)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-spade"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-club"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
+    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="0;1"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-minus-in)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-club"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-spade"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+  
+  <g id="phase-3">
+    <animate
+      attributeName="opacity"
+      values="0;0;1;0;0"
+      keyTimes="0;0.2;0.4;0.6;0.8"
+      dur="4s"
+      repeatCount="indefinite"
+      calcMode="discrete"/>
+
+    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="1;0"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-plus-out)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-heart"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-spade"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
+    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="0;1"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-plus-in)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-spade"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-heart"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+  
+  <g id="phase-4">
+    <animate
+      attributeName="opacity"
+      values="0;0;0;1;0"
+      keyTimes="0;0.2;0.4;0.6;0.8"
+      dur="4s"
+      repeatCount="indefinite"
+      calcMode="discrete"/>
+
+    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="1;0"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-minus-out)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-deepseek"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-heart"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
+    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="0;1"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-minus-in)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-heart"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-deepseek"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+  <g id="phase-5">
+    <animate
+      attributeName="opacity"
+      values="0;0;0;0;1"
+      keyTimes="0;0.2;0.4;0.6;0.8"
+      dur="4s"
+      repeatCount="indefinite"
+      calcMode="discrete"/>
+
+    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="1;0"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-plus-out)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-diamond"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-deepseek"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+
+    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->
+    <g>
+      <animate
+        attributeName="opacity"
+        values="0;1"
+        keyTimes="0;0.5"
+        dur="0.8s"
+        repeatCount="indefinite"
+        calcMode="discrete"/>
+
+      <g mask="url(#mask-plus-in)">
+        
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-deepseek"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+      </g>
+      
+      <g transform="translate(8 8)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0"
+            keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+            dur="0.8s"
+            repeatCount="indefinite"
+            calcMode="linear"/>
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="rotate"
+              values="0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0"
+              keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+              dur="0.8s"
+              repeatCount="indefinite"
+              calcMode="linear"/>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="scale"
+                values="1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1"
+                keyTimes="0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1"
+                dur="0.8s"
+                repeatCount="indefinite"
+                calcMode="linear"/>
+              <g transform="scale(1.2)"><use class="anim-card" href="#card-diamond"/></g>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+  
+  </svg>`
+  let animSeq = 0
+  function svg3d(s, shape = document.body.dataset.shape || 'square') {
+    const uid = 'u' + (++animSeq)
+    return ANIM_SVG
+      .replace(/<svg[^>]*>/, '<svg data-card-shape="' + shape + '" viewBox="0 0 16 16" width="' + s + '" height="' + s + '" style="color:var(--card-stroke,#fff)">')
+      .replace(/id="(pip-[a-z]+|card-[a-z]+|phase-\d+|mask-(?:plus|minus)-(?:in|out))"/g,
+        (m, id) => 'id="' + id + '-' + uid + '"')
+      .replace(/href="#(pip-[a-z]+|card-[a-z]+)"/g,
+        (m, id) => 'href="#' + id + '-' + uid + '"')
+      .replace(/url\(#(mask-(?:plus|minus)-(?:in|out))\)/g,
+        (m, id) => 'url(#' + id + '-' + uid + ')')
+  }
+  // 在不改动动画关键帧的前提下，把整套可见动画绕 16×16 画布中心旋转。
+  // defs 保持原坐标；外层 transform 会让卡牌、花色以及引用的 mask 一起旋转。
+  function svg3dRotated(s, angle, shape = document.body.dataset.shape || 'square') {
+    return svg3d(s, shape)
+      .replace('</defs>', '</defs><g class="anim-root-rotation" transform="rotate(' + angle + ' 8 8)">')
+      .replace(/<\/svg>\s*$/, '</g></svg>')
+  }
+
+  // 点击切换版本始终保留同一个 SVG/SMIL 实例，只让最外层角度由 JS 每帧插值。
+  // 这样内部四花色 + DeepSeek 五状态动画不会因为切换而重新开始。
+  function svg3dLiveRotation(s, angle = 0, shape = document.body.dataset.shape || 'square') {
+    // svg3d() 会先把 phase-1 重命名为 phase-1-uN，因此这里必须匹配唯一后缀。
+    // demo-border 位于第一个 phase 之前，所以保持固定；旋转组只包住四个动画 phase。
+    const source = svg3d(s, shape)
+    return source
+      .replace(/(<g id="phase-1-[^"]+">)/,
+        '<g class="live-flat-rotation" data-live-angle="' + angle + '" transform="rotate(' + angle + ' 8 8)">$1')
+      .replace(/<\/svg>\s*$/, '</g></svg>')
+  }
+
+  const ANIM_ANGLES = [0, 30, 45, 60, 90]
+  function renderAnimationCard(angle) {
+    const rotated = angle !== 0
+    const title = rotated ? `牌面轮换 · 平面旋转 ${angle}°` : '牌面轮换 · 正向'
+    const filename = rotated
+      ? `cards_animation_user_style_rotated_${angle}.svg`
+      : 'cards_animation_user_style.svg'
+    const render = (size) => rotated ? svg3dRotated(size, angle) : svg3d(size)
+    const desc = rotated
+      ? `复用牌面轮换的关键帧与动态遮挡，整体绕图标中心旋转 ${angle}°。`
+      : '四花色 + DeepSeek Logo 五状态从左向右循环轮换；动态蒙版遮挡会透出壁纸，但不会透出下层卡牌。'
+    const tag = rotated ? `牌面轮换 · ${angle}°` : '牌面轮换 · 正向'
+    return `
+      <div class="card">
+        <div class="name">${title}</div>
+        <div class="demo anim-demo" data-rotation="${angle}" style="height:76px">
+          <span class="ic">${render(16)}</span>
+          <span class="ic">${render(40)}</span>
+        </div>
+        <div class="state-label" style="font-size:11px;color:#8b93a1;font-weight:400">${filename}</div>
+        <div class="desc">${desc}</div>
+        <span class="tag">${tag}</span>
+      </div>`
+  }
+
+  const render3DCards = () =>
+    `<div class="anim-row">${ANIM_ANGLES.map(renderAnimationCard).join('')}</div>`
+
+  // ── 第四行：竖直卡牌绕自身纵向中轴（Y 轴）旋转 ──
+  // 用更密的 cos(theta) 投影关键帧模拟匀角速度旋转；0°/360° 完全同相位，循环无跳点。
+  // 正面显示 0°~90° / 270°~360°，背面显示 90°~270°；切面恰好发生在 scaleX = 0。
+  let axisSpinSeq = 0
+  function svgAxisSpin(s, shape = document.body.dataset.shape || 'square', axisAngle = 0, restAngle = 0) {
+    const uid = 'axis-' + (++axisSpinSeq)
+    const h = 9.6
+    const w = shape === 'poker' ? h * POKER_RATIO : h
+    const x = 8 - w / 2
+    const y = 8 - h / 2
+    const r = shape === 'poker' ? 1.296 : 1.8
+
+    // 与第三行动画牌使用同一最终几何：card-base 的 0.7 描边经过 scale(1.2) 后为 0.84。
+    // 不使用 non-scaling-stroke，让 16px / 40px 预览都按 viewBox 正常同比例放大。
+    const strokeW = 0.84
+    const pipScale = 0.2347826086956522
+    const deepseekLogoSize = Math.min(w * 0.72, h * 0.58)
+    const deepseekLogoScale = deepseekLogoSize / 24
+
+    const faceRect = `<rect class="anim-card axis-spin-card" x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}"
+      stroke="currentColor" stroke-width="${strokeW}"/>`
+
+    // 一个完整“花色循环”包含 4 次 360° 翻牌，共 6.4 秒。
+    // 每次经过背面时固定显示 DeepSeek；越过背面后切到下一种花色：
+    // ♠ → DeepSeek → ♥ → DeepSeek → ♦ → DeepSeek → ♣ → DeepSeek → ♠ …
+    const suitVisibility = {
+      spade:   { initial: 'visible', values: 'visible;hidden;visible;visible', keyTimes: '0;0.0625;0.9375;1' },
+      heart:   { initial: 'hidden',  values: 'hidden;visible;hidden;hidden',  keyTimes: '0;0.1875;0.3125;1' },
+      diamond: { initial: 'hidden',  values: 'hidden;visible;hidden;hidden',  keyTimes: '0;0.4375;0.5625;1' },
+      club:    { initial: 'hidden',  values: 'hidden;visible;hidden;hidden',  keyTimes: '0;0.6875;0.8125;1' },
+    }
+
+    function suitFace(suit) {
+      const info = PIP_INFO[suit]
+      const vis = suitVisibility[suit]
+      const scale = pipScale * info.factor
+      return `<g visibility="${vis.initial}">
+        <animate attributeName="visibility"
+          values="${vis.values}"
+          keyTimes="${vis.keyTimes}"
+          dur="6.4s" repeatCount="indefinite" calcMode="discrete"/>
+        ${faceRect}
+        <g transform="translate(8 8) scale(${scale}) translate(${-info.cx} ${-info.cy})">
+          ${info.path}
+        </g>
+      </g>`
+    }
+
+    return `<svg data-card-shape="${shape}" viewBox="0 0 16 16" width="${s}" height="${s}" style="color:var(--card-stroke,#fff)">
+      <defs>
+        <!-- DeepSeek 标准 24×24 鲸鱼 Logo 路径；四种花色正面共用顶部 PIP_INFO。 -->
+        <path id="axis-deepseek-${uid}" d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 0 1-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 0 0-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 0 1-.465.137 9.597 9.597 0 0 0-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 0 0 1.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 0 1 1.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 0 1 .415-.287.302.302 0 0 1 .2.288.306.306 0 0 1-.31.307.303.303 0 0 1-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 0 1-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 0 1 .016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 0 1-.254-.078.253.253 0 0 1-.114-.358c.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"/>
+      </defs>
+      <rect class="demo-border" x="0.5" y="0.5" width="15" height="15" fill="none" stroke="#39404d" stroke-width="0.5" stroke-dasharray="2 1.5"/>
+
+      <g transform="translate(8 8)">
+        <!-- 共轭变换：R(axisAngle) · scaleX(cosθ) · R(-axisAngle)。
+             axisAngle=0 时就是原纵向中轴；30 时旋转轴相对竖直方向倾斜 30°，
+             且 scale=1 时两次 rotate 完全抵消，所以卡牌仍保持直立。 -->
+        <g transform="rotate(${axisAngle})">
+          <g>
+          <animateTransform attributeName="transform" type="scale"
+            values="1 1;0.996195 1;0.984808 1;0.965926 1;0.939693 1;0.906308 1;0.866025 1;0.819152 1;0.766044 1;0.707107 1;0.642788 1;0.573576 1;0.5 1;0.422618 1;0.34202 1;0.258819 1;0.173648 1;0.087156 1;0 1;-0.087156 1;-0.173648 1;-0.258819 1;-0.34202 1;-0.422618 1;-0.5 1;-0.573576 1;-0.642788 1;-0.707107 1;-0.766044 1;-0.819152 1;-0.866025 1;-0.906308 1;-0.939693 1;-0.965926 1;-0.984808 1;-0.996195 1;-1 1;-0.996195 1;-0.984808 1;-0.965926 1;-0.939693 1;-0.906308 1;-0.866025 1;-0.819152 1;-0.766044 1;-0.707107 1;-0.642788 1;-0.573576 1;-0.5 1;-0.422618 1;-0.34202 1;-0.258819 1;-0.173648 1;-0.087156 1;0 1;0.087156 1;0.173648 1;0.258819 1;0.34202 1;0.422618 1;0.5 1;0.573576 1;0.642788 1;0.707107 1;0.766044 1;0.819152 1;0.866025 1;0.906308 1;0.939693 1;0.965926 1;0.984808 1;0.996195 1;1 1"
+            keyTimes="0;0.013889;0.027778;0.041667;0.055556;0.069444;0.083333;0.097222;0.111111;0.125;0.138889;0.152778;0.166667;0.180556;0.194444;0.208333;0.222222;0.236111;0.25;0.263889;0.277778;0.291667;0.305556;0.319444;0.333333;0.347222;0.361111;0.375;0.388889;0.402778;0.416667;0.430556;0.444444;0.458333;0.472222;0.486111;0.5;0.513889;0.527778;0.541667;0.555556;0.569444;0.583333;0.597222;0.611111;0.625;0.638889;0.652778;0.666667;0.680556;0.694444;0.708333;0.722222;0.736111;0.75;0.763889;0.777778;0.791667;0.805556;0.819444;0.833333;0.847222;0.861111;0.875;0.888889;0.902778;0.916667;0.930556;0.944444;0.958333;0.972222;0.986111;1"
+            dur="1.6s" repeatCount="indefinite" calcMode="linear"/>
+          <g transform="rotate(${-axisAngle})">
+          <g class="axis-rest-rotation" data-rest-angle="${restAngle}" transform="rotate(${restAngle})">
+          <g transform="translate(-8 -8)">
+            ${suitFace('spade')}
+            ${suitFace('heart')}
+            ${suitFace('diamond')}
+            ${suitFace('club')}
+
+            <!-- 背面：四次翻转都固定显示 DeepSeek；切到正面时再进入下一花色。 -->
+            <g visibility="hidden">
+              <animate attributeName="visibility"
+                values="hidden;visible;hidden;visible;hidden;visible;hidden;visible;hidden;hidden"
+                keyTimes="0;0.0625;0.1875;0.3125;0.4375;0.5625;0.6875;0.8125;0.9375;1"
+                dur="6.4s" repeatCount="indefinite" calcMode="discrete"/>
+              ${faceRect}
+              <!-- 牌背：仅保留外层卡牌轮廓 + 白色 DeepSeek Logo。 -->
+              <g transform="translate(8 8) scale(${deepseekLogoScale}) translate(12 -12) scale(-1 1)">
+                <use href="#axis-deepseek-${uid}" fill="currentColor"/>
+              </g>
+            </g>
+          </g>
+          </g>
+          </g>
+        </g>
+        </g>
+      </g>
+    </svg>`
+  }
+
+  function renderAxisSpinCard(axisAngle = 0) {
+    const slanted = axisAngle !== 0
+    const title = slanted ? `牌面翻转 · 斜轴 ${axisAngle}°` : '牌面翻转 · 纵向中轴'
+    const filename = slanted ? `cards_axis_spin_slant_${axisAngle}.svg` : 'cards_axis_spin_y.svg'
+    const desc = slanted
+      ? `卡牌保持直立，旋转轴相对竖直中轴倾斜 ${axisAngle}°；正面按 ♠ → ♥ → ♦ → ♣ 循环，每次翻到背面都固定显示 DeepSeek。`
+      : '竖直卡牌绕自身纵向中轴旋转；正面按 ♠ → ♥ → ♦ → ♣ 循环，每次翻到背面都固定显示 DeepSeek，再翻出下一种花色。'
+    return `
+      <div class="card">
+        <div class="name">${title}</div>
+        <div class="demo axis-spin-demo" data-axis-angle="${axisAngle}" style="height:84px">
+          <span class="ic">${svgAxisSpin(16, document.body.dataset.shape || 'square', axisAngle)}</span>
+          <span class="ic">${svgAxisSpin(40, document.body.dataset.shape || 'square', axisAngle)}</span>
+        </div>
+        <div class="state-label" style="font-size:11px;color:#8b93a1;font-weight:400">${filename}</div>
+        <div class="desc">${desc}</div>
+        <span class="tag">牌面翻转 · ${slanted ? `斜轴 ${axisAngle}°` : '纵向中轴'} · 四花色 / DeepSeek 背面</span>
+      </div>`
+  }
+
+  // ── 对角线轴版本：把卡牌自身左上→右下对角线旋到竖直方向，
+  // 再围绕这条“与水平线垂直”的对角线做同样的 3D 投影翻转。
+  function diagonalRestAngle(shape = document.body.dataset.shape || 'square') {
+    const h = 9.6
+    const w = shape === 'poker' ? h * POKER_RATIO : h
+    return Math.atan(w / h) * 180 / Math.PI
+  }
+
+  function renderDiagonalSpinCard() {
+    const shape = document.body.dataset.shape || 'square'
+    const restAngle = diagonalRestAngle(shape)
+    return `
+      <div class="card">
+        <div class="name">牌面翻转 · 竖直对角线轴</div>
+        <div class="demo diagonal-spin-demo" style="height:84px">
+          <span class="ic">${svgAxisSpin(16, shape, 0, restAngle)}</span>
+          <span class="ic">${svgAxisSpin(40, shape, 0, restAngle)}</span>
+        </div>
+        <div class="state-label" style="font-size:11px;color:#8b93a1;font-weight:400">cards_axis_spin_diagonal_vertical.svg</div>
+        <div class="desc">以卡牌左上→右下的真实对角线为旋转轴；正面按 ♠ → ♥ → ♦ → ♣ 循环，每次翻到背面都固定显示 DeepSeek。</div>
+        <span class="tag">牌面翻转 · 对角线轴 · 四花色 / DeepSeek 背面</span>
+      </div>`
+  }
+
+  // ── 第五行：两个“点击切换型”动画 ──
+  // 1) 牌面轮换正向 ⇄ 平面旋转 35.5°
+  // 2) 四花色 / DeepSeek 背面翻转：纵向中轴 ⇄ 竖直对角线轴
+  function renderSwitchableAnimCard() {
+    const shape = document.body.dataset.shape || 'square'
+    return `
+      <div class="card toggle-anim-card" data-toggle-kind="flat">
+        <div class="name">牌面轮换 · 0° ⇄ 35.5°</div>
+        <div class="demo toggle-flat-demo anim-demo" data-toggle-mode="base" data-rotation="0" data-live-angle="0" style="height:76px">
+          <span class="ic">${svg3dLiveRotation(16, 0, shape)}</span>
+          <span class="ic">${svg3dLiveRotation(40, 0, shape)}</span>
+        </div>
+        <div class="state-label" style="font-size:11px">当前：牌面轮换 · 正向 · 点击切换</div>
+        <div class="desc">点击卡片时保持当前动画相位，实时插值平面角度，在正向牌面轮换与整体旋转 35.5° 之间丝滑过渡。</div>
+        <span class="tag">牌面轮换 · 点击切换 · 0° / 35.5°</span>
+      </div>`
+  }
+
+  function renderSwitchableAxisCard() {
+    const shape = document.body.dataset.shape || 'square'
+    const restAngle = diagonalRestAngle(shape)
+    return `
+      <div class="card toggle-anim-card" data-toggle-kind="axis">
+        <div class="name">牌面翻转 · 纵向中轴 ⇄ 竖直对角线轴</div>
+        <div class="demo toggle-axis-demo" data-toggle-mode="y" data-live-rest-angle="0" style="height:84px">
+          <span class="ic">${svgAxisSpin(16, shape, 0, 0)}</span>
+          <span class="ic">${svgAxisSpin(40, shape, 0, 0)}</span>
+        </div>
+        <div class="state-label" style="font-size:11px">当前：牌面翻转 · 纵向中轴 · 点击切换</div>
+        <div class="desc">点击卡片时不中断翻牌相位，实时插值旋转轴；正面继续按 ♠ → ♥ → ♦ → ♣ 循环，DeepSeek 始终作为每一轮牌背。</div>
+        <span class="tag">牌面翻转 · 点击切换 · 中轴 / 对角线轴</span>
+      </div>`
+  }
+
+  const renderSwitchableCards = () =>
+    `<div class="toggle-anim-row">${renderSwitchableAnimCard()}${renderSwitchableAxisCard()}</div>`
+
+  // 前两行静态牌 + 第三行平面旋转动画 + 第四行轴旋转实验 + 第五行点击切换动画。
+  grid.innerHTML = renderCards(false) + render3DCards() + renderAxisSpinCard(0) + renderAxisSpinCard(30) + renderDiagonalSpinCard() + renderSwitchableCards();
 
   const demos = [...document.querySelectorAll('.demo')];
   const labels = [...document.querySelectorAll('.state-label')];
 
-  function applyState(demo, state) {
-    const five = demo.classList.contains('five');
-    const mirror = demo.classList.contains('mirror');
-    const stackTable = five ? (mirror ? STACK5M : STACK5) : (mirror ? STACK3M : STACK3);
-    const table = state === 'expanded' ? (five ? FAN5 : FAN3) : stackTable;
-    const order = state === 'expanded' ? (five ? ORDER_FAN5 : ORDER_FAN3) : (five ? ORDER_STACK5 : ORDER_STACK3);
-    // 调整叠放顺序：SVG 后画的元素在上层，用 appendChild 移到末尾
-    for (const svg of demo.querySelectorAll('svg')) {
-      for (const i of order) {
-        const g = svg.querySelector('.card-i[data-i="' + i + '"]');
-        if (g) svg.appendChild(g);
+  function applyAnimationShape(svg, shape) {
+    const poker = shape === 'poker'
+    const baseW = poker ? 8 * POKER_RATIO : 8
+    const baseX = -baseW / 2
+    const baseR = poker ? 1.08 : 1.5
+    for (const rect of svg.querySelectorAll('.anim-base-rect')) {
+      rect.setAttribute('x', baseX)
+      rect.setAttribute('width', baseW)
+      rect.setAttribute('rx', baseR)
+    }
+
+    // mask 原版比卡牌外轮廓四周各多 0.36，用来连同 stroke 一起挖空。
+    const maskW = baseW + 0.72
+    const maskX = -maskW / 2
+    const maskR = poker ? 1.44 : 1.86
+    for (const rect of svg.querySelectorAll('.anim-mask-rect')) {
+      rect.setAttribute('x', maskX)
+      rect.setAttribute('width', maskW)
+      rect.setAttribute('rx', maskR)
+    }
+    svg.dataset.cardShape = shape
+  }
+
+  function renderShape(shape) {
+    document.body.dataset.shape = shape
+
+    // 静态卡牌重新按目标几何生成，动态 mask 同步获得同一牌宽。
+    for (const demo of demos) {
+      if (demo.classList.contains('toggle-flat-demo')) {
+        const icons = demo.querySelectorAll('.ic')
+        const angle = Number(demo.dataset.liveAngle || 0)
+        if (icons[0]) icons[0].innerHTML = svg3dLiveRotation(16, angle, shape)
+        if (icons[1]) icons[1].innerHTML = svg3dLiveRotation(40, angle, shape)
+        demo.dataset.rotation = String(angle)
+        for (const svgEl of demo.querySelectorAll('svg')) applyAnimationShape(svgEl, shape)
+        continue
       }
-      // 强制同步布局：DOM 移动后先提交当前样式，随后 transform 变化才能触发 transition
-      // （否则浏览器把重排与 transform 变更合并到同一帧，动画直接跳到终态）
-      void svg.getBoundingClientRect();
+      if (demo.classList.contains('toggle-axis-demo')) {
+        const icons = demo.querySelectorAll('.ic')
+        const restAngle = Number(demo.dataset.liveRestAngle || 0)
+        if (icons[0]) icons[0].innerHTML = svgAxisSpin(16, shape, 0, restAngle)
+        if (icons[1]) icons[1].innerHTML = svgAxisSpin(40, shape, 0, restAngle)
+        continue
+      }
+      if (demo.classList.contains('axis-spin-demo')) {
+        const icons = demo.querySelectorAll('.ic')
+        const axisAngle = Number(demo.dataset.axisAngle || 0)
+        if (icons[0]) icons[0].innerHTML = svgAxisSpin(16, shape, axisAngle)
+        if (icons[1]) icons[1].innerHTML = svgAxisSpin(40, shape, axisAngle)
+        continue
+      }
+      if (demo.classList.contains('diagonal-spin-demo')) {
+        const icons = demo.querySelectorAll('.ic')
+        const restAngle = diagonalRestAngle(shape)
+        if (icons[0]) icons[0].innerHTML = svgAxisSpin(16, shape, 0, restAngle)
+        if (icons[1]) icons[1].innerHTML = svgAxisSpin(40, shape, 0, restAngle)
+        continue
+      }
+      if (demo.classList.contains('anim-demo')) continue
+      const five = demo.dataset.five === '1'
+      const suit = demo.dataset.suit
+      const mirror = demo.dataset.mirror === '1'
+      const icons = demo.querySelectorAll('.ic')
+      if (icons[0]) icons[0].innerHTML = svg(16, five, suit, mirror, shape)
+      if (icons[1]) icons[1].innerHTML = svg(40, five, suit, mirror, shape)
+      applyState(demo, demo.dataset.state || 'collapsed')
     }
-    // 所有牌同步过渡：无交错延迟，同时开始、同时到达终态
-    for (const g of demo.querySelectorAll('.card-i')) {
-      const i = Number(g.dataset.i);
-      g.style.transitionDelay = '0ms';
-      g.setAttribute('transform', table[i]);
+
+    // 动画 SVG 保持原有关键帧，只替换卡牌与 knockout mask 的几何。
+    for (const demo of demos.filter(d => d.classList.contains('anim-demo') && !d.classList.contains('toggle-flat-demo'))) {
+      const icons = demo.querySelectorAll('.ic')
+      const angle = Number(demo.dataset.rotation || 0)
+      const renderAnim = (size) => angle === 0
+        ? svg3d(size, shape)
+        : svg3dRotated(size, angle, shape)
+      if (icons[0]) icons[0].innerHTML = renderAnim(16)
+      if (icons[1]) icons[1].innerHTML = renderAnim(40)
+      for (const svgEl of demo.querySelectorAll('svg')) applyAnimationShape(svgEl, shape)
     }
-    demo.dataset.state = state;
-    labels[demos.indexOf(demo)].textContent = state === 'expanded' ? '展开 · 扇形' : '收起 · 牌堆';
+  }
+
+  // 初始方形动画 SVG 也写入显式几何，保证复制出来的 SVG 自包含。
+  for (const svgEl of document.querySelectorAll('.anim-demo svg')) applyAnimationShape(svgEl, 'square')
+
+  function applyState(demo, state) {
+    // 动画实验不使用“收起 / 展开”状态，避免通用卡片逻辑覆盖其说明文字。
+    if (demo.classList.contains('anim-demo') || demo.classList.contains('axis-spin-demo') || demo.classList.contains('diagonal-spin-demo') || demo.classList.contains('toggle-axis-demo')) return
+    const five = demo.classList.contains('five')
+    const mirror = demo.classList.contains('mirror')
+    const stackTable = five ? (mirror ? STACK5M : STACK5) : (mirror ? STACK3M : STACK3)
+    const table = state === 'expanded' ? (five ? FAN5 : FAN3) : stackTable
+    const order = state === 'expanded'
+      ? (five ? ORDER_FAN5 : ORDER_FAN3)
+      : (five ? ORDER_STACK5 : ORDER_STACK3)
+
+    // order 数组本身就是从下到上的 DOM 绘制顺序。
+    const z = new Map(order.map((i, index) => [i, index]))
+
+    for (const svg of demo.querySelectorAll('svg')) {
+      /*
+        先按目标状态重排真实卡牌。
+        动态蒙版遮挡与真实牌共用完全相同的 z-order 切换时机。
+      */
+      for (const i of order) {
+        const g = svg.querySelector('.card-i[data-i="' + i + '"]')
+        if (g) svg.appendChild(g)
+      }
+
+      // 强制提交旧 transform，让真实牌和 mask occluder 从同一时刻开始 transition。
+      void svg.getBoundingClientRect()
+
+      // 更新真实卡牌。外层 card-i 保持在根坐标系，只有 card-motion 做变换。
+      // 这样 mask 里的 occluder 与真实卡牌使用同一套绝对 transform，遮挡才能逐帧对齐。
+      for (const g of svg.querySelectorAll('.card-i')) {
+        const i = Number(g.dataset.i)
+        const motion = g.querySelector('.card-motion')
+        if (motion) {
+          motion.style.transitionDelay = '0ms'
+          motion.setAttribute('transform', table[i])
+        }
+
+        const mid = g.dataset.maskId
+
+        if (mid) {
+          g.setAttribute('mask', 'url(#' + mid + ')')
+        } else {
+          g.removeAttribute('mask')
+        }
+      }
+
+      /*
+        更新 mask 中的“上层牌 silhouette”。
+        每个 occluder 的 transform 与对应真实牌完全相同；
+        只有绘制顺序在 owner 之上的牌才参与 knockout。
+      */
+      for (const cut of svg.querySelectorAll('.mask-card-i')) {
+        const j = Number(cut.dataset.i)
+        const owner = Number(cut.dataset.maskOwner)
+
+        cut.style.transitionDelay = '0ms'
+        cut.setAttribute('transform', table[j])
+
+        const isAbove = z.has(j) && z.has(owner) && z.get(j) > z.get(owner)
+        cut.setAttribute('visibility', isAbove ? 'visible' : 'hidden')
+      }
+    }
+
+    demo.dataset.state = state
+    labels[demos.indexOf(demo)].textContent =
+      state === 'expanded' ? '展开 · 扇形' : '收起 · 牌堆'
+  }
+
+  // ── 丝滑切换：不替换 SVG，只在当前动画相位上实时插值变换 ──
+  const liveTween = new WeakMap()
+
+  function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+  }
+
+  function tweenDemo(demo, from, to, duration, onFrame, onDone) {
+    const previous = liveTween.get(demo)
+    if (previous) cancelAnimationFrame(previous.raf)
+
+    const token = {}
+    const start = performance.now()
+    function frame(now) {
+      const p = Math.min(1, (now - start) / duration)
+      const e = easeInOutCubic(p)
+      const value = from + (to - from) * e
+      onFrame(value)
+      if (p < 1) {
+        token.raf = requestAnimationFrame(frame)
+        liveTween.set(demo, token)
+      } else {
+        liveTween.delete(demo)
+        onFrame(to)
+        if (onDone) onDone()
+      }
+    }
+    token.raf = requestAnimationFrame(frame)
+    liveTween.set(demo, token)
+  }
+
+  function setFlatLiveAngle(demo, angle) {
+    demo.dataset.liveAngle = String(angle)
+    demo.dataset.rotation = String(angle)
+    for (const root of demo.querySelectorAll('.live-flat-rotation')) {
+      root.dataset.liveAngle = String(angle)
+      root.setAttribute('transform', `rotate(${angle} 8 8)`)
+    }
+  }
+
+  function setAxisLiveRestAngle(demo, angle) {
+    demo.dataset.liveRestAngle = String(angle)
+    for (const root of demo.querySelectorAll('.axis-rest-rotation')) {
+      root.dataset.restAngle = String(angle)
+      root.setAttribute('transform', `rotate(${angle})`)
+    }
+  }
+
+  function toggleFlatAnimation(demo) {
+    const card = demo.closest('.card')
+    const label = card.querySelector('.state-label')
+    const current = Number(demo.dataset.liveAngle || 0)
+    const toward35 = demo.dataset.toggleMode !== 'rot35_5'
+    const target = toward35 ? 35.5 : 0
+    demo.dataset.toggleMode = toward35 ? 'rot35_5' : 'base'
+    label.textContent = toward35
+      ? '切换中：牌面轮换 · 正向 → 35.5°'
+      : '切换中：牌面轮换 · 35.5° → 正向'
+
+    // 约 0.65 秒完成 35.5° 轴向过渡；内部 SMIL 动画完全不断流。
+    const duration = 650 * Math.max(0.18, Math.abs(target - current) / 35.5)
+    tweenDemo(demo, current, target, duration,
+      value => setFlatLiveAngle(demo, value),
+      () => {
+        label.textContent = target === 35.5
+          ? '当前：牌面轮换 · 平面旋转 35.5° · 点击切换'
+          : '当前：牌面轮换 · 正向 · 点击切换'
+      })
+  }
+
+  function toggleAxisAnimation(demo) {
+    const shape = document.body.dataset.shape || 'square'
+    const card = demo.closest('.card')
+    const label = card.querySelector('.state-label')
+    const current = Number(demo.dataset.liveRestAngle || 0)
+    const towardDiagonal = demo.dataset.toggleMode !== 'diagonal'
+    const target = towardDiagonal ? diagonalRestAngle(shape) : 0
+    demo.dataset.toggleMode = towardDiagonal ? 'diagonal' : 'y'
+    label.textContent = towardDiagonal
+      ? '切换中：纵向中轴 → 竖直对角线轴'
+      : '切换中：竖直对角线轴 → 纵向中轴'
+
+    // 当前翻牌的 cos(theta) SMIL 相位保持不变，只逐帧改变卡牌与投影轴的相对角度。
+    const full = Math.max(1, diagonalRestAngle(shape))
+    const duration = 780 * Math.max(0.18, Math.abs(target - current) / full)
+    tweenDemo(demo, current, target, duration,
+      value => setAxisLiveRestAngle(demo, value),
+      () => {
+        label.textContent = target !== 0
+          ? '当前：牌面翻转 · 竖直对角线轴 · 点击切换'
+          : '当前：牌面翻转 · 纵向中轴 · 点击切换'
+      })
   }
 
   for (const demo of demos) {
     const card = demo.closest('.card');
+    card.setAttribute('tabindex', '0');
     card.addEventListener('click', () => {
+      if (demo.classList.contains('toggle-flat-demo')) {
+        toggleFlatAnimation(demo);
+        return;
+      }
+      if (demo.classList.contains('toggle-axis-demo')) {
+        toggleAxisAnimation(demo);
+        return;
+      }
       applyState(demo, demo.dataset.state === 'expanded' ? 'collapsed' : 'expanded');
     });
     card.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); }
     });
   }
-
-  // 初始状态正确落位到「收起 · 牌堆」（首次渲染无过渡，直接显示正确牌堆）
   for (const demo of demos) applyState(demo, 'collapsed');
+
+  const bgBtn = document.getElementById('bgToggle');
+  bgBtn.addEventListener('click', () => {
+    const on = document.body.classList.toggle('wallpaper');
+    bgBtn.textContent = on ? '背景：透明（壁纸）' : '背景：正常';
+    bgBtn.classList.toggle('on', on);
+    for (const demo of demos) applyState(demo, demo.dataset.state);
+  });
+  const shapeBtn = document.getElementById('shapeToggle');
+  shapeBtn.addEventListener('click', () => {
+    const next = document.body.dataset.shape === 'poker' ? 'square' : 'poker';
+    renderShape(next);
+    shapeBtn.textContent = next === 'poker' ? '形状：扑克牌 5:7' : '形状：方形';
+    shapeBtn.classList.toggle('on', next === 'poker');
+  });
 
   document.getElementById('toggleAll').addEventListener('click', () => {
     for (const demo of demos) applyState(demo, demo.dataset.state === 'expanded' ? 'collapsed' : 'expanded');
@@ -256,6 +1969,39 @@
     autoTimer = setInterval(() => {
       for (const demo of demos) applyState(demo, demo.dataset.state === 'expanded' ? 'collapsed' : 'expanded');
     }, 1200);
+  });
+
+  // ── 每张卡片右上角复制按钮 ──
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise((resolve, reject) => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); resolve(); } catch (e) { reject(e); }
+      ta.remove();
+    });
+  }
+  document.querySelectorAll('.card').forEach(card => {
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = '复制';
+    btn.title = '复制当前状态的 SVG（已去掉演示外框）';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const svg = card.querySelector('.demo svg:last-of-type');
+      if (!svg) return;
+      const clone = svg.cloneNode(true);
+      const border = clone.querySelector('.demo-border');
+      if (border) border.remove();
+      copyText(clone.outerHTML).then(() => {
+        btn.textContent = '✓';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 1200);
+      }).catch(() => { btn.textContent = '✗'; });
+    });
+    card.appendChild(btn);
   });
 </script>
 </body>

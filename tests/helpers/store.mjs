@@ -110,8 +110,31 @@ export function buildSnapshot(nodes, { turnEnds = new Map(), turnTimings = new M
   }
 }
 
-/** useSession mock：uSES 兼容的可变快照源 */
-export function createSessionStore(initialSnapshot) {
+/**
+ * 构造 0.1.2 形状的 ChatSnapshot（useChat 快照本体）：扁平的 order/nodes/locations/
+ * timeline + legacy 切片（turnEnds/turnTimings 收在 legacy 里）。SessionSnapshot 侧
+ * 则没有任何 chat 字段——由测试自己提供 `{ running }` 形状的极简对象。
+ * @param {Array} nodes
+ * @param {object} [options] 同 buildSnapshot
+ */
+export function buildChatSnapshot(nodes, options = {}) {
+  const snap = buildSnapshot(nodes, options)
+  return {
+    order: snap.chat.order,
+    nodes: snap.chat.nodes,
+    locations: snap.chat.locations,
+    timeline: options.timeline !== undefined ? options.timeline : { turnOrder: [], turns: new Map() },
+    legacy: {
+      nodes: [],
+      turnEnds: options.turnEnds ?? new Map(),
+      turnTimings: options.turnTimings ?? new Map(),
+      partial: null,
+      runningCalls: [],
+    },
+  }
+}
+
+/** useSession mock：uSES 兼容的可变快照源 */export function createSessionStore(initialSnapshot) {
   let snapshot = initialSnapshot
   const listeners = new Set()
   return {

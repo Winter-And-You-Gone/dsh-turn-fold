@@ -159,6 +159,33 @@ describe('computeGroup（步骤分组）', () => {
     const ghost = toolNode('ghost', 999)
     assert.equal(T.computeGroup(s.chat.order, s.chat.nodes, ghost), null)
   })
+
+  it('排除工具（todo_write）不并入任何段', () => {
+    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
+    const todoNode = (key, seq) => makeNode(key, 'tool-call', seq, {
+      data: { root: { kind: 'tool-result', callId: key, name: 'todo_write', isError: false } },
+    })
+    const nodes = [
+      userNode('u', 100),
+      textNode('as', 200, 'text'),
+      todoNode('todo', 300),
+      toolNode('tc', 400),
+      textNode('as2', 500, 'text'),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
+    // 普通工具 tc 的段不包含排除工具（核心保证：排除工具不并入任何段）
+    const gTool = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
+    assert.ok(gTool, 'tc 应有段')
+    assert.equal(gTool.keys.indexOf('todo'), -1, 'tc 段不包含 todo_write')
+    assert.equal(gTool.keys.length, 1, 'tc 段仅自身')
+    // 排除工具自身的 computeGroup 不返回 null（渲染层由 isExcludedSegmentTool 分支绕过，
+    // 若返回 null 会误触发 GroupedToolCallView 的 !group 官方兜底、破坏回合折叠）
+    const gTodo = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('todo'))
+    assert.ok(gTodo, 'todo_write 的 computeGroup 不得返回 null')
+    // isExcludedSegmentTool 判定
+    assert.ok(T.isExcludedSegmentTool(s.chat.nodes.get('todo')), 'todo_write 被识别为排除工具')
+    assert.equal(T.isExcludedSegmentTool(s.chat.nodes.get('tc')), false, '普通工具非排除')
+  })
 })
 
 // ─────────────────────────── segmentLabel / summarizeArgs（步骤折叠栏标题） ───────────────────────────
@@ -505,16 +532,46 @@ describe('segmentLabel / summarizeArgs（步骤折叠栏标题）', () => {
     assert.equal(T.segmentLabel(g, s.chat.nodes), '搜索了2次')
   })
 
-  it('纯 think 段闭合：标题 = 思考（不显示"运行了 0 条命令"）', () => {
+  it('纯 think 段闭合：标题 = 思考了N次（不显示"运行了 0 条命令"）', () => {
+    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || 'text' }] } })
     const nodes = [
       userNode('u', 100),
       thinkOnly('th', 200, '思考'),
-      asNode('as2', 300),
+      textNode('as2', 300, '正文'),
     ]
     const s = buildSnapshot(nodes, { turnEnds: new Map() })
     const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('th'))
     assert.equal(g.toolCount, 0)
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '思考')
+    assert.equal(g.thinkCount, 1, '段内 think 数 = 1')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '思考了1次')
+  })
+
+  it('纯 think 段含多个 think 节点：标题 = 思考了N次（N = 段内 think 数）', () => {
+    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || 'text' }] } })
+    const nodes = [
+      userNode('u', 100),
+      thinkOnly('th1', 200, '思考一'),
+      thinkOnly('th2', 250, '思考二'),
+      textNode('as2', 300, '正文'),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('th1'))
+    assert.equal(g.toolCount, 0)
+    assert.equal(g.thinkCount, 2, '段内 think 数 = 2')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '思考了2次')
+  })
+
+  it('纯 think 段闭合边界为 think+text 节点：该节点的 think 计入次数', () => {
+    const nodes = [
+      userNode('u', 100),
+      thinkOnly('th', 200, '思考'),
+      asNode('as2', 300), // 默认 blocks 含 reasoning + text（think+text 收尾节点）
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('th'))
+    assert.equal(g.toolCount, 0)
+    assert.equal(g.thinkCount, 2, 'th + as2 的 think 部分 = 2')
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '思考了2次')
   })
 })
 
@@ -557,14 +614,16 @@ describe('computeTurnFold（整回合折叠）', () => {
     assert.equal(f.foldable, true)
   })
 
-  it('回合结束后：finalAssistantKey 恢复为最后一条 assistant-step（单条消息回合不再折叠）', () => {
+  it('回合结束后：单条消息回合也生成回合折叠栏（headerKey 兜底自 finalAssistantKey）', () => {
     const nodes = [userNode('u-solo', 100), asNode('as-solo', 200)]
     const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 300]]) })
     const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-solo'))
     assert.equal(f.closed, true)
     assert.equal(f.finalAssistantKey, 'as-solo')
     assert.equal(f.isFinalAssistant, true)
-    assert.equal(f.foldable, false, '单条消息回合没有中间节点可折叠')
+    assert.equal(f.isTurnHeader, true, '单节点回合：唯一 assistant-step 兜底为 headerKey')
+    assert.equal(f.headerKey, 'as-solo')
+    assert.equal(f.foldable, true, '单条消息回合也应生成回合折叠栏')
   })
 
 

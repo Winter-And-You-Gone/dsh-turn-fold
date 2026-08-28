@@ -7,8 +7,8 @@
 > 那这个插件就是为你准备的。
 
 DeepSeek Harness（DSH）**纯插件**，只负责**折叠**：
-1. **步骤分组自动折叠**：两个 text 之间的所有工具调用和 Think 收成**一个步骤折叠栏**，**默认折叠**；运行中步骤折叠栏动态显示「正在运行 `图标 工具名` · 描述 / 正在思考 `图标 Think` · 内容」（文字带 shimmer 光泽动效），下一个 text 出现后按工具类型分组显示详细标题（如「运行了pwsh」「读取了client.js」「编辑了index.js [ +12 -3 ]」）。
-2. **运行中回合折叠栏**：**发消息即出现**（0 秒占位，不等第一个 response），折叠栏实时显示耗时/首字/消耗token/tok/s/缓存命中率，最右侧右对齐显示「第x轮」；折叠栏与内容之间有分隔线。
+1. **步骤分组自动折叠**：两个 text 之间的所有工具调用和 Think（含纯 Think 段）收成**一个步骤折叠栏**，**默认折叠**；运行中步骤折叠栏动态显示「正在运行 `图标 工具名` · 描述 / 正在思考 `图标 Think` · 内容」（文字带 shimmer 光泽动效），下一个 text 出现后按工具类型分组显示详细标题（如「运行了pwsh」「读取了client.js」「编辑了index.js [ +12 -3 ]」），纯 Think 段闭合后显示「思考了N次」。
+2. **运行中回合折叠栏**：**发消息即出现**（0 秒占位，不等第一个 response），折叠栏实时显示耗时/首字/消耗token/tok/s/缓存命中率/待折叠步数，最右侧右对齐显示「第x轮」；折叠栏与内容之间有分隔线。
 3. **整回合折叠**：一轮回复完成后自动收成**一个回合折叠栏**（默认收起），最终总结只显示正文。
 4. **手动展开/收起**：点击折叠栏切换。
 5. **新版本更新说明**：每个新版本首次加载时右下角弹出一次更新说明（本地记录已读版本，不重复打扰）。
@@ -45,7 +45,8 @@ text：……                                             ← 下一个 text 出
   仅编辑：`编辑了index.js [ +12 -3 ]`（单文件附加行数变更，从官方 diffs 数据读取）/
   `编辑了3份文件`；搜索：`搜索了2次`；
   混合时按「读取 → 编辑 → 搜索 → 命令」排序且**命令始终在最后**，
-  如 `读取了client.js 编辑了App.tsx 运行了2条命令`；纯 Think 段闭合后显示「思考」。
+  如 `读取了client.js 编辑了App.tsx 运行了2条命令`；纯 Think 段（段内无工具）闭合后显示
+  「思考了N次」（N = 段内 Think 次数）。
 - **手动可展开/收起**：点击步骤折叠栏切换；手动选择会覆盖自动规则。
 - **失败命令标红**：组内已有命令**执行失败**（工具结果 `isError`，含中断）时，折叠栏文字变红，
   并在标题后追加失败数——仅单条工具调用失败显示「 —— 执行失败」（无条数），
@@ -71,7 +72,7 @@ text：……                                             ← 下一个 text 出
 
 ```
 [用户消息]
-[▸ 耗时5分12秒 · 首字1.2s · 消耗12345token · 34tok/s · 缓存命中80.00%        第13轮]  ← 回复开始即出现的回合折叠栏
+[▸ 耗时5分12秒 · 首字1.2s · 消耗12345token · 34tok/s · 缓存命中80.00% · 待折叠6步        第13轮]  ← 回复开始即出现的回合折叠栏
 ─────────────────────────────────────────────          ← 分隔线
 [Think / 工具调用逐条加载…]                             ← 运行中默认折叠成步骤折叠栏
 [最终总结正文]                                           ← 无 Think 行，只有正文
@@ -111,7 +112,8 @@ text：……                                             ← 下一个 text 出
 - **无工具调用也折叠**：回合内只有上下文注入 / Think、没有任何工具调用时，同样收成
   一个回合折叠栏（折叠栏显示耗时/token 指标，不显示命令数）；
 - **回合折叠栏显示本轮指标**：`耗时x时x分x秒（不足 1 小时只显示分秒，不足 1 分钟只显示秒），
-  首字x.xs，消耗xxx token，xxx tok/s，缓存命中xx.xx%`；某几项缺失时自动省略，
+  首字x.xs，消耗xxx token，xxx tok/s，缓存命中xx.xx%，待折叠/已折叠N步（>0 时才显示；
+  运行中为「待折叠N步」，回合结束后为「已折叠N步」）」`；某几项缺失时自动省略，
   全部缺失才回退为「运行了 N 条命令」；字段之间用 ` · ` 分隔，右侧附「第x轮」；
 - 点击回合折叠栏展开/收起整轮内容；重新打开历史会话时，已完成的回合同样保持整回合折叠；
 - **折叠作用域不越过用户消息**：回合折叠栏只折叠「用户消息之后、agent 回复之间」的内容。
@@ -136,8 +138,10 @@ text：……                                             ← 下一个 text 出
 - **折叠栏即官方样式**：折叠栏直接复用官方 `DisclosureRow` 原语（`@deepseek-ai/dsh-client-ui-primitives`）
   渲染——24px 行高、16px 前导、官方 14px chevron（收起右向 / 展开下向）、14px/24px 标题，
   与 Think / 工具卡片的折叠行逐像素一致；
-- **回合折叠栏分隔线**：折叠栏下方常驻一条 1px 水平细线（`.ccg-turn-divider`，颜色取官方
-  `--dsw-alias-line-secondary` token），收起/展开都显示，上下留白 4px / 8px；
+- **回合折叠栏分隔线**：折叠栏下方常驻一条 1px 水平细线（`.ccg-turn-divider`，颜色按
+  `var(--dsw-alias-line-secondary, var(--dsw-alias-border-l1, #d1d5db))` 链式回退——
+  两版 DSH 均未定义 `--dsw-alias-line-secondary`，实际生效的是 0.1.1/0.1.2 共有的
+  `--dsw-alias-border-l1`，随主题明暗自动适配），收起/展开都显示，上下留白 4px / 8px；
 - **紧凑行距**：折叠组只占一行（24px）；被折叠的成员节点整行 `display:none`，不会残留空行，
   行距与官方消息完全一致（column 的 16px 节奏），折叠再多也不会越空越大；
 - **过渡动画**：展开时内容从 0 高度平滑展开到真实高度（grid 轨道 `0fr→1fr` 过渡 + 淡入，280ms，
@@ -223,17 +227,32 @@ npm run check      # 语法检查 client.js / index.js
 | `unit.render.test.mjs` | React 渲染：初始折叠 → 点击回合折叠栏展开 → 再收起 的完整交互；内置组件委托渲染时 `useHostDescription` 等 kit hook 的透传；条目注册契约（inject 声明） |
 | `unit.css.test.mjs` | CSS `:has()` 隐藏规则在真实 DOM 上的生效（含"展开→收起"往返） |
 | `regression.test.mjs` | 历史 bug 回归：节点对象替换（Bug1）、inject 缺失崩溃/abdicate（Bug2）、无工具调用回合折叠（v0.2.3）、折叠作用域不越过用户消息（v0.2.2）、步骤分组手动展开/收起 |
+| `unit.gear.test.mjs` / `unit.settings-row.test.mjs` | 齿轮字段弹窗与「回合折叠方式」设置行（shadow 官方 transcript-view） |
+| `unit.compat.test.mjs` | DSH 双版本兼容：0.1.1 `useSession(.chat + 顶层 turnEnds/turnTimings)` 与 0.1.2 `useChat + chat.legacy` 两条快照路径、折叠模式切换 hooks 顺序回归、官方 diffs 读取链（`meta.diffs` / `resultView` / `callView`） |
 
 > 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
 > `npm test` 中内置）；普通 Linux/macOS CI 同样可用该参数（Node ≥ 22.9）。
+
+## 自定义图标（Agent Skill）
+
+想改折叠栏图标的用户不用手动操作——本插件随包注册了一个 **agent skill**
+`dsh-turn-fold-customize-icons`（host 半边 `index.js` 通过 `ctx.skills` 注册，
+DSH 0.1.2+ 装配了 `@deepseek-ai/dsh-skill` 时自动生效）。对 AI 助手说"帮我把
+扑克牌图标改成××样式"，助手会自动加载该 skill，得到完整自定义流程：
+
+- **数据源**：`icons/default.json`（唯一数据源，含花色路径、牌堆/扇形几何、动画）
+- **改完同步**：`npm run sync:icons` 注入 client.js → `npm run icons:check` 校验
+- **快速预览**：写 `localStorage['dsh-turn-fold:icons']` 可免改代码覆盖
+- **避坑指南**：该环境特有的 SVG 渲染坑（fill var 属性不生效、defs fill 覆盖不掉、
+  clip-rule 无效、transform-origin 不可靠等）
+
+skill 正文在 `assets/dsh-turn-fold-customize-icons.md`，随 npm 包 `files` 一起发布。
 
 ## CI 与发布
 
 GitHub Actions 会在每次 PR / push 到 `main` 时自动运行语法检查、`npm test` 全套测试和
 `npm pack --dry-run` 打包预检；推送 `v*` tag 时自动发布到 npm（OIDC Trusted Publishing，
-无需长期 token）并创建 GitHub Release。
-
-**一次性配置**（把 npm 包绑定到本仓库的 release workflow）：
+无需长期 token）并创建 GitHub Release。**一次性配置**（把 npm 包绑定到本仓库的 release workflow）：
 
 ```sh
 npx npm@^11.15.0 trust github @winteries/dsh-turn-fold \
@@ -268,6 +287,12 @@ git push --follow-tags
   回合折叠栏即出现：耗时用随机间隔时钟（每 `CONFIG.liveTickMs` × 0.5~1，默认 125~250ms）
   补 `Date.now()` 实时走动，"消耗token"在真实值之上叠加每 tick +1/+11 交替的动画
   偏移持续增长（真实 `usage` 到达时校正基线），全部指标在 `turn/end` 后切换为权威值。
+- **会话快照双版本读取层**：DSH 0.1.1 与 0.1.2 的快照契约不同——0.1.2 把快照拆分成
+  `useSession`（会话级状态）与 `useChat`（chat 数据），`turnEnds`/`turnTimings` 收进
+  `chat.legacy`。组件统一经 `useChatSnapshotData` 适配：有 `useChat`（0.1.2+）就读
+  `useChat` 快照本体，否则从 `useSession(s).chat` 取；`turnEnds`/`turnTimings` 优先读
+  `chat.legacy`、顶层兼容字段兜底。所有 hooks 无条件调用（数据计算与订阅和"是否接管
+  折叠"解耦），折叠模式切换（接管 ↔ 委托内置）不改变 hook 数量，条目不会崩。
 - **0 秒占位**：`user` 渲染器覆盖在「会话运行中且用户消息仍是最后一条」时渲染占位回合折叠栏
   （耗时从运行中回合的 `startTime` 计时），第一条中间节点到达后自动交接给正式回合折叠栏。
 - **首字（TTFT）三来源（官方优先）**：① **step settle 后即实时读取官方值**——
@@ -279,8 +304,9 @@ git push --follow-tags
   （`Date.now() - turnTimings.startTime`，误差约一帧渲染延迟，幂等记录、回合内只记一次）。
 - **段闭合标题缓存**：段闭合后标题不再变化，按 `leaderKey + 节点 keys + 语言 + 工具指纹`
   （名称/isError/argsRaw 长度，不解析内容）记忆，避免每次渲染重复解析 argsRaw；
-  工具行数变更优先读取官方 `call.diffs` 数据（`oldText`/`newText` 块行数），无 diffs 时
-  才回退解析 argsRaw（单次解析同时提取路径与行数）。
+  工具行数变更优先读取官方 diffs 数据（`oldText`/`newText` 块行数；0.1.2 在结算 metadata
+  `root.meta.diffs`、0.1.1 在 wire 视图 `root.resultView.diffs` / `root.callView.diffs`），
+  无 diffs 时才回退解析 argsRaw（单次解析同时提取路径与行数）。
 - **会话切换清理**：`segmentLabelCache`（段闭合标题缓存，每段一条字符串、长会话可达数百 KB）、
   `liveTokenCache`（每回合 1-2 条）与手动展开状态（`overrides` / `turnOverrides`）在切换
   会话时清理——手动状态回到自动规则（已结束回合默认收起）；`ttftCache` 保留（每回合一个
@@ -290,13 +316,18 @@ git push --follow-tags
 
 ## 注意事项
 
-- DSH 升级若改变上述槽位契约或内置组件 props，本插件可能需要随版本小改（属插件维护，非改源码）。
+- 兼容 DSH 0.1.1-rc.2 与 0.1.2-alpha.1（会话快照契约差异由插件内适配层消化，见工作原理）；
+  DSH 升级若改变上述槽位契约或内置组件 props，本插件可能需要随版本小改（属插件维护，非改源码）。
 - 折叠栏文案在 `client.js` 顶部 `CONFIG` 可调。
 - **耦合点清单**（DSH 升级时对照排查；任一失效均优雅降级——回退内置渲染 / 文案兜底 +
   `console.warn` 提示，不会白屏）：
-  - 会话快照字段：`s.chat.order / nodes / locations`、`locations.getTurn()`、`turnEnds`、
-    `turnTimings`、`chat.timeline.turns`（用于段/回合分组、结束判定、耗时与状态标签）；
-  - 节点数据结构：`tool-call` 的 `data.root`（`call.name / argsRaw / diffs`）、
+  - 会话快照字段：0.1.1 走 `useSession` 快照的 `s.chat.order / nodes / locations`、
+    `locations.getTurn()`、顶层 `turnEnds` / `turnTimings`、`chat.timeline.turns`；
+    0.1.2 快照拆分后改走框架注入的 `useChat`（扁平 ChatSnapshot），`turnEnds` /
+    `turnTimings` 在 `chat.legacy`（适配层自动选择，见工作原理）——用于段/回合分组、
+    结束判定、耗时与状态标签；
+  - 节点数据结构：`tool-call` 的 `data.root`（`call.name / argsRaw`；diffs 按版本在
+    `root.meta.diffs`（0.1.2）或 `resultView` / `callView` 视图（0.1.1））、
     `assistant-step` 的 `blocks`（reasoning / text）与 `usage`、`turn-tail` 的
     `tokensPerSecond`（用于折叠栏文案、think 摘要、token/缓存命中指标）；
   - CSS 选择器：`[data-chat-flow-kind]`、`[data-variant="think"]`（隐藏折叠成员 flowItem

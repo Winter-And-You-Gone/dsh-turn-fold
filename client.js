@@ -1,10 +1,12 @@
 // dsh-turn-fold: DeepSeek Harness 前端插件（纯插件，不改 DSH 源码）。只负责折叠。
 //
 // 行为：
-//   1. 步骤分组自动折叠：两个 text 之间的所有工具调用和纯 Think 收成一个步骤折叠栏，
-//      默认折叠（运行中也不例外）。段未闭合（下一个 text 还没出现）时折叠栏动态显示
-//      "正在运行 Xxx · 参数摘要 / 正在思考 · 内容"；下一个 text 出现后变为
-//      "运行了 N 条命令"（think 不算命令数）。
+//   1. 步骤分组自动折叠：两个 text 之间的所有工具调用和 Think（含纯 Think 段）收成一个
+//      步骤折叠栏，默认折叠（运行中也不例外）。段未闭合（下一个 text 还没出现）时折叠栏
+//      动态显示"正在运行 Xxx · 参数摘要 / 正在思考 · 内容"；下一个 text 出现后变为
+//      "运行了 N 条命令"（think 不算命令数）；纯 think 段（段内无工具）闭合后显示
+//      "思考了N次"。纯 think 段不预判后续是否出现工具——computeGroup 按当前快照实时归类，
+//      步骤折叠栏自 think 一开始就出现（无翻转跳变），工具到达只是标题切换、内容区增长。
 //   2. 回合折叠栏在 agent 回复开始就出现（运行中默认展开，回复在其下逐条加载），
 //      折叠栏实时显示本轮耗时/token/tok/s/缓存命中率——直播指标按随机间隔刷新
 //      （CONFIG.liveTickMs × 随机数 0.5~1，默认 125~250ms）：耗时秒数走动、tok/s
@@ -23,7 +25,7 @@
 // 实现方式：
 //   - 用 priority:-1 覆盖（shadow）内置的 conversation.chat.node 渲染器：
 //       key "tool-call"        -> 步骤分组 + 自动折叠
-//       key "assistant-step"   -> 步骤分组（纯 Think）+ 整回合折叠（Think/最终消息）
+//       key "assistant-step"   -> 步骤分组（含纯 Think 段）+ 整回合折叠（Think/最终消息）
 //       key "context"          -> 整回合折叠（上下文注入）
 //   - 通过 ctx.slots.entries() 取到内置组件引用做"委托渲染"（展开时原样转发，
 //     工具卡片内容/样式与内置一致）。因为我们的 entry 没声明 children 收不到
@@ -55,7 +57,11 @@ window.__ModuleLoader__.load({
 			liveTickMs: 250,
 			// 刷新间隔抖动比例：实际间隔 = liveTickMs × 随机数（liveTickJitter ~ 1），
 			// 让数字跳动节奏不规律（时快时慢），更像真实的生成速率而不是节拍器。
-			liveTickJitter: 0.5
+			liveTickJitter: 0.5,
+			// 排除在步骤折叠栏之外的工具（按工具名精确匹配，小写）：这类调用不套步骤
+			// 折叠栏、也不并入任何段，始终以官方工具卡片原样渲染（如"更新任务清单"的
+			// todo_write）；但仍参与整回合折叠——回合结束收进回合折叠栏。
+			excludedSegmentTools: ["todo_write"]
 		};
 
 		// ---- 多语言支持 ----
@@ -94,8 +100,9 @@ window.__ModuleLoader__.load({
 				// 步骤折叠运行中标题：当前正在执行的工具 / 思考内容（间隔由 CSS margin 控制）
 				runningTool: "正在运行",
 				runningThink: "正在思考",
-				// 纯 think 段（无工具调用）闭合后的标题
-				thinkOnly: "思考",
+				// 纯 think 段（无工具调用）闭合后的标题（段内 think 次数）
+				segmentThink: "思考了",
+				segmentThinkSuffix: "次",
 				// 段闭合详细标题：按工具类型分组
 				segmentCommand: "运行了",
 				segmentCommandSuffix: "条命令",
@@ -106,7 +113,42 @@ window.__ModuleLoader__.load({
 				segmentSearch: "搜索了",
 				segmentSearchSuffix: "次",
 				segmentOthers: "执行了",
-				segmentOthersSuffix: "项操作"
+				segmentOthersSuffix: "项操作",
+				// 回合折叠栏字段设置弹窗
+				fieldSettings: "回合折叠栏字段",
+				fieldSettingsHint: "选择要在回合折叠栏中显示的字段",
+				fieldDuration: "耗时",
+				fieldDurationDesc: "回合总时长",
+				fieldTtft: "首字",
+				fieldTtftDesc: "TTFT 首字延迟",
+				fieldTokens: "消耗token",
+				fieldTokensDesc: "计费 token 数",
+				fieldTps: "tok/s",
+				fieldTpsDesc: "生成速率",
+				fieldCacheHit: "缓存命中率",
+				fieldCacheHitDesc: "缓存命中百分比",
+				fieldFolded: "已折叠步数",
+				fieldFoldedDesc: "回合折叠栏收纳的步骤数（运行中显示待折叠）",
+				fieldSettingsDone: "完成",
+				// 文件链接复制 Toast
+				fileCopiedToast: "已复制绝对路径",
+				// 折叠图标样式选择
+				foldIconLabel: "折叠图标",
+				foldIconDefault: "默认",
+				foldIconDefaultDesc: "官方折叠箭头",
+				foldIconPoker: "动态扑克牌",
+				foldIconPokerDesc: "卡牌动画与牌堆",
+				// 设置 → 对话 → 回合折叠方式 行（shadow 官方 transcript-view 行）
+				// 标题/描述保留官方原文（对话显示 / 控制已完成轮次的过程内容）；
+				// 选项文字用英文（与官方 Normal/Compact 风格一致）；悬浮提示用中文
+				settingsTranscriptTitle: "对话显示",
+				settingsTranscriptDesc: "控制已完成轮次的过程内容",
+				settingsTranscriptNormal: "Normal",
+				settingsTranscriptNormalTip: "不折叠：回合过程完整展示",
+				settingsTranscriptCompact: "Compact",
+				settingsTranscriptCompactTip: "官方紧凑折叠：只显示最终回复",
+				settingsTranscriptTurnFold: "Turn-Fold",
+				settingsTranscriptTurnFoldTip: "插件折叠：接管全部折叠并显示指标"
 			},
 			en: {
 				headerPrefix: "Ran",
@@ -123,7 +165,8 @@ window.__ModuleLoader__.load({
 				ariaTurnExpanded: "Collapse turn",
 				runningTool: "Running ",
 				runningThink: "Thinking ",
-				thinkOnly: "Think",
+				segmentThink: "Thought ",
+				segmentThinkSuffix: " times",
 				segmentCommand: "Ran ",
 				segmentCommandSuffix: " commands",
 				segmentRead: "Read ",
@@ -133,7 +176,40 @@ window.__ModuleLoader__.load({
 				segmentSearch: "Searched ",
 				segmentSearchSuffix: " times",
 				segmentOthers: "Executed ",
-				segmentOthersSuffix: " operations"
+				segmentOthersSuffix: " operations",
+				// Turn fold bar field settings popup
+				fieldSettings: "Turn fold bar fields",
+				fieldSettingsHint: "Choose which fields to show on the turn fold bar",
+				fieldDuration: "Duration",
+				fieldDurationDesc: "Turn elapsed time",
+				fieldTtft: "TTFT",
+				fieldTtftDesc: "Time to first token",
+				fieldTokens: "Tokens",
+				fieldTokensDesc: "Billed token count",
+				fieldTps: "tok/s",
+				fieldTpsDesc: "Generation rate",
+				fieldCacheHit: "Cache hit",
+				fieldCacheHitDesc: "Cache hit percentage",
+				fieldFolded: "Folded steps",
+				fieldFoldedDesc: "Steps folded into the turn bar (pending while running)",
+				fieldSettingsDone: "Done",
+				// File link copy toast
+				fileCopiedToast: "Absolute path copied",
+				// Fold icon style selector
+				foldIconLabel: "Fold icon",
+				foldIconDefault: "Default",
+				foldIconDefaultDesc: "Official fold chevron",
+				foldIconPoker: "Animated poker cards",
+				foldIconPokerDesc: "Card animation & card stack",
+				// Settings → Conversation → Transcript view mode
+				settingsTranscriptTitle: "Conversation display",
+				settingsTranscriptDesc: "Controls process content in completed turns",
+				settingsTranscriptNormal: "Normal",
+				settingsTranscriptNormalTip: "No folding: show the complete turn process",
+				settingsTranscriptCompact: "Compact",
+				settingsTranscriptCompactTip: "Official compact folding: final reply only",
+				settingsTranscriptTurnFold: "Turn-Fold",
+				settingsTranscriptTurnFoldTip: "Plugin folding: take over all folds and show metrics"
 			}
 		};
 		/** 取当前语言下的文案；缺失键回退英文，再缺失返回键名本身。 */
@@ -158,8 +234,8 @@ window.__ModuleLoader__.load({
 		// 每次发布新版本时把 NOTICE_VERSION 改成新版本号并更新 NOTICE_CONTENT 正文，
 		// 加载时存值与当前版本不符就弹一次，点「知道了」后写入当前版本、下次不再弹。
 		// 注意：v0.3.1 是特例——v0.3.0 发布时还没有本通知功能，其大版本更新日志从未
-		// 展示过，因此本版本合并展示 v0.3.0 + v0.3.1 两节内容，仅此一次；之后的版本
-		// 只需写本版本一节，sections 里留一个即可。
+		// 展示过，因此该版本合并展示 v0.3.0 + v0.3.1 两节内容，仅此一次；之后的版本
+		// 直接追加新版本节，历史节保留供新用户回溯。
 		var NOTICE_KEY = "dsh-turn-fold:notice-version";
 		var NOTICE_VERSION = "0.3.1";
 		var NOTICE_CONTENT = {
@@ -180,6 +256,9 @@ window.__ModuleLoader__.load({
 					{
 						version: "v0.3.1",
 						items: [
+							{ title: "🃏 扑克牌折叠图标", detail: "步骤折叠栏与回合折叠栏的前导图标改为扑克牌：运行中显示四花色循环卡牌动画，完成后收起为随机花色的牌堆（工具数 ≤3 用 3 张、>3 用 5 张），展开时牌张绕底边中点扇形展开并带形变过渡动画；牌张遮挡采用 luminance mask 动态挖空上层覆盖区域，牌身透明、不依赖背景色，壁纸/透明背景下依然正确。" },
+							{ title: "🧠 纯 Think 段也折叠", detail: "思考内容统一收进步骤折叠栏：运行中标题「正在思考 · 最新一行」流式滚动（shimmer 光泽）、闭合后显示「思考了N次」；不再有「裸 Think 行直接显示」与「工具段折叠」之间的切换跳变。" },
+							{ title: "🚫 排除工具不折叠", detail: "todo_write（更新任务清单）不套步骤折叠栏、也不并入任何步骤分组，始终以官方工具卡片原样显示；仍参与整回合折叠（回合结束收进回合折叠栏）。" },
 							{ title: "🏷️ 包名更名", detail: "npm 包名由 dsh-turn-fold 变更为 @winteries/dsh-turn-fold，解决插件市场「已安装」页因同名插件歧义而缺失描述的问题；旧包名 dsh-turn-fold 仍会同步发布，无需迁移。" },
 							{ title: "📣 版本更新说明", detail: "新增「新版本更新说明」机制：每个新版本首次加载时自动弹出一次（本版本合并展示 v0.3.0 大版本更新日志，仅此一次）。" }
 						]
@@ -205,6 +284,9 @@ window.__ModuleLoader__.load({
 					{
 						version: "v0.3.1",
 						items: [
+							{ title: "🃏 Poker-card fold icons", detail: "Step and turn fold bars now show poker-card icons: a four-suit card animation while running, collapsing to a random-suit deck on completion (3 cards for ≤3 tools, 5 cards for >3); expanding fans the cards out with morph transitions. Occlusion uses luminance masks that dynamically cut out the overlapping area of the card above — the card body stays transparent, so it works correctly over wallpapers and transparent backgrounds without any background-color dependency." },
+							{ title: "🧠 Think-only segments fold too", detail: "All thinking now wraps into step fold bars: while running the header shows \"Thinking · latest line\" (streaming, shimmer), and \"Thought N times\" once closed — no more jump between a bare Think row and a folded tool segment when a tool arrives mid-segment." },
+							{ title: "🚫 Excluded tools stay unfolded", detail: "todo_write (task-list updates) skips the step fold bar and doesn't join any segment — it renders as the bare official tool card; still participates in whole-turn collapse (folded into the turn fold bar when the turn ends)." },
 							{ title: "🏷️ Package rename", detail: "The npm package was renamed from dsh-turn-fold to @winteries/dsh-turn-fold, resolving the missing description in the market Installed tab caused by a same-name collision; the legacy dsh-turn-fold package keeps receiving synchronized releases, so no migration is needed." },
 							{ title: "📣 Release notes", detail: "Introduced the per-version \"What's new\" notice that appears automatically once after each release (this release merges the v0.3.0 major changelog — just this once)." }
 						]
@@ -269,6 +351,7 @@ window.__ModuleLoader__.load({
 		// 若某版本缺失则回退到自带兜底样式，保证插件仍可用。
 		var DisclosureRow = null;
 		var Button = null;
+		var Menu = null;
 		var IconChevronDownOutline14 = null;
 		var IconChevronRightOutline14 = null;
 		var IconThinkOutline14 = null;
@@ -278,10 +361,12 @@ window.__ModuleLoader__.load({
 		var IconCodeOutline16 = null;
 		var IconApiOutline14 = null;
 		var IconSparkle16 = null;
+		var Toast = null;
 		try {
 			var uiPrimitives = require("@deepseek-ai/dsh-client-ui-primitives");
 			DisclosureRow = uiPrimitives.DisclosureRow;
 			Button = uiPrimitives.Button;
+			Menu = uiPrimitives.Menu;
 			IconChevronDownOutline14 = uiPrimitives.IconChevronDownOutline14;
 			IconChevronRightOutline14 = uiPrimitives.IconChevronRightOutline14;
 			IconThinkOutline14 = uiPrimitives.IconThinkOutline14;
@@ -291,6 +376,8 @@ window.__ModuleLoader__.load({
 			IconCodeOutline16 = uiPrimitives.IconCodeOutline16;
 			IconApiOutline14 = uiPrimitives.IconApiOutline14;
 			IconSparkle16 = uiPrimitives.IconSparkle16;
+			// 官方 Toast（消息通知原语）：短提示自动消失；平台缺失时静默跳过。
+			Toast = uiPrimitives.Toast;
 		} catch (e) {
 			/* 平台模块缺失：走自带兜底样式 */
 		}
@@ -310,7 +397,10 @@ window.__ModuleLoader__.load({
 				   下方的水平细线）。步骤折叠栏保持原 8px 间距；回合折叠栏由分隔线自带
 				   上下留白（上 4px / 下 8px）。 */
 				".ccg-group-root[data-ccg-turn][data-ccg-open] .ccg-header{margin-bottom:0}",
-				".ccg-turn-divider{height:1px;flex:none;background:var(--dsw-alias-line-secondary,#d1d5db);margin:4px 0 8px}",
+				/* 分隔线颜色：--dsw-alias-line-secondary 在 DSH 0.1.1/0.1.2 均无定义（官方自身
+				   也有悬空引用），两版的线 token 是 --dsw-alias-border-l1，var() 链式兜底后
+				   仍回退字面量（老版本/未知主题） */
+				".ccg-turn-divider{height:1px;flex:none;background:var(--dsw-alias-line-secondary,var(--dsw-alias-border-l1,#d1d5db));margin:4px 0 8px}",
 				/* 折叠内容容器：grid 轨道 0fr→1fr 过渡（无需测量——1fr 轨道自动等于
 				   内容完整高度，内容多少就展开多少；曲线/时长为本插件自有，与
 				   常见的 grid 0fr 方案参数不同）。折叠态 opacity 0 淡入。 */
@@ -330,7 +420,9 @@ window.__ModuleLoader__.load({
 				/* 回合折叠栏标题占满行宽，指标与"第x轮"两端对齐（右对齐轮次） */
 				".ccg-group-root[data-ccg-turn] .ccg-header-title{flex:1 1 auto}",
 				".ccg-header-flex{display:flex;align-items:center;justify-content:space-between;width:100%;min-width:0;gap:12px}",
-				".ccg-header-flex-metrics{min-width:0}",
+				/* 指标容器改为 inline-flex：齿轮图标与指标文字按 flex 交叉轴垂直居中
+				   （原先是 inline 布局，齿轮按文本基线对齐导致纵向偏上） */
+				".ccg-header-flex-metrics{min-width:0;display:inline-flex;align-items:center}",
 				".ccg-header-round{flex:none;white-space:nowrap}",
 				/* 组内有执行失败命令时标题标红（与官方错误色 token 一致） */
 				/* 失败提示：仅 "——" 之后的部分标红（整标题不再整体标红） */
@@ -339,7 +431,38 @@ window.__ModuleLoader__.load({
 				".ccg-diff{transition:color .15s ease}",
 				".ccg-diff:hover .ccg-diff-add{color:var(--dsw-alias-state-success-primary,#16a34a)}",
 				".ccg-diff:hover .ccg-diff-del{color:var(--dsw-alias-state-error-primary,#ef4444)}",
+				/* 文件名链接：悬停变 DeepSeek 官方蓝色 #4D6BFE（[ +12 -3 ] 同款变色逻辑），
+				   点击复制绝对路径并弹官方 Toast 提示。
+				   !important：DisclosureRow 官方 title 样式的 color 优先级更高，
+				   不加 !important 时 hover 变色会被覆盖。不可用 CSS 变量
+				   --dsw-alias-brand-primary（暗色主题下解析为白色）。 */
+				".ccg-file-link{cursor:pointer;transition:color .15s ease}",
+				".ccg-file-link:hover{color:#4D6BFE!important}",
 				".ccg-header-chevron{color:var(--dsw-alias-label-secondary,#9ca3af)}",
+				/* 步骤折叠栏扑克牌图标：前导区隐藏（内建 chevron 一并消失），图标并入标题；
+				   同一套牌张元素，开合时按 data-ccg-open 改写 transform，逐张牌形变过渡。
+				   标题改为 flex 垂直居中（仅含扑克图标的标题，:has 隔离），避免 20px 图标
+				   与 14px 文本基线错位被 overflow:hidden 裁掉一半。 */
+				".ccg-poker-leading{display:none}",
+				".ccg-poker-icon{display:inline-flex;align-items:center;justify-content:center;position:relative;width:24px;height:24px;flex:none;color:var(--dsw-alias-label-secondary,#9ca3af)}",
+				".ccg-poker-svg{display:flex;align-items:center}",
+				".ccg-header-title:has(.ccg-poker-icon){display:inline-flex;align-items:center;gap:6px}",
+				/* mask 遮挡方案：真实牌与 mask 里的 occluder 用同一套绝对 transform，
+				   同样的过渡曲线 → 开合动画期间遮挡逐帧对齐。rect 不填充（纯轮廓，
+				   壁纸可透出）；下层牌被上层覆盖的区域由 mask 动态扣掉，不透出下层。 */
+				".ccg-poker-motion,.ccg-poker-mask-card{transition:transform .45s cubic-bezier(.22,1,.36,1)}",
+				/* 运行中折叠栏图标的开合角度过渡（CSS transform 覆盖 attribute，SMIL 动画不断流）：
+				   牌面轮换（步骤折叠栏）：收起 0° ⇄ 展开 35.5°（绕图标中心 8,8）；
+				   牌面翻转（回合折叠栏）：收起纵向中轴 ⇄ 展开竖直对角线轴
+				   （axis-rest-rotation g 位于局部原点，CSS 绕 0,0 旋转与 attribute 等价）。
+				   data-flat-open / data-spin-open 挂在外层 .ccg-poker-icon span（React 可控），
+				   后代选择器切换内部 g 的 CSS transform，transition 播放平滑过渡。 */
+				".ccg-poker-icon .ccg-flat-rotation{transform-box:view-box;transform-origin:8px 8px;transform:rotate(0deg);transition:transform .45s cubic-bezier(.22,1,.36,1)}",
+				".ccg-poker-icon[data-flat-open] .ccg-flat-rotation{transform:rotate(35.5deg)}",
+				".ccg-poker-icon .ccg-axis-rest-rotation{transform-box:view-box;transform:rotate(0deg);transition:transform .45s cubic-bezier(.22,1,.36,1)}",
+				".ccg-poker-icon[data-spin-open] .ccg-axis-rest-rotation{transform:rotate(35.5377deg)}",
+				/* 运行中卡牌动画：牌身透明（透壁纸），动画自身的 mask 扣掉上层覆盖区 */
+				".anim-card{fill:transparent}",
 				/* 兜底折叠栏（官方 DisclosureRow 不可用时）：24px 行高 + 14px chevron + 14px/24px 文案 */
 				".ccg-header-fallback{display:flex;align-items:center;gap:6px;height:24px;cursor:pointer;user-select:none;color:var(--dsw-alias-label-secondary,#9ca3af);font-size:14px;line-height:24px;white-space:nowrap}",
 				".ccg-header-fallback .ccg-chevron{flex:none;font-size:14px;width:16px;text-align:center;color:var(--dsw-alias-label-tertiary,#6b7280);transition:transform .12s ease}",
@@ -421,7 +544,70 @@ window.__ModuleLoader__.load({
 				/* 平台 Button 路径：只补右对齐与上间距，颜色/圆角由官方 primary/sm 类负责 */
 				".ccg-notice-btn-plat{display:block;margin:8px 0 0 auto}",
 				"@keyframes ccg-notice-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}",
-				"@media (prefers-reduced-motion:reduce){.ccg-notice{animation:none!important}}"
+				"@media (prefers-reduced-motion:reduce){.ccg-notice{animation:none!important}}",
+				/* 回合折叠栏字段设置齿轮图标：悬停向右旋转（90° 半圈，再松开回位） */
+				".ccg-gear-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:16px;margin-left:2px;cursor:pointer;color:var(--dsw-alias-label-tertiary,#9ca3af);border-radius:4px;transition:color .15s ease}",
+				".ccg-gear-icon:hover{color:var(--dsw-alias-label-primary,#1f2328)}",
+				".ccg-gear-icon svg{transition:transform .45s cubic-bezier(.22,1,.36,1)}",
+				".ccg-gear-icon:hover svg{transform:rotate(90deg)}",
+				"@media (prefers-reduced-motion:reduce){.ccg-gear-icon svg{transition:none!important}}",
+				/* 字段设置弹窗：半透明遮罩 + 居中卡片，checkbox 逐字段开关 */
+				".ccg-gear-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.32);animation:ccg-gear-fade .15s ease-out}",
+				".ccg-gear-popup{background:var(--dsw-alias-bg-layer-2,#ffffff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:16px 18px;min-width:320px;max-width:400px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary,#1f2328)}",
+				".ccg-gear-popup-title{font-weight:600;font-size:14px;margin-bottom:4px}",
+				".ccg-gear-popup-hint{font-size:12px;color:var(--dsw-alias-label-tertiary,#9ca3af);margin-bottom:10px}",
+				".ccg-gear-popup-fields{display:flex;flex-direction:column;gap:2px}",
+				".ccg-gear-popup-field{display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;border-radius:6px;color:var(--dsw-alias-label-primary,#1f2328)}",
+				".ccg-gear-popup-field:hover{background:var(--dsw-alias-bg-layer-3,#f3f4f6)}",
+				".ccg-gear-popup-field input[type=checkbox]{margin:0;flex:none;accent-color:var(--dsw-alias-brand-primary,#4f6ef7);cursor:pointer}",
+				".ccg-gear-popup-field label{flex:1;cursor:pointer;user-select:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+				".ccg-gear-popup-field-desc{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary,#9ca3af)}",
+				".ccg-gear-popup-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}",
+				".ccg-gear-popup-btn{background:var(--dsw-alias-button-primary-fill,var(--dsw-alias-brand-primary,#4f6ef7));color:var(--dsw-alias-label-primary-foreground,#fff);border:none;border-radius:14px;padding:4px 14px;font-size:12px;line-height:18px;cursor:pointer}",
+				".ccg-gear-popup-btn:hover{background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-brand-primary,#4f6ef7))}",
+				/* 折叠图标选择器：分隔线 + 标签 + 两行选项（每行预览图标 + 文字） */
+				".ccg-gear-divider{height:1px;background:var(--dsw-alias-border-l2,#e5e7eb);margin:10px 0 8px}",
+				".ccg-gear-icon-selector{margin-bottom:2px}",
+				".ccg-gear-icon-selector-label{font-size:12px;font-weight:600;margin-bottom:6px;color:var(--dsw-alias-label-secondary,#6b7280)}",
+				".ccg-gear-icon-option{display:flex;align-items:center;gap:10px;padding:6px 8px;cursor:pointer;border-radius:8px;border:1.5px solid transparent;transition:border-color .15s ease,background .15s ease;margin-bottom:4px}",
+				".ccg-gear-icon-option:hover{background:var(--dsw-alias-bg-layer-3,#f3f4f6)}",
+				".ccg-gear-icon-option[data-selected]{border-color:var(--dsw-alias-brand-primary,#4f6ef7);background:var(--dsw-alias-bg-layer-3,#f3f4f6)}",
+				/* 选项文字在左、预览图标组在右 */
+				".ccg-gear-icon-option-text{flex:1;min-width:0}",
+				".ccg-gear-icon-option-title{font-size:13px;font-weight:500;line-height:1.3;color:var(--dsw-alias-label-primary,#1f2328)}",
+				".ccg-gear-icon-option-desc{font-size:11px;color:var(--dsw-alias-label-tertiary,#9ca3af)}",
+				/* 预览组：右侧横排一列展示所有存在的图标状态 */
+				".ccg-gear-icon-option-preview{flex:none;display:flex;align-items:center;gap:3px;color:var(--dsw-alias-label-secondary,#9ca3af)}",
+				".ccg-gear-icon-option-preview-item{flex:none;display:flex;align-items:center;justify-content:center;width:22px;height:24px}",
+				/* 预览里的扑克牌组件（原生 24px SVG）缩到 20px 适配预览项 */
+				".ccg-gear-icon-option-preview-item svg{width:20px;height:20px}",
+				".ccg-gear-icon-option-preview-item .ccg-poker-icon{width:20px;height:20px}",
+				/* 预览放大气泡：悬浮预览图标时在其上方弹出放大版预览（2x），
+				   底部尖尖指向原预览图。定位用 absolute 锚定预览项。 */
+				".ccg-preview-tooltip{position:relative;display:inline-flex}",
+				/* 气泡初始状态：隐藏 + 下移 3px（进场微动效） */
+				".ccg-preview-bubble{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%) translateY(3px);z-index:11000;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .12s ease,transform .12s ease}",
+				".ccg-preview-tooltip:hover .ccg-preview-bubble,.ccg-preview-tooltip:focus-within .ccg-preview-bubble{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0)}",
+				/* 气泡卡片：圆角 + 阴影，内放放大图标 */
+				".ccg-preview-bubble-body{background:var(--dsw-alias-bg-layer-2,#ffffff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.16);padding:14px;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-secondary,#9ca3af)}",
+				/* 放大图标 4x 显示：气泡内直接 src 元素 80px 矢量放大 */
+				".ccg-preview-bubble-body svg{width:80px;height:80px;display:block}",
+				".ccg-preview-bubble-body .ccg-poker-icon{width:80px;height:80px}",
+				"@media (prefers-reduced-motion:reduce){.ccg-preview-bubble{transition:none!important}}",
+				"@keyframes ccg-gear-fade{from{opacity:0}to{opacity:1}}",
+				"@media (prefers-reduced-motion:reduce){.ccg-gear-overlay{animation:none!important}}",
+				/* 设置 → 对话 → 回合折叠方式 行（shadow 官方 transcript-view 行）*/
+				/* 样式与官方 TranscriptViewRow.module.css 逐像素一致：无描边、18px 胶囊、
+				   平台模块背景、hover 交互高亮 */
+				".ccg-settings-row{display:flex;align-items:center;gap:8px;padding:16px 0;border-bottom:1px solid var(--dsw-alias-border-l2)}",
+				".ccg-settings-row-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;padding-right:48px}",
+				".ccg-settings-row-title{font-size:14px;font-weight:400;line-height:22px;color:var(--dsw-alias-label-primary)}",
+				".ccg-settings-row-desc{font-size:12px;font-weight:400;line-height:18px;color:var(--dsw-alias-label-tertiary)}",
+				".ccg-settings-selector{display:inline-flex;align-items:center;gap:12px;height:36px;padding:0 14px;border:none;border-radius:18px;background:var(--dsw-alias-bg-module-platform);font:inherit;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary);cursor:pointer}",
+				".ccg-settings-selector:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+				".ccg-settings-selector-chevron{flex:none}",
+				/* 设置行选项自定义 tooltip：即时响应（原生 title 有 ~1s 延迟） */
+				".ccg-settings-tip{position:fixed;z-index:2147483000;max-width:220px;padding:6px 10px;border-radius:8px;background:var(--dsw-specific-menu,#1f2937);color:var(--dsw-alias-label-primary);font-size:12px;line-height:18px;box-shadow:var(--dsw-shadow-lv3);pointer-events:none;white-space:normal;word-break:break-word}"
 			].join("\n");
 			document.head.appendChild(tag);
 		}
@@ -479,6 +665,211 @@ window.__ModuleLoader__.load({
 				var v = turnOverrides.get(turnKeyOf(sessionId, turn));
 				return v === undefined ? null : v;
 			});
+		}
+
+		// ---- 回合折叠栏字段显隐设置（模块级，全局共享） ----
+		// 齿轮弹窗里逐字段开关，决定回合折叠栏标题显示哪些指标。字段键：
+		//   duration / ttft / tokens / tokensPerSecond / cacheHit / folded。
+		// 用版本号驱动重渲染（useSyncExternalStore 订阅）：改动后所有回合折叠栏
+		// 立即按新设置重算文案。
+		var FIELD_KEYS = ["duration", "ttft", "tokens", "tokensPerSecond", "cacheHit", "folded"];
+		var defaultFieldVisibility = { duration: true, ttft: true, tokens: true, tokensPerSecond: true, cacheHit: true, folded: true };
+		var fieldVisibility = Object.assign({}, defaultFieldVisibility);
+		var fieldVisibilityListeners = new Set();
+		var fieldVisibilityVersion = 0;
+		function subscribeFieldVisibility(fn) {
+			fieldVisibilityListeners.add(fn);
+			return function () { fieldVisibilityListeners.delete(fn); };
+		}
+		function notifyFieldVisibility() {
+			fieldVisibilityVersion++;
+			var fns = [];
+			fieldVisibilityListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) fns[i]();
+		}
+		function getFieldVisibilityVersion() { return fieldVisibilityVersion; }
+		function setFieldVisible(key, visible) {
+			if (!fieldVisibility.hasOwnProperty(key)) return;
+			if (fieldVisibility[key] === !!visible) return;
+			fieldVisibility[key] = !!visible;
+			notifyFieldVisibility();
+		}
+		/** 弹窗中逐字段开关（checkbox 双向绑定用）。 */
+		function useFieldVisibility() {
+			useSyncExternalStore(subscribeFieldVisibility, getFieldVisibilityVersion);
+			return fieldVisibility;
+		}
+		/** 按当前字段显隐设置过滤指标对象：隐藏的字段从 metrics 里剔除，
+		 *  turnHeaderLabel 据此不渲染对应文案。全部隐藏时返回原对象（fallback 文案兜底）。 */
+		function filterVisibleMetrics(metrics) {
+			if (!metrics) return metrics;
+			var result = null;
+			if (metrics.durationMs !== undefined && fieldVisibility.duration) {
+				result = result || {};
+				result.durationMs = metrics.durationMs;
+			}
+			if (metrics.ttftMs !== undefined && fieldVisibility.ttft) {
+				result = result || {};
+				result.ttftMs = metrics.ttftMs;
+			}
+			if (metrics.tokens !== undefined && fieldVisibility.tokens) {
+				result = result || {};
+				result.tokens = metrics.tokens;
+			}
+			if (metrics.tokensPerSecond !== undefined && fieldVisibility.tokensPerSecond) {
+				result = result || {};
+				result.tokensPerSecond = metrics.tokensPerSecond;
+			}
+			if (metrics.cacheHitPercent !== undefined && fieldVisibility.cacheHit) {
+				result = result || {};
+				result.cacheHitPercent = metrics.cacheHitPercent;
+			}
+			if (metrics.foldedRows !== undefined && fieldVisibility.folded) {
+				result = result || {};
+				result.foldedRows = metrics.foldedRows;
+			}
+			if (metrics.outputTokens !== undefined) {
+				result = result || {};
+				result.outputTokens = metrics.outputTokens;
+			}
+			return result ? result : metrics;
+		}
+
+		// ---- 字段设置弹窗可见状态（模块级；全局一个弹窗） ----
+		var popupVisible = false;
+		var popupListeners = new Set();
+		function subscribePopup(fn) { popupListeners.add(fn); return function () { popupListeners.delete(fn); }; }
+		function notifyPopup() {
+			var fns = [];
+			popupListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) fns[i]();
+		}
+		function setPopupVisible(v) {
+			if (popupVisible === v) return;
+			popupVisible = v;
+			notifyPopup();
+		}
+		function getPopupVisible() { return popupVisible; }
+
+		// ---- 折叠接管模式（模块级，全局共享） ----
+		// DSH 0.1.2+ 官方自带"回合折叠方式"设置（normal/compact）。插件新增
+		// "turn-fold" 选项：本插件接管全部折叠（官方 transcriptView 置为 normal，
+		// 避免双重折叠）。mode="auto" 时插件不折叠，原样委托内置渲染，完全跟随
+		// 官方设置。持久化到 localStorage，默认 "turn-fold"（保持历史行为）。
+		var FOLD_MODE_KEY = "dsh-turn-fold:fold-mode";
+		var foldMode = "turn-fold";
+		var foldModeListeners = new Set();
+		var foldModeVersion = 0;
+		function subscribeFoldMode(fn) {
+			foldModeListeners.add(fn);
+			return function () { foldModeListeners.delete(fn); };
+		}
+		function notifyFoldMode() {
+			foldModeVersion++;
+			var fns = [];
+			foldModeListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) fns[i]();
+		}
+		function loadFoldMode() {
+			try {
+				var raw = (typeof window !== "undefined" && window.localStorage && window.localStorage.getItem(FOLD_MODE_KEY)) || "";
+				if (raw === "turn-fold" || raw === "auto") foldMode = raw;
+			} catch (e) { /* 忽略 */ }
+		}
+		function setFoldMode(mode) {
+			if (mode !== "turn-fold" && mode !== "auto") return;
+			if (foldMode === mode) return;
+			foldMode = mode;
+			try { (typeof window !== "undefined" && window.localStorage) && window.localStorage.setItem(FOLD_MODE_KEY, mode); } catch (e) { /* 忽略 */ }
+			notifyFoldMode();
+		}
+		function getFoldMode() { return foldMode; }
+		/** 订阅折叠接管模式变化（组件内调用以触发重渲染）。 */
+		function useFoldMode() {
+			useSyncExternalStore(subscribeFoldMode, function () { return foldModeVersion; });
+			return foldMode;
+		}
+		/** 本插件当前是否应接管折叠（turn-fold 模式）。 */
+		function foldActive() { return foldMode === "turn-fold"; }
+		loadFoldMode();
+
+		// ---- 设置行选项悬浮提示（自定义 tooltip，即时响应）----
+		// 原生 title 的 ~1s 延迟是浏览器控制的无法缩短，改为模块级 tooltip store +
+		// 常驻组件：mouseenter 立即显示（定位在选项行旁）、mouseleave 立即消失。
+		var settingsTip = null; // { text, left, top }
+		var settingsTipListeners = new Set();
+		function subscribeSettingsTip(fn) {
+			settingsTipListeners.add(fn);
+			return function () { settingsTipListeners.delete(fn); };
+		}
+		function getSettingsTip() { return settingsTip; }
+		function showSettingsTip(text, rect) {
+			if (!text || !rect) return;
+			var gap = 8;
+			var left = rect.right + gap;
+			var top = rect.top + rect.height / 2;
+			// 防溢出：右侧放不下则放左侧；垂直居中
+			if (typeof window !== "undefined" && window.innerWidth && left + 220 > window.innerWidth) {
+				left = rect.left - gap - 220;
+				if (left < 8) left = 8;
+			}
+			if (typeof window !== "undefined" && window.innerHeight && top - 30 < 0) top = 30;
+			settingsTip = { text: text, left: left, top: top };
+			var fns = [];
+			settingsTipListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) fns[i]();
+		}
+		function hideSettingsTip() {
+			if (settingsTip === null) return;
+			settingsTip = null;
+			var fns = [];
+			settingsTipListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) fns[i]();
+		}
+		/** 常驻 tooltip：独立根渲染，fixed 定位跟随选项行。 */
+		function SettingsTip() {
+			var tip = useSyncExternalStore(subscribeSettingsTip, getSettingsTip);
+			if (!tip) return null;
+			return react.createElement(
+				"div",
+				{
+					className: "ccg-settings-tip",
+					style: { left: tip.left + "px", top: tip.top + "px" },
+					role: "tooltip"
+				},
+				tip.text
+			);
+		}
+
+		// ---- 折叠图标样式设置（模块级，全局共享） ----
+		// 齿轮弹窗里下拉选择：poker（动态扑克牌，默认，当前行为）或 default（官方 chevron）。
+		// 用版本号驱动重渲染：改动后所有步骤/回合折叠栏按新样式重渲染前导图标。
+		var FOLD_ICON_STYLES = ["poker", "default"];
+		var foldIconStyle = "poker";
+		var foldIconListeners = new Set();
+		var foldIconVersion = 0;
+		function subscribeFoldIcon(fn) {
+			foldIconListeners.add(fn);
+			return function () { foldIconListeners.delete(fn); };
+		}
+		function notifyFoldIcon() {
+			foldIconVersion++;
+			var fns = [];
+			foldIconListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) fns[i]();
+		}
+		function getFoldIconVersion() { return foldIconVersion; }
+		function setFoldIconStyle(style) {
+			if (FOLD_ICON_STYLES.indexOf(style) === -1) return;
+			if (foldIconStyle === style) return;
+			foldIconStyle = style;
+			notifyFoldIcon();
+		}
+		function getFoldIconStyle() { return foldIconStyle; }
+		/** 订阅折叠图标样式变化（组件内调用以触发重渲染）。 */
+		function useFoldIconStyle() {
+			useSyncExternalStore(subscribeFoldIcon, getFoldIconVersion);
+			return foldIconStyle;
 		}
 
 		// ---- 实时直播时钟（回合运行中，回合折叠栏指标按随机间隔刷新） ----
@@ -567,10 +958,31 @@ window.__ModuleLoader__.load({
 		function isThinkNode(node) {
 			return hasReasoning(node);
 		}
-		/** 段成员：tool-call 或含 reasoning 的 assistant-step（两个 text 之间的内容都入段）。 */
+		/** 工具调用名（已结算/运行中统一取）：无则空串。 */
+		function toolCallName(node) {
+			if (!node || node.kind !== "tool-call" || !node.data) return "";
+			var root = node.data.root;
+			if (!root) return "";
+			if ("kind" in root) {
+				var call = root.call || root;
+				return call.name || "";
+			}
+			return root.name || "";
+		}
+		/** 是否排除在步骤折叠栏之外的工具（CONFIG.excludedSegmentTools 精确匹配，小写）。 */
+		function isExcludedSegmentTool(node) {
+			var name = toolCallName(node).toLowerCase();
+			var list = CONFIG.excludedSegmentTools;
+			for (var i = 0; i < list.length; i++) {
+				if (name === list[i]) return true;
+			}
+			return false;
+		}
+		/** 段成员：tool-call（排除工具除外）或含 reasoning 的 assistant-step
+		 *  （两个 text 之间的内容都入段）。 */
 		function isSegmentMember(node) {
 			if (!node) return false;
-			if (node.kind === "tool-call") return true;
+			if (node.kind === "tool-call") return !isExcludedSegmentTool(node);
 			return node.kind === "assistant-step" && isThinkNode(node);
 		}
 		/** 拼接节点的 reasoning 块文本（步骤折叠栏运行中显示 think 内容用）。 */
@@ -584,19 +996,53 @@ window.__ModuleLoader__.load({
 			}
 			return parts.join("\n");
 		}
-		/** 工具调用信息：名称 / 原始参数 JSON / 官方 diff 数据 / 是否仍在运行。
-		 *  官方 diff 视图（dsh-client-ui-tool 的 narrowDiffs）从 call.diffs 读取
-		 *  [{path, oldText, newText}]——与官方展开详情完全一致的数据源。 */
+		// ---- 官方 diff hunks 读取链（双版本兼容，对应 dsh-client-ui-tool 的 diffCardModel） ----
+		// 官方各版本把 diff 数据放在不同位置，hunk 形状 {path, oldText, newText}（oldText 可为
+		// null，与官方 narrowDiffs 同构）。读到合法数组原样返回；缺失/不合法返回 undefined，
+		// 上层走 argsRaw 解析兜底。
+		//   - 0.1.1：wire 渲染意图——运行中 callView.diffs、结算后 resultView.diffs
+		//     （card === "diff" 的视图才携带，结算侧权威）；
+		//   - 0.1.2：结算 metadata root.meta.diffs（官方 appliedDiffs）。
+		function validDiffHunks(raw) {
+			if (!Array.isArray(raw) || raw.length === 0) return undefined;
+			for (var vdi = 0; vdi < raw.length; vdi++) {
+				var h = raw[vdi];
+				if (!h || typeof h !== "object" || Array.isArray(h)) return undefined;
+				if (typeof h.newText !== "string" && typeof h.oldText !== "string") return undefined;
+			}
+			return raw;
+		}
+		/** wire 渲染意图视图（0.1.1 的 callView/resultView）里的 diffs。 */
+		function viewDiffs(view) {
+			return view && view.card === "diff" ? validDiffHunks(view.diffs) : undefined;
+		}
+		/** 已结算 tool-result 的官方 diffs：0.1.2 meta.diffs 优先（结算侧权威），0.1.1
+		 *  resultView.diffs 次之、callView.diffs 兜底，直接挂 call/root 上的旧数据最后兜底。 */
+		function settledToolDiffs(root) {
+			var meta = root.meta;
+			if (meta && typeof meta === "object" && !Array.isArray(meta) && Array.isArray(meta.diffs)) {
+				// 空数组 = 官方语义 "empty"（无实际变更）：不返回，交给 argsRaw 兜底
+				return meta.diffs.length > 0 ? validDiffHunks(meta.diffs) : undefined;
+			}
+			return viewDiffs(root.resultView) || viewDiffs(root.callView) ||
+				validDiffHunks(root.call && root.call.diffs) || validDiffHunks(root.diffs);
+		}
+		/** 运行中 tool call 的官方 diffs：仅 0.1.1 callView.diffs（意图 diff）可提供。 */
+		function runningToolDiffs(root) {
+			return viewDiffs(root.callView) || validDiffHunks(root.diffs);
+		}
+		/** 工具调用信息：名称 / 原始参数 JSON / 官方 diff 数据 / 是否仍在运行。 */
 		function toolCallInfo(node) {
 			var root = node && node.data && node.data.root;
 			if (!root) return null;
 			if ("kind" in root) {
-				// 已结算：root.kind === "tool-result"，call 字段携带 name/argsRaw/diffs（兼容旧数据直接放 root 上）
+				// 已结算：root.kind === "tool-result"，call 字段携带 name/argsRaw
+				//（diffs 不在 call 上，按版本从 meta/resultView/callView 读取，见 settledToolDiffs）
 				var call = root.call || root;
-				return { name: call.name, argsRaw: call.argsRaw, diffs: call.diffs, running: false };
+				return { name: call.name, argsRaw: call.argsRaw, diffs: settledToolDiffs(root), running: false };
 			}
 			// 运行中（in-flight）：root 就是调用本身
-			return { name: root.name, argsRaw: root.argsRaw, diffs: root.diffs, running: true };
+			return { name: root.name, argsRaw: root.argsRaw, diffs: runningToolDiffs(root), running: true };
 		}
 		/** 参数摘要：取 argsRaw 中最长的字符串值（-m 的正文 / 路径等最有信息量的内容），截断。 */
 		function summarizeArgs(argsRaw, maxLen) {
@@ -660,6 +1106,7 @@ window.__ModuleLoader__.load({
 			var keys = [];
 			for (var k = start; k <= end; k++) keys.push(order[k]);
 			var toolCount = 0;
+			var thinkCount = 0;
 			var failures = 0;
 			var anyRunning = false;
 			var segHasText = false;
@@ -667,6 +1114,7 @@ window.__ModuleLoader__.load({
 				var n = nodes.get(keys[m]);
 				if (!n) continue;
 				if (hasText(n)) segHasText = true;
+				if (n.kind === "assistant-step" && isThinkNode(n)) thinkCount++;
 				if (n.kind !== "tool-call") continue;
 				toolCount++;
 				if (n.data && isRunningRoot(n.data.root)) { anyRunning = true; continue; }
@@ -689,6 +1137,7 @@ window.__ModuleLoader__.load({
 				isLeader: ourIdx === start,
 				count: keys.length,
 				toolCount: toolCount,
+				thinkCount: thinkCount,
 				failures: failures,
 				anyRunning: anyRunning,
 				textAfter: textAfter,
@@ -748,6 +1197,19 @@ window.__ModuleLoader__.load({
 				var un = nodes.get(keys[u]);
 				if (un && un.kind === "user" && typeof un.anchorSeq === "number" && un.anchorSeq > lastUserSeq) lastUserSeq = un.anchorSeq;
 			}
+			// 已折叠行数：回合折叠栏收纳的内容行数 = 折叠作用域内（最后一个 user 节点之后）
+			// 的中间节点数（tool-call / assistant-step / context），不含最终总结消息——
+			// 回合结束后最终回复正文始终可见（data-ccg-turn-folded 包裹），不算折叠行。
+			// 运行中回合 finalAssistantKey 为 null，最后一条流式 assistant-step 计入；
+			// 回合结束后它成为 finalAssistantKey 被剔除（已折叠5行 → 已折叠4行）。
+			var foldedRows = 0;
+			for (var f = 0; f < keys.length; f++) {
+				var fn = nodes.get(keys[f]);
+				if (!fn || !(fn.kind === "tool-call" || fn.kind === "assistant-step" || fn.kind === "context")) continue;
+				if (keys[f] === finalAssistantKey) continue;
+				if (lastUserSeq >= 0 && typeof fn.anchorSeq === "number" && fn.anchorSeq <= lastUserSeq) continue;
+				foldedRows++;
+			}
 			var ourAnchor = typeof ourNode.anchorSeq === "number" ? ourNode.anchorSeq : undefined;
 			// 当前节点是否位于折叠作用域之外（锚定在最后一个 user 节点之前/之上）。
 			var outsideScope = ourKey !== null && ourAnchor !== undefined && lastUserSeq >= 0 && ourAnchor <= lastUserSeq;
@@ -762,6 +1224,12 @@ window.__ModuleLoader__.load({
 				if (lastUserSeq >= 0 && typeof node.anchorSeq === "number" && node.anchorSeq <= lastUserSeq) continue;
 				headerKey = key;
 				break;
+			}
+			// 单节点回合（user + 唯一 assistant-step）：该节点既是最终总结又是唯一折叠栏候选，
+			// 上面的循环因跳过 finalAssistantKey 而得不到 headerKey——此时用 finalAssistantKey
+			// 兜底，保证这类纯问答回合同样生成回合折叠栏。
+			if (headerKey === null && finalAssistantKey !== null) {
+				headerKey = finalAssistantKey;
 			}
 			// ---- 回合结束状态检测（completed / stopped / interrupted）----
 			// 权威数据源：快照的 s.chat.timeline.turns 里，turn.end 是完整的
@@ -801,6 +1269,7 @@ window.__ModuleLoader__.load({
 				turn: turn,
 				closed: closed,
 				toolCount: toolCount,
+				foldedRows: foldedRows,
 				headerKey: headerKey,
 				finalAssistantKey: finalAssistantKey,
 				ourKey: ourKey,
@@ -939,6 +1408,8 @@ window.__ModuleLoader__.load({
 				liveTokenCache.forEach(function (v, k) { if (k.indexOf(prefix) === 0) liveTokenCache.delete(k); });
 			}
 			segmentLabelCache.clear();
+			segmentFilePathsCache.clear();
+			foldSuitMap.clear();
 			overrides.clear();
 			turnOverrides.clear();
 		}
@@ -1023,7 +1494,7 @@ window.__ModuleLoader__.load({
 			return v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
 		}
 		/** 回合折叠栏文案："耗时…，消耗…token，…tok/s，缓存命中…%"；无数据返回空串。 */
-		function turnHeaderLabel(metrics) {
+		function turnHeaderLabel(metrics, closed) {
 			if (!metrics) return "";
 			var parts = [];
 			if (metrics.durationMs !== undefined) {
@@ -1047,6 +1518,16 @@ window.__ModuleLoader__.load({
 			if (metrics.cacheHitPercent !== undefined) {
 				if (currentLocale() === "zh") parts.push("缓存命中" + metrics.cacheHitPercent + "%");
 				else parts.push("cache hit " + metrics.cacheHitPercent + "%");
+			}
+			// 已折叠步数：紧跟缓存命中之后、设置齿轮之前；仅 foldedRows>0 时显示
+			//（上游只在 >0 时注入指标，这里再兜底一次，绝不出现"已折叠0步"）。
+			// 运行中（closed=false）是"待折叠N步"（这些节点还没真正收起、回合结束时
+			// 才折叠）；回合结束后（closed=true）才是"已折叠N步"。closed 缺省按
+			// 已折叠处理（调用点全部显式传值，缺省只影响测试/边界）。
+			var foldedPending = closed === false;
+			if (metrics.foldedRows !== undefined && metrics.foldedRows > 0) {
+				if (currentLocale() === "zh") parts.push((foldedPending ? "待折叠" : "已折叠") + metrics.foldedRows + "步");
+				else parts.push((foldedPending ? "pending " : "folded ") + metrics.foldedRows + " steps");
 			}
 			return parts.join(" · ");
 		}
@@ -1081,7 +1562,10 @@ window.__ModuleLoader__.load({
 			if (kit.useProjection) props.useProjection = kit.useProjection;
 			if (kit.useWorkspaces) props.useWorkspaces = kit.useWorkspaces;
 			if (kit.t) props.t = kit.t;
+			// 双版本兼容：DSH 0.1.2+ 用 useConnectionGeneration，旧版用 useHostDescription，
+			// 哪个存在就透传哪个（内置 ToolCallTree 只消费当前版本存在的那一个）。
 			if (kit.useHostDescription) props.useHostDescription = kit.useHostDescription;
+			if (kit.useConnectionGeneration) props.useConnectionGeneration = kit.useConnectionGeneration;
 			for (var k in owner) if (Object.prototype.hasOwnProperty.call(owner, k)) props[k] = owner[k];
 			return react.createElement(Comp, props);
 		}
@@ -1097,7 +1581,8 @@ window.__ModuleLoader__.load({
 				useProjection: props.useProjection,
 				useWorkspaces: props.useWorkspaces,
 				t: props.t,
-				useHostDescription: props.useHostDescription
+				useHostDescription: props.useHostDescription,
+				useConnectionGeneration: props.useConnectionGeneration
 			};
 			var customRenderSlot = function (key, owner, options) {
 				if (key !== "tool.call.toolview") return options && options.fallback ? options.fallback : null;
@@ -1339,10 +1824,317 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		// ---- 回合折叠栏"已折叠/待折叠N步"滚轮渲染 ----
+		// 闭合（非直播）态下标题整体仍是纯文本，但折叠步数的数字用 RollDigit 滚动
+		// 动画渲染（与直播态 AnimatedLabel 的数字风格一致）。只滚步数数字，其他指标
+		// （耗时/token 等）保持静态文本——避免闭合时所有数字从 0 滚一遍。
+		// 找不到折叠数字段时原样返回字符串（兜底，不破坏调用方对 string 的假设）。
+		function FoldedRollLabel(props) {
+			var label = props.label;
+			var re = /((?:已折叠|待折叠)|(?:folded |pending ))(\d+)(步| steps)/;
+			var m = re.exec(label);
+			if (!m) return label;
+			var kids = [];
+			if (m.index > 0) {
+				kids.push(react.createElement("span", { key: "pre", className: "ccg-roll-text" }, label.slice(0, m.index)));
+			}
+			kids.push(react.createElement("span", { key: "pref", className: "ccg-roll-text" }, m[1]));
+			var digits = [];
+			for (var i = 0; i < m[2].length; i++) {
+				digits.push(react.createElement(RollDigit, { key: "d" + i, digit: Number(m[2].charAt(i)) }));
+			}
+			kids.push(react.createElement("span", { key: "num", className: "ccg-roll-num", "aria-hidden": "true" }, digits));
+			kids.push(react.createElement("span", { key: "suff", className: "ccg-roll-text" }, m[3]));
+			if (m.index + m[0].length < label.length) {
+				kids.push(react.createElement("span", { key: "post", className: "ccg-roll-text" }, label.slice(m.index + m[0].length)));
+			}
+			return react.createElement(
+				"span",
+				{ className: "ccg-roll-label" },
+				react.createElement("span", { className: "ccg-sr-only" }, label),
+				kids
+			);
+		}
+
 		/** 回合轮次文案：回合折叠栏最右侧右对齐显示（"第3轮" / "Turn 3"，官方用 turns 一词）。 */
 		function turnRoundLabel(turn) {
 			if (turn === undefined || turn === null) return "";
 			return currentLocale() === "zh" ? "第" + turn + "轮" : "Turn " + turn;
+		}
+
+		// ---- 齿轮图标（字段设置弹窗触发器） ----
+		// Material 风格齿轮 ⚙，14×14，悬停向右旋转 90°（.45s 缓动）。
+		function GearIcon() {
+			// 齿轮在 DisclosureRow（expandOnRowClick=true）的 title 区内：
+			// 点击/键盘必须 stopPropagation，否则会冒泡到折叠栏行的 onToggle，
+			// 把"弹窗"误触成"展开/折叠"。
+			function openPopup(e) {
+				if (e) {
+					if (e.stopPropagation) e.stopPropagation();
+					if (e.preventDefault) e.preventDefault();
+				}
+				setPopupVisible(true);
+			}
+			return react.createElement("span", {
+				className: "ccg-gear-icon",
+				onClick: openPopup,
+				title: _T("fieldSettings"),
+				role: "button",
+				tabIndex: 0,
+				"aria-label": _T("fieldSettings"),
+				onKeyDown: function (e) {
+					if (e.key === "Enter" || e.key === " ") { openPopup(e); }
+				}
+			},
+				react.createElement("svg", { viewBox: "0 0 24 24", width: "14", height: "14", fill: "currentColor" },
+					react.createElement("path", { d: "M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z" })
+				)
+			);
+		}
+
+		// ---- 字段设置弹窗 ----
+		// 全局弹窗：列出回合折叠栏所有可显字段，每行一个 checkbox（勾选=显示）。
+		// 使用 useSyncExternalStore 订阅模块级 popupVisible 状态决定显隐。
+		var FIELD_CONFIG = [
+			{ key: "duration", labelKey: "fieldDuration", descKey: "fieldDurationDesc" },
+			{ key: "ttft", labelKey: "fieldTtft", descKey: "fieldTtftDesc" },
+			{ key: "tokens", labelKey: "fieldTokens", descKey: "fieldTokensDesc" },
+			{ key: "tokensPerSecond", labelKey: "fieldTps", descKey: "fieldTpsDesc" },
+			{ key: "cacheHit", labelKey: "fieldCacheHit", descKey: "fieldCacheHitDesc" },
+			{ key: "folded", labelKey: "fieldFolded", descKey: "fieldFoldedDesc" }
+		];
+		/** 默认图标预览：官方 outline chevron（描边折线，非实心三角形）。
+		 *  用 points 区分方向：右箭头 "5.5 3 9.5 7 5.5 11" / 下箭头 "3 5.5 7 9.5 11 5.5"。 */
+		function DefaultChevronIcon(props) {
+			return react.createElement("svg", {
+				viewBox: "0 0 14 14",
+				width: "14",
+				height: "14",
+				fill: "none",
+				stroke: "currentColor",
+				"stroke-width": "1.6",
+				"stroke-linecap": "round",
+				"stroke-linejoin": "round"
+			},
+				react.createElement("polyline", { points: props.points })
+			);
+		}
+		/** 复制文本到剪贴板（navigator.clipboard 优先，兜底 textarea fallback）。 */
+		function copyToClipboard(text) {
+			if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+				navigator.clipboard.writeText(text).catch(function () { /* 静默 */ });
+			} else {
+				try {
+					var ta = document.createElement("textarea");
+					ta.value = text;
+					ta.style.position = "fixed";
+					ta.style.left = "-9999px";
+					document.body.appendChild(ta);
+					ta.select();
+					document.execCommand("copy");
+					document.body.removeChild(ta);
+				} catch (e) { /* 静默 */ }
+			}
+		}
+		// ---- 全局 Toast 消息通知（共享官方 Toast 组件） ----
+		// 模块级状态 + useSyncExternalStore 驱动，单例 TurnFoldToast 组件常驻渲染。
+		// 不受 FieldVisibilityPopup 弹窗显隐影响，始终可用。
+		var toastSnapshot = { seq: 0, text: null };
+		var toastListeners = new Set();
+		function subscribeToast(fn) { toastListeners.add(fn); return function () { toastListeners.delete(fn); }; }
+		function notifyToast() {
+			var fns = [];
+			toastListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) fns[i]();
+		}
+		function getToast() { return toastSnapshot; }
+		/** 触发 Toast 通知（文案自动消失，时长由官方 Toast 组件控制）。 */
+		function showToast(text) {
+			toastSnapshot = { seq: toastSnapshot.seq + 1, text: text };
+			notifyToast();
+		}
+		/** 清除当前 Toast（官方 Toast 自动消失后调用）。 */
+		function clearToast() {
+			if (toastSnapshot.text === null) return;
+			toastSnapshot = { seq: toastSnapshot.seq, text: null };
+			notifyToast();
+		}
+		/** 全局 Toast 宿主：订阅 toastSnapshot，官方 Toast 组件渲染；平台缺失时静默返回 null。 */
+		function TurnFoldToast() {
+			var t = useSyncExternalStore(subscribeToast, getToast);
+			if (Toast === null || !t || !t.text) return null;
+			return react.createElement(Toast, {
+				key: String(t.seq),
+				text: t.text,
+				onDone: function () { clearToast(); }
+			});
+		}
+		/** 步骤折叠栏标题中的文件链接：点击复制绝对路径，悬停变 DeepSeek 主题蓝色。 */
+		function FileLink(props) {
+			var fullPath = props.path;
+			var name = props.name;
+			function doCopy(e) {
+				if (e) {
+					if (e.stopPropagation) e.stopPropagation();
+					if (e.preventDefault) e.preventDefault();
+				}
+				copyToClipboard(fullPath);
+				showToast(_T("fileCopiedToast"));
+			}
+			return react.createElement("span", {
+				className: "ccg-file-link",
+				title: fullPath,
+				onClick: doCopy,
+				role: "button",
+				tabIndex: 0,
+				onKeyDown: function (e) {
+					if (e.key === "Enter" || e.key === " ") { doCopy(e); }
+				}
+			}, name);
+		}
+		/** 把标题字符串中的文件名（filePaths Map 的 key）替换为可点击复制的 FileLink 组件。
+		 *  返回字符串（无匹配时）或 React 元素数组/Fragment。 */
+		function renderTitleFileLinks(text, filePaths) {
+			if (!text || !filePaths || filePaths.size === 0) return text;
+			var hits = [];
+			filePaths.forEach(function (fullPath, basename) {
+				if (!basename) return;
+				var from = 0, idx;
+				while ((idx = text.indexOf(basename, from)) !== -1) {
+					hits.push({ idx: idx, len: basename.length, basename: basename, fullPath: fullPath });
+					from = idx + basename.length;
+				}
+			});
+			if (hits.length === 0) return text;
+			hits.sort(function (a, b) { return a.idx - b.idx; });
+			var kids = [];
+			var cursor = 0;
+			for (var i = 0; i < hits.length; i++) {
+				var h = hits[i];
+				if (h.idx < cursor) continue;
+				if (h.idx > cursor) kids.push(text.slice(cursor, h.idx));
+				kids.push(react.createElement(FileLink, { key: "f" + i, name: h.basename, path: h.fullPath }));
+				cursor = h.idx + h.len;
+			}
+			if (cursor < text.length) kids.push(text.slice(cursor));
+			return kids.length === 1 ? kids[0] : react.createElement.apply(react, [react.Fragment, null].concat(kids));
+		}
+		/** 折叠图标选项列表：每行标题 + 描述在左，右侧横排展示该选项下所有存在的图标状态。
+		 *  poker：3牌折叠 / 3牌展开 / 5牌折叠 / 5牌展开 / 牌面翻转 / 牌面轮换（真实组件，动画照常播放）；
+		 *  default：右箭头 / 下箭头（官方 outline chevron）。 */
+		var FOLD_ICON_OPTIONS = [
+			{
+				value: "poker",
+				labelKey: "foldIconPoker",
+				descKey: "foldIconPokerDesc",
+				previews: [
+					react.createElement(PokerIcon, { key: "3c", count: 3, suit: "spade", open: false }),
+					react.createElement(PokerIcon, { key: "3o", count: 3, suit: "spade", open: true }),
+					react.createElement(PokerIcon, { key: "5c", count: 5, suit: "spade", open: false }),
+					react.createElement(PokerIcon, { key: "5o", count: 5, suit: "spade", open: true }),
+					react.createElement(PokerSpinIcon, { key: "spin", open: true }),
+					react.createElement(PokerAnimIcon, { key: "anim", open: false })
+				]
+			},
+			{
+				value: "default",
+				labelKey: "foldIconDefault",
+				descKey: "foldIconDefaultDesc",
+				previews: [
+					react.createElement(DefaultChevronIcon, { key: "right", points: "5.5 3 9.5 7 5.5 11" }),
+					react.createElement(DefaultChevronIcon, { key: "down", points: "3 5.5 7 9.5 11 5.5" })
+				]
+			}
+		];
+		function FoldIconSelector() {
+			var current = useFoldIconStyle();
+			var opts = [];
+			for (var oi = 0; oi < FOLD_ICON_OPTIONS.length; oi++) {
+				var opt = FOLD_ICON_OPTIONS[oi];
+				var selected = current === opt.value;
+				var previewItems = [];
+				for (var pi = 0; pi < opt.previews.length; pi++) {
+					// 每个预览项外包一层 .ccg-preview-tooltip：悬浮时在其上方弹出放大
+					// 气泡（.ccg-preview-bubble，2x 图标放大预览）。
+					previewItems.push(react.createElement(
+						"span",
+						{ key: "p" + pi, className: "ccg-preview-tooltip" },
+						react.createElement("span", { className: "ccg-gear-icon-option-preview-item" }, opt.previews[pi]),
+						react.createElement(
+							"span",
+							{ className: "ccg-preview-bubble" },
+							react.createElement("span", { className: "ccg-preview-bubble-body" }, opt.previews[pi])
+						)
+					));
+				}
+				opts.push(react.createElement("div", {
+					key: opt.value,
+					className: "ccg-gear-icon-option",
+					"data-selected": selected ? "true" : undefined,
+					onClick: function (v) { return function () { setFoldIconStyle(v); }; }(opt.value),
+					role: "radio",
+					"aria-checked": selected ? "true" : "false",
+					tabIndex: 0,
+					onKeyDown: function (v) { return function (e) {
+						if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFoldIconStyle(v); }
+					}; }(opt.value)
+				},
+					react.createElement("span", { className: "ccg-gear-icon-option-text" },
+						react.createElement("div", { className: "ccg-gear-icon-option-title" }, _T(opt.labelKey)),
+						react.createElement("div", { className: "ccg-gear-icon-option-desc" }, _T(opt.descKey))
+					),
+					react.createElement("span", { className: "ccg-gear-icon-option-preview", "aria-hidden": "true" }, previewItems)
+				));
+			}
+			return react.createElement("div", { className: "ccg-gear-icon-selector" },
+				react.createElement("div", { className: "ccg-gear-icon-selector-label" }, _T("foldIconLabel")),
+				opts
+			);
+		}
+		function FieldVisibilityPopup() {
+			// 注意 Hooks 顺序：useFieldVisibility() 必须在条件 return 之前调用——
+			// 若放在 `if (!visible) return null;` 之后，首次渲染（隐藏）只调 1 个 hook，
+			// 弹窗显示时调 2 个 hook，React 报 "Rendered more hooks..." 导致弹窗根崩溃。
+			var visible = useSyncExternalStore(subscribePopup, getPopupVisible);
+			var visibility = useFieldVisibility();
+			if (!visible) return null;
+			var fields = [];			for (var fi = 0; fi < FIELD_CONFIG.length; fi++) {
+				var cfg = FIELD_CONFIG[fi];
+				var checked = visibility[cfg.key];
+				var fieldKey = cfg.key;
+				fields.push(react.createElement("div", { key: fieldKey, className: "ccg-gear-popup-field" },
+					react.createElement("input", {
+						type: "checkbox",
+						id: "ccg-field-" + fieldKey,
+						checked: checked,
+						onChange: function (k, v) { return function () { setFieldVisible(k, !v); }; }(fieldKey, checked)
+					}),
+					react.createElement("label", { htmlFor: "ccg-field-" + fieldKey }, _T(cfg.labelKey)),
+					react.createElement("span", { className: "ccg-gear-popup-field-desc" }, _T(cfg.descKey))
+				));
+			}
+			return react.createElement("div", {
+				className: "ccg-gear-overlay",
+				onClick: function (e) { if (e.target === e.currentTarget) setPopupVisible(false); },
+				role: "dialog",
+				"aria-modal": "true",
+				"aria-label": _T("fieldSettings")
+			},
+				react.createElement("div", { className: "ccg-gear-popup" },
+					react.createElement("div", { className: "ccg-gear-popup-title" }, _T("fieldSettings")),
+					react.createElement("div", { className: "ccg-gear-popup-hint" }, _T("fieldSettingsHint")),
+					react.createElement("div", { className: "ccg-gear-popup-fields" }, fields),
+					react.createElement("div", { className: "ccg-gear-divider", "aria-hidden": "true" }),
+					react.createElement(FoldIconSelector, null),
+					react.createElement("div", { className: "ccg-gear-popup-foot" },
+						react.createElement("button", {
+							className: "ccg-gear-popup-btn",
+							type: "button",
+							onClick: function () { setPopupVisible(false); }
+						}, _T("fieldSettingsDone"))
+					)
+				)
+			);
 		}
 
 		// ---- 折叠栏组件 ----
@@ -1397,33 +2189,52 @@ window.__ModuleLoader__.load({
 			// live：运行中的回合折叠栏数值实时变化，用滚轮动画渲染（DisclosureRow 的
 			// title 直接作为 children 渲染，传 React 元素即可）。
 			var live = props.live === true;
+			// filePaths：步骤折叠栏标题中的文件名映射（basename → 绝对路径），
+			// 用于把文件名渲染为可点击复制元素（悬停变 DeepSeek 主题蓝色）。
+			var filePaths = props.filePaths;
 			// 纯文本标题拆分：编辑行数变更 [ +N -M ] 悬停高亮；"——"之后的失败提示单独标红
 			// （整标题不再整体标红；运行中 JSX 标题无失败后缀，保持原色）。
 			var titleContent;
 			if (live) {
 				titleContent = react.createElement(AnimatedLabel, { label: label });
+			} else if (isTurn && typeof label === "string") {
+				// 闭合的回合折叠栏：整体仍是纯文本，但"已折叠/待折叠N步"的数字用
+				// 滚轮动画渲染（其余指标静态）。步骤折叠栏（isTurn=false）不受影响。
+				titleContent = react.createElement(FoldedRollLabel, { label: label });
 			} else if (typeof label === "string") {
 				var parts = splitLabelParts(label);
 				if (parts.diff !== null || parts.failure !== null) {
-					var kids = [parts.base];
+					var kids = [renderTitleFileLinks(parts.base, filePaths)];
 					if (parts.diff !== null) kids.push(renderDiff(parts.diff));
 					kids.push(parts.after);
 					if (parts.failure !== null) kids.push(react.createElement("span", { key: "fail", className: "ccg-header-failure" }, parts.failure));
 					titleContent = react.createElement.apply(react, [react.Fragment, null].concat(kids));
 				} else {
-					titleContent = label;
+					titleContent = renderTitleFileLinks(label, filePaths);
 				}
 			} else {
 				titleContent = label;
 			}
-			// right：右对齐的尾部元素（回合折叠栏的"第x轮"）——flex 容器两端对齐，指标在左、轮次在右
+			// right：右对齐的尾部元素（回合折叠栏的"第x轮"）——flex 容器两端对齐，指标在左、轮次在右。
+			// gearIcon：字段设置齿轮（回合折叠栏专属）——紧跟指标文案之后、轮次之前。
 			if (props.right !== undefined && props.right !== null && props.right !== "") {
+				var flexMetricsKids = [titleContent];
+				if (props.gearIcon !== undefined) {
+					flexMetricsKids.push(props.gearIcon);
+				}
 				titleContent = react.createElement(
 					"span",
 					{ className: "ccg-header-flex" },
-					react.createElement("span", { className: "ccg-header-flex-metrics" }, titleContent),
+					react.createElement("span", { className: "ccg-header-flex-metrics" }, flexMetricsKids),
 					react.createElement("span", { className: "ccg-header-round" }, props.right)
 				);
+			} else if (props.gearIcon !== undefined) {
+				// 无 right（极端情况：轮次文案为空）时齿轮仍跟随指标
+				titleContent = react.createElement(react.Fragment, null, titleContent, props.gearIcon);
+			}
+			// pokerIcon：步骤折叠栏的扑克牌图标（收起=牌堆、展开=扇形，CSS 按开合切换）——置于标题最前
+			if (props.pokerIcon !== undefined) {
+				titleContent = react.createElement(react.Fragment, null, props.pokerIcon, titleContent);
 			}
 			var titleClass = "ccg-header-title";
 			var ariaLabel = isTurn
@@ -1438,11 +2249,13 @@ window.__ModuleLoader__.load({
 					DisclosureRow,
 					{
 						rowClassName: "ccg-header",
-						leadingClassName: "ccg-header-leading",
+						// poker（步骤折叠栏扑克图标）：前导区隐藏（内建 chevron 随之消失），图标已并入标题
+						leadingClassName: "ccg-header-leading" + (props.pokerIcon !== undefined ? " ccg-poker-leading" : ""),
 						titleClassName: titleClass,
 						chevronClassName: "ccg-header-chevron",
-						// 收起：官方右向 chevron（14px）；展开：DisclosureRow 内建的下向 chevron（14px）
-						icon: react.createElement(IconChevronRightOutline14, { size: 14 }),
+						// 收起：有传入 icon（回合折叠栏等）用之；缺省用官方右向 chevron（14px）；
+						// 展开：DisclosureRow 内建的下向 chevron（14px，poker 时随前导区一起隐藏）
+						icon: props.icon !== undefined ? props.icon : react.createElement(IconChevronRightOutline14, { size: 14 }),
 						title: titleContent,
 						open: open,
 						expandable: true,
@@ -1467,7 +2280,11 @@ window.__ModuleLoader__.load({
 						if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); }
 					}
 				},
-				react.createElement("span", { className: "ccg-chevron" }, "›"),
+				props.pokerIcon !== undefined
+					? null
+					: (props.icon !== undefined
+						? props.icon
+						: react.createElement("span", { className: "ccg-chevron" }, "›")),
 				react.createElement("span", { className: "ccg-title" }, titleContent)
 			);
 		}
@@ -1494,6 +2311,410 @@ window.__ModuleLoader__.load({
 			grep: "search", search: "search", find: "search", glob: "search", web_search: "search",
 			edit: "edit", write: "edit", patch: "edit", create: "edit", "str-replace-editor": "edit"
 		};
+		// ---- 图标配置（外置数据源） ----
+		// 图标数据从独立文件夹 icons/default.json 注入到 ICON_DEFAULTS（见
+		// scripts/sync-icons.mjs，`node scripts/sync-icons.mjs --inject`）。
+		// 运行时优先使用 localStorage 的图标包（key: dsh-turn-fold:icons），
+		// 未设置/损坏时回退 ICON_DEFAULTS 内置默认。图标包结构 = default.json。
+		var ICONS_STORAGE_KEY = "dsh-turn-fold:icons";
+		var ICON_DEFAULTS = /*__ICON_DEFAULTS__*/
+
+
+
+
+
+{
+  "meta": {
+    "version": 1,
+    "description": "dsh-turn-fold 图标唯一数据源",
+    "compat": ">=0.3.1"
+  },
+  "pokerR": 1.08,
+  "pokerPips": {
+    "spade": {
+      "path": "<path d=\"M12 2.35 C10.25 5.05 4.15 8.65 4.15 13.05 C4.15 15.65 6.05 17.35 8.45 17.35 C9.75 17.35 10.75 16.82 11.35 15.88 C11.28 18.05 10.55 19.48 8.55 21.45 H15.45 C13.45 19.48 12.72 18.05 12.65 15.88 C13.25 16.82 14.25 17.35 15.55 17.35 C17.95 17.35 19.85 15.65 19.85 13.05 C19.85 8.65 13.75 5.05 12 2.35 Z\" fill=\"currentColor\"/>",
+      "cx": 12,
+      "cy": 12,
+      "factor": 1
+    },
+    "heart": {
+      "path": "<path d=\"M12 21.25 C10.35 19.35 4 15.1 4 9.65 C4 6.55 6.1 4.4 8.75 4.4 C10.25 4.4 11.35 5.18 12 6.45 C12.65 5.18 13.75 4.4 15.25 4.4 C17.9 4.4 20 6.55 20 9.65 C20 15.1 13.65 19.35 12 21.25 Z\" fill=\"currentColor\"/>",
+      "cx": 12,
+      "cy": 12,
+      "factor": 1
+    },
+    "diamond": {
+      "path": "<path d=\"M12 2.45 L20.1 12 L12 21.55 L3.9 12 Z\" fill=\"currentColor\"/>",
+      "cx": 12,
+      "cy": 12,
+      "factor": 1
+    },
+    "club": {
+      "path": "<circle cx=\"12\" cy=\"7.05\" r=\"4.15\" fill=\"currentColor\"/><circle cx=\"7.45\" cy=\"14.05\" r=\"4.15\" fill=\"currentColor\"/><circle cx=\"16.55\" cy=\"14.05\" r=\"4.15\" fill=\"currentColor\"/><path d=\"M10.25 13.65 C10.85 16.55 10.7 18.7 8.45 21.45 H15.55 C13.3 18.7 13.15 16.55 13.75 13.65 Z\" fill=\"currentColor\"/>",
+      "cx": 12,
+      "cy": 12,
+      "factor": 1
+    }
+  },
+  "pokerSVGBase": {
+    "hThree": 8.5,
+    "hFive": 8,
+    "pokerRatio": 0.7142857142857143,
+    "pipScaleThree": 0.28,
+    "pipScaleFive": 0.24
+  },
+  "pokerTransforms": {
+    "stack3": {
+      "1": "translate(1, 2.25)",
+      "2": "translate(0, 0.25)",
+      "3": "translate(-1, -1.75)"
+    },
+    "stack5": {
+      "1": "translate(1.6, 1.6)",
+      "2": "translate(0.8, 0.8)",
+      "3": "translate(0, 0)",
+      "4": "translate(-0.8, -0.8)",
+      "5": "translate(-1.6, -1.6)"
+    },
+    "fan3": {
+      "1": "translate(0, -0.18) rotate(-26 8 12)",
+      "2": "translate(0, -0.18) rotate(26 8 12)",
+      "3": "translate(0, -0.18)"
+    },
+    "fan5": {
+      "1": "translate(0, -0.608) rotate(-32 8 12)",
+      "2": "translate(0, -0.608) rotate(-16 8 12)",
+      "3": "translate(0, -0.608)",
+      "4": "translate(0, -0.608) rotate(16 8 12)",
+      "5": "translate(0, -0.608) rotate(32 8 12)"
+    }
+  },
+  "pokerSpin": {
+    "h": 9.6,
+    "pokerRatio": 0.7142857142857143,
+    "r": 1.296,
+    "pipScale": 0.2347826086956522,
+    "strokeW": 0.84,
+    "restAngle": 35.5377,
+    "scaleKeys": "1 1;0.996195 1;0.984808 1;0.965926 1;0.939693 1;0.906308 1;0.866025 1;0.819152 1;0.766044 1;0.707107 1;0.642788 1;0.573576 1;0.5 1;0.422618 1;0.34202 1;0.258819 1;0.173648 1;0.087156 1;0 1;-0.087156 1;-0.173648 1;-0.258819 1;-0.34202 1;-0.422618 1;-0.5 1;-0.573576 1;-0.642788 1;-0.707107 1;-0.766044 1;-0.819152 1;-0.866025 1;-0.906308 1;-0.939693 1;-0.965926 1;-0.984808 1;-0.996195 1;-1 1;-0.996195 1;-0.984808 1;-0.965926 1;-0.939693 1;-0.906308 1;-0.866025 1;-0.819152 1;-0.766044 1;-0.707107 1;-0.642788 1;-0.573576 1;-0.5 1;-0.422618 1;-0.34202 1;-0.258819 1;-0.173648 1;-0.087156 1;0 1;0.087156 1;0.173648 1;0.258819 1;0.34202 1;0.422618 1;0.5 1;0.573576 1;0.642788 1;0.707107 1;0.766044 1;0.819152 1;0.866025 1;0.906308 1;0.939693 1;0.965926 1;0.984808 1;0.996195 1;1 1",
+    "scaleKeyTimes": "0;0.013889;0.027778;0.041667;0.055556;0.069444;0.083333;0.097222;0.111111;0.125;0.138889;0.152778;0.166667;0.180556;0.194444;0.208333;0.222222;0.236111;0.25;0.263889;0.277778;0.291667;0.305556;0.319444;0.333333;0.347222;0.361111;0.375;0.388889;0.402778;0.416667;0.430556;0.444444;0.458333;0.472222;0.486111;0.5;0.513889;0.527778;0.541667;0.555556;0.569444;0.583333;0.597222;0.611111;0.625;0.638889;0.652778;0.666667;0.680556;0.694444;0.708333;0.722222;0.736111;0.75;0.763889;0.777778;0.791667;0.805556;0.819444;0.833333;0.847222;0.861111;0.875;0.888889;0.902778;0.916667;0.930556;0.944444;0.958333;0.972222;0.986111;1"
+  },
+  "pokerAnimSVG": "<svg\n  xmlns=\"http://www.w3.org/2000/svg\"\n  viewBox=\"0 0 16 16\"\n  width=\"16\"\n  height=\"16\"\n  style=\"color:var(--card-stroke,#fff)\">\n\n  <defs>\n    <g id=\"pip-heart\">\n      <path d=\"M12 21.25 C10.35 19.35 4 15.1 4 9.65 C4 6.55 6.1 4.4 8.75 4.4 C10.25 4.4 11.35 5.18 12 6.45 C12.65 5.18 13.75 4.4 15.25 4.4 C17.9 4.4 20 6.55 20 9.65 C20 15.1 13.65 19.35 12 21.25 Z\"/>\n    </g>\n\n    <g id=\"pip-diamond\">\n      <path d=\"M12 2.45 L20.1 12 L12 21.55 L3.9 12 Z\"/>\n    </g>\n\n    <g id=\"pip-spade\">\n      <path d=\"M12 2.35 C10.25 5.05 4.15 8.65 4.15 13.05 C4.15 15.65 6.05 17.35 8.45 17.35 C9.75 17.35 10.75 16.82 11.35 15.88 C11.28 18.05 10.55 19.48 8.55 21.45 H15.45 C13.45 19.48 12.72 18.05 12.65 15.88 C13.25 16.82 14.25 17.35 15.55 17.35 C17.95 17.35 19.85 15.65 19.85 13.05 C19.85 8.65 13.75 5.05 12 2.35 Z\"/>\n    </g>\n\n    <g id=\"pip-club\">\n      <circle cx=\"12\" cy=\"7.05\" r=\"4.15\"/>\n      <circle cx=\"7.45\" cy=\"14.05\" r=\"4.15\"/>\n      <circle cx=\"16.55\" cy=\"14.05\" r=\"4.15\"/>\n      <path d=\"M10.25 13.65 C10.85 16.55 10.7 18.7 8.45 21.45 H15.55 C13.3 18.7 13.15 16.55 13.75 13.65 Z\"/>\n    </g>\n\n    <!-- 第五种牌面：DeepSeek 标准 24×24 鲸鱼 Logo，作为 currentColor 单色花色。 -->\n    <path id=\"pip-deepseek\" d=\"M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 0 1-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 0 0-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 0 1-.465.137 9.597 9.597 0 0 0-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 0 0 1.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 0 1 1.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 0 1 .415-.287.302.302 0 0 1 .2.288.306.306 0 0 1-.31.307.303.303 0 0 1-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 0 1-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 0 1 .016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 0 1-.254-.078.253.253 0 0 1-.114-.358c.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z\"/>\n\n    <!-- 不在这里写 fill：\n         卡面透明度由统一的动态蒙版遮挡样式控制。 -->\n    <g id=\"card-base\">\n      <rect class=\"anim-base-rect\"\n        x=\"-4\" y=\"-4\"\n        width=\"8\" height=\"8\"\n        rx=\"1.5\"\n        stroke=\"currentColor\"\n        stroke-width=\"0.7\"/>\n    </g>\n\n    <g id=\"card-diamond\">\n      <use href=\"#card-base\"/>\n      <g transform=\"scale(.1956521739130435) translate(-12 -12)\">\n        <use href=\"#pip-diamond\" fill=\"currentColor\"/>\n      </g>\n    </g>\n\n    <g id=\"card-club\">\n      <use href=\"#card-base\"/>\n      <g transform=\"scale(.1956521739130435) translate(-12 -12)\">\n        <use href=\"#pip-club\" fill=\"currentColor\"/>\n      </g>\n    </g>\n\n    <g id=\"card-spade\">\n      <use href=\"#card-base\"/>\n      <g transform=\"scale(.1956521739130435) translate(-12 -12)\">\n        <use href=\"#pip-spade\" fill=\"currentColor\"/>\n      </g>\n    </g>\n\n    <g id=\"card-heart\">\n      <use href=\"#card-base\"/>\n      <g transform=\"scale(.1956521739130435) translate(-12 -12)\">\n        <use href=\"#pip-heart\" fill=\"currentColor\"/>\n      </g>\n    </g>\n\n    <g id=\"card-deepseek\">\n      <use href=\"#card-base\"/>\n      <g transform=\"scale(.18) translate(-12 -12)\">\n        <use href=\"#pip-deepseek\" fill=\"currentColor\"/>\n      </g>\n    </g>\n\n    <!--\n      关键修复：\n      mask 只作用于“下层卡牌”本身，不画任何背景色。\n      因此动态蒙版遮挡方案下：\n      1. 卡面仍然透明，页面/壁纸可透出；\n      2. 上层牌覆盖范围内的下层 stroke + pip 会被扣掉。\n    -->\n    \n    <mask\n      id=\"mask-plus-out\"\n      x=\"-2\" y=\"-2\" width=\"20\" height=\"20\"\n      maskUnits=\"userSpaceOnUse\"\n      maskContentUnits=\"userSpaceOnUse\"\n      style=\"mask-type:luminance\">\n      <rect x=\"-2\" y=\"-2\" width=\"20\" height=\"20\" fill=\"white\"/>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><rect class=\"anim-mask-rect\" x=\"-4.36\" y=\"-4.36\" width=\"8.72\" height=\"8.72\" rx=\"1.86\" fill=\"black\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </mask>\n    \n    <mask\n      id=\"mask-plus-in\"\n      x=\"-2\" y=\"-2\" width=\"20\" height=\"20\"\n      maskUnits=\"userSpaceOnUse\"\n      maskContentUnits=\"userSpaceOnUse\"\n      style=\"mask-type:luminance\">\n      <rect x=\"-2\" y=\"-2\" width=\"20\" height=\"20\" fill=\"white\"/>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><rect class=\"anim-mask-rect\" x=\"-4.36\" y=\"-4.36\" width=\"8.72\" height=\"8.72\" rx=\"1.86\" fill=\"black\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </mask>\n    \n    <mask\n      id=\"mask-minus-out\"\n      x=\"-2\" y=\"-2\" width=\"20\" height=\"20\"\n      maskUnits=\"userSpaceOnUse\"\n      maskContentUnits=\"userSpaceOnUse\"\n      style=\"mask-type:luminance\">\n      <rect x=\"-2\" y=\"-2\" width=\"20\" height=\"20\" fill=\"white\"/>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><rect class=\"anim-mask-rect\" x=\"-4.36\" y=\"-4.36\" width=\"8.72\" height=\"8.72\" rx=\"1.86\" fill=\"black\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </mask>\n    \n    <mask\n      id=\"mask-minus-in\"\n      x=\"-2\" y=\"-2\" width=\"20\" height=\"20\"\n      maskUnits=\"userSpaceOnUse\"\n      maskContentUnits=\"userSpaceOnUse\"\n      style=\"mask-type:luminance\">\n      <rect x=\"-2\" y=\"-2\" width=\"20\" height=\"20\" fill=\"white\"/>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><rect class=\"anim-mask-rect\" x=\"-4.36\" y=\"-4.36\" width=\"8.72\" height=\"8.72\" rx=\"1.86\" fill=\"black\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </mask>\n  </defs>\n\n  \n    \n\n<g id=\"phase-1\">\n    <animate\n      attributeName=\"opacity\"\n      values=\"1;0;0;0;0\"\n      keyTimes=\"0;0.2;0.4;0.6;0.8\"\n      dur=\"4s\"\n      repeatCount=\"indefinite\"\n      calcMode=\"discrete\"/>\n\n    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"1;0\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-plus-out)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-club\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-diamond\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n\n    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"0;1\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-plus-in)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-diamond\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-club\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n  </g>\n  \n  <g id=\"phase-2\">\n    <animate\n      attributeName=\"opacity\"\n      values=\"0;1;0;0;0\"\n      keyTimes=\"0;0.2;0.4;0.6;0.8\"\n      dur=\"4s\"\n      repeatCount=\"indefinite\"\n      calcMode=\"discrete\"/>\n\n    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"1;0\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-minus-out)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-spade\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-club\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n\n    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"0;1\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-minus-in)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-club\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-spade\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n  </g>\n  \n  <g id=\"phase-3\">\n    <animate\n      attributeName=\"opacity\"\n      values=\"0;0;1;0;0\"\n      keyTimes=\"0;0.2;0.4;0.6;0.8\"\n      dur=\"4s\"\n      repeatCount=\"indefinite\"\n      calcMode=\"discrete\"/>\n\n    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"1;0\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-plus-out)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-heart\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-spade\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n\n    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"0;1\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-plus-in)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-spade\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-heart\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n  </g>\n  \n  <g id=\"phase-4\">\n    <animate\n      attributeName=\"opacity\"\n      values=\"0;0;0;1;0\"\n      keyTimes=\"0;0.2;0.4;0.6;0.8\"\n      dur=\"4s\"\n      repeatCount=\"indefinite\"\n      calcMode=\"discrete\"/>\n\n    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"1;0\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-minus-out)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-deepseek\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-heart\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n\n    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"0;1\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-minus-in)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 0.02503;0.58342 0.04944;0.85713 0.07264;1.10974 0.09405;1.33502 0.11314;1.52742 0.12944;1.68222 0.14256;1.79559 0.15217;1.86476 0.15803;1.888 0.16;1.86476 0.15803;1.79559 0.15217;1.68222 0.14256;1.52742 0.12944;1.33502 0.11314;1.10974 0.09405;0.85713 0.07264;0.58342 0.04944;0.29535 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-heart\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 -0.02503;-0.41862 -0.04944;-0.61501 -0.07264;-0.79625 -0.09405;-0.95789 -0.11314;-1.09595 -0.12944;-1.20702 -0.14256;-1.28836 -0.15217;-1.33799 -0.15803;-1.35467 -0.16;-1.33799 -0.15803;-1.28836 -0.15217;-1.20702 -0.14256;-1.09595 -0.12944;-0.95789 -0.11314;-0.79625 -0.09405;-0.61501 -0.07264;-0.41862 -0.04944;-0.21192 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;0.4849;0.958;1.4074;1.8221;2.192;2.508;2.7621;2.9483;3.0618;3.1;3.0618;2.9483;2.7621;2.508;2.192;1.8221;1.4074;0.958;0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-deepseek\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n  </g>\n  <g id=\"phase-5\">\n    <animate\n      attributeName=\"opacity\"\n      values=\"0;0;0;0;1\"\n      keyTimes=\"0;0.2;0.4;0.6;0.8\"\n      dur=\"4s\"\n      repeatCount=\"indefinite\"\n      calcMode=\"discrete\"/>\n\n    <!-- 前半段：下一张在下层；当前牌透明区域会从下层牌里动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"1;0\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-plus-out)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-diamond\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-deepseek\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n\n    <!-- 后半段：当前牌在下层；下一张成为上层并负责动态挖空 -->\n    <g>\n      <animate\n        attributeName=\"opacity\"\n        values=\"0;1\"\n        keyTimes=\"0;0.5\"\n        dur=\"0.8s\"\n        repeatCount=\"indefinite\"\n        calcMode=\"discrete\"/>\n\n      <g mask=\"url(#mask-plus-in)\">\n        \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;0.29535 -0.02503;0.58342 -0.04944;0.85713 -0.07264;1.10974 -0.09405;1.33502 -0.11314;1.52742 -0.12944;1.68222 -0.14256;1.79559 -0.15217;1.86476 -0.15803;1.888 -0.16;1.86476 -0.15803;1.79559 -0.15217;1.68222 -0.14256;1.52742 -0.12944;1.33502 -0.11314;1.10974 -0.09405;0.85713 -0.07264;0.58342 -0.04944;0.29535 -0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.95873;0.91792;0.87802;0.83947;0.80265;0.76792;0.73558;0.70587;0.67898;0.655;0.63398;0.61587;0.60058;0.58792;0.57765;0.56947;0.56302;0.55792;0.55373;0.55\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-deepseek\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n      </g>\n      \n      <g transform=\"translate(8 8)\">\n        <g>\n          <animateTransform\n            attributeName=\"transform\"\n            type=\"translate\"\n            values=\"0 0;-0.21192 0.02503;-0.41862 0.04944;-0.61501 0.07264;-0.79625 0.09405;-0.95789 0.11314;-1.09595 0.12944;-1.20702 0.14256;-1.28836 0.15217;-1.33799 0.15803;-1.35467 0.16;-1.33799 0.15803;-1.28836 0.15217;-1.20702 0.14256;-1.09595 0.12944;-0.95789 0.11314;-0.79625 0.09405;-0.61501 0.07264;-0.41862 0.04944;-0.21192 0.02503;0 0\"\n            keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n            dur=\"0.8s\"\n            repeatCount=\"indefinite\"\n            calcMode=\"linear\"/>\n          <g>\n            <animateTransform\n              attributeName=\"transform\"\n              type=\"rotate\"\n              values=\"0;-0.4849;-0.958;-1.4074;-1.8221;-2.192;-2.508;-2.7621;-2.9483;-3.0618;-3.1;-3.0618;-2.9483;-2.7621;-2.508;-2.192;-1.8221;-1.4074;-0.958;-0.4849;0\"\n              keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n              dur=\"0.8s\"\n              repeatCount=\"indefinite\"\n              calcMode=\"linear\"/>\n            <g>\n              <animateTransform\n                attributeName=\"transform\"\n                type=\"scale\"\n                values=\"1;0.97919;0.9589;0.93962;0.92182;0.90595;0.8924;0.8815;0.87351;0.86864;0.867;0.86864;0.87351;0.8815;0.8924;0.90595;0.92182;0.93962;0.9589;0.97919;1\"\n                keyTimes=\"0;0.05;0.1;0.15;0.2;0.25;0.3;0.35;0.4;0.45;0.5;0.55;0.6;0.65;0.7;0.75;0.8;0.85;0.9;0.95;1\"\n                dur=\"0.8s\"\n                repeatCount=\"indefinite\"\n                calcMode=\"linear\"/>\n              <g transform=\"scale(1.2)\"><use class=\"anim-card\" href=\"#card-diamond\"/></g>\n            </g>\n          </g>\n        </g>\n      </g>\n    </g>\n  </g>\n  \n  </svg>",
+  "pokerSpinDeepseek": "<path id=\"axis-deepseek-UID\" d=\"M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 0 1-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 0 0-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 0 1-.465.137 9.597 9.597 0 0 0-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 0 0 1.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 0 1 1.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 0 1 .415-.287.302.302 0 0 1 .2.288.306.306 0 0 1-.31.307.303.303 0 0 1-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 0 1-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 0 1 .016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 0 1-.254-.078.253.253 0 0 1-.114-.358c.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z\"/>"
+};
+		/** 读取生效的图标配置：localStorage 图标包优先（校验 meta.compat 兼容性），
+		 *  缺失/损坏/不兼容时回退内置默认。每次加载执行一次，结果供所有图标常量引用。 */
+		function loadIconConfig() {
+			var fallback = ICON_DEFAULTS || {};
+			try {
+				// 在浏览器 / jsdom 中用 window.localStorage（Node 无全局 localStorage）
+				var storage = typeof window !== "undefined" && window.localStorage;
+				if (storage) {
+					var raw = storage.getItem(ICONS_STORAGE_KEY);
+					if (raw) {
+						var parsed = JSON.parse(raw);
+						if (parsed && typeof parsed === "object") {
+							// compat 校验：插件要求的最低版本（简单字符串前缀比较）
+							var compat = parsed.meta && parsed.meta.compat;
+							var ok = true;
+							if (typeof compat === "string" && /^>=/.test(compat)) {
+								var need = compat.slice(2).split(".").map(Number);
+								var have = String(NOTICE_VERSION || "0").split(".").map(Number);
+								for (var ci = 0; ci < need.length; ci++) {
+									if ((have[ci] || 0) < (need[ci] || 0)) { ok = false; break; }
+								}
+							}
+							if (ok) return parsed;
+						}
+					}
+				}
+			} catch (e) { /* localStorage 不可用或数据损坏：走内置默认 */ }
+			return fallback;
+		}
+		var iconConfig = loadIconConfig();
+
+		// ---- 步骤折叠栏收起态：扑克牌堆图标（3 张/5 张 × 随机花色） ----
+		// 花色 path（24 单位空间，fill currentColor 跟随折叠栏图标色）已外置到
+		// icons/default.json（pokerPips），经 ICON_DEFAULTS / localStorage 注入。
+		/** 花色信息：path + 包围盒中心 + 宽度系数。新版统一居中于 (12,12)，factor 全 1。 */
+		var POKER_PIPS = (iconConfig && iconConfig.pokerPips) || {
+			spade: { path: "", cx: 12, cy: 12, factor: 1 },
+			heart: { path: "", cx: 12, cy: 12, factor: 1 },
+			diamond: { path: "", cx: 12, cy: 12, factor: 1 },
+			club: { path: "", cx: 12, cy: 12, factor: 1 }
+		};
+		var POKER_SUITS = ["spade", "heart", "diamond", "club"];
+		/** 每个步骤折叠栏随机花色，按 leaderKey 记忆（重渲染保持同花色不变）。 */
+		var foldSuitMap = new Map();
+		function foldSuitFor(key) {
+			if (foldSuitMap.has(key)) return foldSuitMap.get(key);
+			var suit = POKER_SUITS[Math.floor(Math.random() * POKER_SUITS.length)];
+			foldSuitMap.set(key, suit);
+			return suit;
+		}
+		/** ── mask 遮挡方案（不依赖填充色，壁纸/透明背景下也正确）──
+		 *  每个下层牌一个 luminance mask：白底默认显示，黑色 occluder 跟随"上层牌"的
+		 *  绝对 transform，把上层覆盖区域从下层牌上扣掉 → 牌身透明（透壁纸）时重叠区
+		 *  也不透出下层轮廓。真实牌与 occluder 用同一套 transform + 过渡 → 动画期间逐帧对齐。 */
+		var POKER_R = (iconConfig && iconConfig.pokerR) || 1.08;  // 圆角半径（真实扑克牌 5:7 比例）
+		var pokerSVGSeq = 0;                     // mask id 唯一性计数器
+/* 运行中的步骤折叠栏：四花色卡牌动画（docs/icon-candidates.html 第三行内联）。
+		 *  与 HTML 同款：card-base 无 fill（由 .anim-card CSS 控制，透明 → 壁纸透出），
+		 *  mask 动态扣掉上层覆盖区 → 重叠区不透出下层。每个实例给 defs id / use href /
+		 *  mask 引用加唯一前缀，避免同页多实例冲突。 */
+		var POKER_ANIM_SVG = (iconConfig && iconConfig.pokerAnimSVG) || '';
+		// ---- 回合折叠栏运行中图标：竖直对角线轴旋转卡牌（真实比例 5:7）----
+		// 移植自 docs/icon-candidates.html 的 svgAxisSpin（axisAngle=0 + restAngle=对角线倾角）：
+		// 卡牌绕自身左上→右下对角线轴连续翻转，正面显示黑桃、背面显示 DeepSeek 鲸鱼 Logo。
+		// scaleX(cosθ) 共轭变换：θ 过 90°/270° 时零宽切面切换正/背面，视觉无跳变。
+		var POKER_SPIN_REST = (iconConfig && iconConfig.pokerSpin && iconConfig.pokerSpin.restAngle) || 35.5377;   // 竖直对角线轴倾角 ≈ 35.54°
+		var POKER_SPIN_H = (iconConfig && iconConfig.pokerSpin && iconConfig.pokerSpin.h) || 9.6;
+		var POKER_SPIN_W = POKER_SPIN_H * ((iconConfig && iconConfig.pokerSpin && iconConfig.pokerSpin.pokerRatio) || 0.7142857142857143);                 // ≈ 6.8571（5:7 比例）
+		var POKER_SPIN_X = 8 - POKER_SPIN_W / 2;
+		var POKER_SPIN_Y = 8 - POKER_SPIN_H / 2;
+		var POKER_SPIN_R = (iconConfig && iconConfig.pokerSpin && iconConfig.pokerSpin.r) || 1.296;                                 // 5:7 比例圆角
+		var POKER_SPIN_STROKE = 0.84;
+		var POKER_SPIN_PIP = (iconConfig && iconConfig.pokerSpin && iconConfig.pokerSpin.pipScale) || 0.2347826086956522;
+		var POKER_SPIN_LOGO_SCALE = (Math.min(POKER_SPIN_W * 0.72, POKER_SPIN_H * 0.58)) / 24;
+		// DeepSeek 标准 24×24 鲸鱼 Logo（牌背按当前图标体系用 currentColor）。
+		var POKER_SPIN_DEEPSEEK = (iconConfig && iconConfig.pokerSpinDeepseek) || "";
+		// scaleX(cosθ) 关键帧（72 帧，0.013889 步长，2.4s 循环）：1→0→-1→0→1 平滑翻转。
+		var POKER_SPIN_SCALE = '1 1;0.996195 1;0.984808 1;0.965926 1;0.939693 1;0.906308 1;0.866025 1;0.819152 1;0.766044 1;0.707107 1;0.642788 1;0.573576 1;0.5 1;0.422618 1;0.34202 1;0.258819 1;0.173648 1;0.087156 1;0 1;-0.087156 1;-0.173648 1;-0.258819 1;-0.34202 1;-0.422618 1;-0.5 1;-0.573576 1;-0.642788 1;-0.707107 1;-0.766044 1;-0.819152 1;-0.866025 1;-0.906308 1;-0.939693 1;-0.965926 1;-0.984808 1;-0.996195 1;-1 1;-0.996195 1;-0.984808 1;-0.965926 1;-0.939693 1;-0.906308 1;-0.866025 1;-0.819152 1;-0.766044 1;-0.707107 1;-0.642788 1;-0.573576 1;-0.5 1;-0.422618 1;-0.34202 1;-0.258819 1;-0.173648 1;-0.087156 1;0 1;0.087156 1;0.173648 1;0.258819 1;0.34202 1;0.422618 1;0.5 1;0.573576 1;0.642788 1;0.707107 1;0.766044 1;0.819152 1;0.866025 1;0.906308 1;0.939693 1;0.965926 1;0.984808 1;0.996195 1;1 1';
+		var POKER_SPIN_KEYS = '0;0.013889;0.027778;0.041667;0.055556;0.069444;0.083333;0.097222;0.111111;0.125;0.138889;0.152778;0.166667;0.180556;0.194444;0.208333;0.222222;0.236111;0.25;0.263889;0.277778;0.291667;0.305556;0.319444;0.333333;0.347222;0.361111;0.375;0.388889;0.402778;0.416667;0.430556;0.444444;0.458333;0.472222;0.486111;0.5;0.513889;0.527778;0.541667;0.555556;0.569444;0.583333;0.597222;0.611111;0.625;0.638889;0.652778;0.666667;0.680556;0.694444;0.708333;0.722222;0.736111;0.75;0.763889;0.777778;0.791667;0.805556;0.819444;0.833333;0.847222;0.861111;0.875;0.888889;0.902778;0.916667;0.930556;0.944444;0.958333;0.972222;0.986111;1';
+		var pokerSpinSeq = 0;
+		/** 四种花色的可见性关键帧（6.4s 一个完整花色循环：4 次 360° 翻牌，
+		 *  每次翻到背面固定显示 DeepSeek，越过背面后切到下一种花色）。
+		 *  移植自 docs/icon-candidates.html svgAxisSpin 的 suitVisibility。 */
+		var POKER_SPIN_SUIT_VIS = {
+			spade:   { initial: "visible", values: "visible;hidden;visible;visible", keyTimes: "0;0.0625;0.9375;1" },
+			heart:   { initial: "hidden",  values: "hidden;visible;hidden;hidden",  keyTimes: "0;0.1875;0.3125;1" },
+			diamond: { initial: "hidden",  values: "hidden;visible;hidden;hidden",  keyTimes: "0;0.4375;0.5625;1" },
+			club:    { initial: "hidden",  values: "hidden;visible;hidden;hidden",  keyTimes: "0;0.6875;0.8125;1" }
+		};
+		var POKER_SPIN_BACK_VIS = "hidden;visible;hidden;visible;hidden;visible;hidden;visible;hidden;hidden";
+		var POKER_SPIN_BACK_KEYS = "0;0.0625;0.1875;0.3125;0.4375;0.5625;0.6875;0.8125;0.9375;1";
+		/** 生成牌面翻转 SVG（四花色循环 + DeepSeek 背面，6.4s 完整循环）。
+		 *  移植自 docs/icon-candidates.html svgAxisSpin（axisAngle=0 + restAngle=对角线倾角）。
+		 *  卡牌绕自身左上→右下对角线轴连续翻转，正面按 ♠ → ♥ → ♦ → ♣ 循环，
+		 *  每次翻到背面都固定显示 DeepSeek 鲸鱼 Logo，再翻出下一种花色。
+		 *  scaleX(cosθ) 共轭变换：θ 过 90°/270° 时零宽切面切换正/背面，视觉无跳变。 */
+		function buildPokerSpinSVG(uid) {
+			var faceRect = '<rect class="anim-card axis-spin-card" x="' + POKER_SPIN_X + '" y="' + POKER_SPIN_Y +
+				'" width="' + POKER_SPIN_W + '" height="' + POKER_SPIN_H + '" rx="' + POKER_SPIN_R +
+				'" stroke="currentColor" stroke-width="' + POKER_SPIN_STROKE + '"/>';
+			var deepseek = POKER_SPIN_DEEPSEEK.replace("axis-deepseek-UID", "axis-deepseek-" + uid);
+			// 四种花色正面
+			var faces = "";
+			var suits = ["spade", "heart", "diamond", "club"];
+			for (var fi = 0; fi < suits.length; fi++) {
+				var suit = suits[fi];
+				var info = POKER_PIPS[suit];
+				var vis = POKER_SPIN_SUIT_VIS[suit];
+				var scale = POKER_SPIN_PIP * info.factor;
+				faces += '<g visibility="' + vis.initial + '">' +
+					'<animate attributeName="visibility" values="' + vis.values + '" keyTimes="' + vis.keyTimes +
+					'" dur="6.4s" repeatCount="indefinite" calcMode="discrete"/>' +
+					faceRect +
+					'<g transform="translate(8 8) scale(' + scale + ') translate(' + (-info.cx) + ' ' + (-info.cy) + ')">' +
+					info.path + '</g></g>';
+			}
+			return '<svg viewBox="0 0 16 16" width="24" height="24" style="color:var(--dsw-alias-label-secondary,#9ca3af)">' +
+				'<defs>' + deepseek + '</defs>' +
+				'<g transform="translate(8 8)">' +
+				'<g>' +
+				'<animateTransform attributeName="transform" type="scale" values="' + POKER_SPIN_SCALE +
+				'" keyTimes="' + POKER_SPIN_KEYS + '" dur="1.6s" repeatCount="indefinite" calcMode="linear"/>' +
+				'<g class="ccg-axis-rest-rotation" transform="rotate(' + POKER_SPIN_REST + ')">' +
+				'<g transform="translate(-8 -8)">' +
+				faces +
+				'<g visibility="hidden">' +
+				'<animate attributeName="visibility" values="' + POKER_SPIN_BACK_VIS +
+				'" keyTimes="' + POKER_SPIN_BACK_KEYS + '" dur="6.4s" repeatCount="indefinite" calcMode="discrete"/>' +
+				faceRect +
+				'<g transform="translate(8 8) scale(' + POKER_SPIN_LOGO_SCALE + ') translate(12 -12) scale(-1 1)">' +
+				'<use href="#axis-deepseek-' + uid + '" fill="currentColor"/></g></g>' +
+				'</g></g></g></g></svg>';
+		}
+		/** 回合折叠栏运行中图标：牌面翻转（四花色循环 ♠ → ♥ → ♦ → ♣ 正面 / DeepSeek Logo 背面），
+		 *  开合轴按 open 切换纵向中轴（0°）⇄ 竖直对角线轴（~35.54°），CSS transition 平滑过渡。 */
+		function PokerSpinIcon(props) {
+			var open = props.open === true;
+			var uidRef = react.useRef(null);
+			if (uidRef.current === null) uidRef.current = "ccg-poker-spin-" + (++pokerSpinSeq);
+			var html = react.useMemo(function () { return buildPokerSpinSVG(uidRef.current); }, []);
+			return react.createElement("span", { className: "ccg-poker-icon", "data-spin-open": open ? "true" : undefined },
+				react.createElement("span", { className: "ccg-poker-svg", dangerouslySetInnerHTML: { __html: html } })
+			);
+		}
+		/** 生成某牌的 mask：白底 + 每张其他牌一个黑色 occluder（transform 由 PokerIcon 动态设置）。 */
+		function pokerDynamicMask(maskId, owner, n, x, y, w, h) {
+			var cuts = "";
+			for (var j = 1; j <= n; j++) {
+				if (j === owner) continue;
+				cuts += '<g class="ccg-poker-mask-card" data-i="' + j + '" data-mask-owner="' + owner +
+					'" visibility="hidden" transform="translate(0, 0)">' +
+					'<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="' + POKER_R +
+					'" fill="black" stroke="black" stroke-width="0.7"/></g>';
+			}
+			return '<mask id="' + maskId + '" x="-4" y="-4" width="24" height="24" ' +
+				'maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" style="mask-type:luminance">' +
+				'<rect x="-4" y="-4" width="24" height="24" fill="white"/>' + cuts + '</mask>';
+		}
+		/** 生成扑克牌 SVG 标记（mask 遮挡方案）：每张牌 = 外层 card-i（根坐标系，带 mask-id）+
+		 *  内层 card-motion（变换）；defs 里为每张牌生成 mask。rect 不填充（纯轮廓，壁纸透出）。
+		 *  保持真实扑克牌 5:7 比例（w = h × 5/7），几何参数从 iconConfig 读取。 */
+		function buildPokerSVGBase(count, suit) {
+			var five = count > 3;
+			var info = POKER_PIPS[suit] || POKER_PIPS.spade;
+			var cfg = iconConfig && iconConfig.pokerSVGBase;
+			// 真实扑克牌比例 5:7：高不变，宽 = 高 × 5/7，中心对齐
+			var h = five ? (cfg && cfg.hFive) || 8 : (cfg && cfg.hThree) || 8.5;
+			var w = h * ((cfg && cfg.pokerRatio) || 0.7142857142857143);
+			var x = 8 - w / 2, y = five ? 4 : 3.5;
+			var pipScale = (five ? (cfg && cfg.pipScaleFive) || 0.24 : (cfg && cfg.pipScaleThree) || 0.28) * info.factor;
+			var n = five ? 5 : 3;
+			var seq = (++pokerSVGSeq);
+			var maskBase = "ccg-poker-mask-" + seq;
+			var defs = "";
+			var parts = [];
+			for (var ci = 1; ci <= n; ci++) {
+				var mid = maskBase + "-" + ci;
+				defs += pokerDynamicMask(mid, ci, n, x, y, w, h);
+				var hasPip = five ? (ci === 5 || ci === 3) : (ci === 2 || ci === 3);
+				var pip = "";
+				if (hasPip) {
+					pip = '<g class="ccg-poker-pip" transform="translate(' + (x + w / 2) + ', ' + (y + h / 2) + ') scale(' + pipScale + ') translate(' + (-info.cx) + ', ' + (-info.cy) + ')">' + info.path + '</g>';
+				}
+				parts.push(
+					'<g class="ccg-poker-card" data-i="' + ci + '" data-mask-id="' + mid + '">' +
+					'<g class="ccg-poker-motion" transform="translate(0, 0)">' +
+					'<rect class="ccg-poker-rect" x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="' + POKER_R + '" fill="none" stroke="currentColor" stroke-width="0.7"/>' +
+					pip + '</g></g>'
+				);
+			}
+			return '<svg viewBox="0 0 16 16" width="24" height="24" style="display:block">' +
+				'<defs>' + defs + '</defs>' + parts.join("") + '</svg>';
+		}
+		/** 扇形/牌堆变换表（与 demo 一致，中心对齐 (8,8)；card-3 纯 translate 防过渡 bug）。
+		 *  变换表从 iconConfig.pokerTransforms 读取，可被图标包覆盖。 */
+		function pokerTransforms(count, fan) {
+			var five = count > 3;
+			var t = (iconConfig && iconConfig.pokerTransforms) || {};
+			if (fan) {
+				return five
+					? t.fan5 || { 1: "translate(0, -0.608) rotate(-32 8 12)", 2: "translate(0, -0.608) rotate(-16 8 12)", 3: "translate(0, -0.608)", 4: "translate(0, -0.608) rotate(16 8 12)", 5: "translate(0, -0.608) rotate(32 8 12)" }
+					: t.fan3 || { 1: "translate(0, -0.18) rotate(-26 8 12)", 2: "translate(0, -0.18) rotate(26 8 12)", 3: "translate(0, -0.18)" };
+			}
+			return five
+				? t.stack5 || { 1: "translate(1.6, 1.6)", 2: "translate(0.8, 0.8)", 3: "translate(0, 0)", 4: "translate(-0.8, -0.8)", 5: "translate(-1.6, -1.6)" }
+				: t.stack3 || { 1: "translate(1, 2.25)", 2: "translate(0, 0.25)", 3: "translate(-1, -1.75)" };
+		}
+		/** 运行中步骤折叠栏的卡牌动画图标：四花色循环动画（旋转+平移+缩放，含 mask 挖空）。
+		 *  uid 用 useRef 固定 + useMemo 缓存 SVG 字符串（只生成一次）——折叠栏重渲染
+		 *  （token/耗时刷新）时 __html 不变，React 不重设 innerHTML，SMIL 动画持续不重启。 */
+		var pokerAnimSeq = 0;
+		/** 回合折叠栏的扑克牌图标：运行中（!closed）→ 牌面翻转（纵向中轴/竖直对角线轴，按 turnOpen）；
+		 *  完成后 → 牌堆/扇形（mask 方案）。折叠图标样式设为 default 时返回 undefined
+		 *  （GroupHeader 回退官方 chevron）。 */
+		function turnPokerIcon(fold, closed, turnOpen) {
+			if (foldIconStyle !== "poker") return undefined;
+			if (!closed) return react.createElement(PokerSpinIcon, { open: turnOpen });
+			return react.createElement(PokerIcon, { count: fold.toolCount, suit: foldSuitFor("turn:" + fold.turn), open: turnOpen });
+		}
+		/** 步骤折叠栏运行中图标：五牌面轮换动画（四花色 + DeepSeek），开合角度按 open 切换 0°/35.5°。
+		 *  uid 固定 + useMemo 缓存 SVG 字符串——折叠栏重渲染（token/耗时刷新）时 __html 不变，
+		 *  SMIL 动画持续不重启；开合角度由外层 span 的 data-flat-open 触发 CSS transition。 */
+		function PokerAnimIcon(props) {
+			var open = props.open === true;
+			var uidRef = react.useRef(null);
+			if (uidRef.current === null) uidRef.current = "ccg-poker-anim-" + (++pokerAnimSeq);
+			var html = react.useMemo(function () {
+				var uid = uidRef.current;
+				return POKER_ANIM_SVG
+					.replace(/<svg[^>]*>/, '<svg viewBox="0 0 16 16" width="24" height="24" style="color:var(--dsw-alias-label-secondary,#9ca3af)">')
+					.replace(/id="(pip-[a-z]+|card-[a-z]+|phase-\d+|mask-(?:plus|minus)-(?:in|out))"/g, function (m, id) { return 'id="' + id + '-' + uid + '"'; })
+					.replace(/href="#(pip-[a-z]+|card-[a-z]+)"/g, function (m, id) { return 'href="#' + id + '-' + uid + '"'; })
+					.replace(/url\(#(mask-(?:plus|minus)-(?:in|out))\)/g, function (m, id) { return 'url(#' + id + '-' + uid + ')'; })
+					// 五牌面轮换动画组外包旋转层：收起 0°（CSS 默认）⇄ 展开 35.5°（data-flat-open 触发过渡）
+					.replace(/(<g id="phase-1-[^"]+">)/, '<g class="ccg-flat-rotation" transform="rotate(0 8 8)">$1')
+					.replace(/<\/svg>\s*$/, '</g></svg>');
+			}, []);
+			return react.createElement("span", { className: "ccg-poker-icon", "data-flat-open": open ? "true" : undefined },
+				react.createElement("span", { className: "ccg-poker-svg", dangerouslySetInnerHTML: { __html: html } })
+			);
+		}
+		/** 扑克图标组件：开合时逐张牌从牌堆变形为扇形（或反向），CSS transition 驱动形变；
+		 *  mask 遮挡方案的 occluder 与真实牌使用同一套绝对 transform + 过渡，动画期间逐帧对齐。 */
+		function PokerIcon(props) {
+			var count = props.count, suit = props.suit, open = props.open;
+			var svgRef = react.useRef(null);
+			// __html 用 useMemo 缓存（同 PokerAnimIcon）：折叠栏重渲染（token/耗时刷新、
+			// 回合展开/收起、live 状态切换）时字符串稳定 → React 不重设 innerHTML，
+			// layout effect 设置的 transform/mask/visibility 得以保留；只有 count/suit
+			// 变化才重新生成（此时 layout effect 同依赖重跑，重新应用全部状态）。
+			// 否则每次渲染 seq++ 都产生新字符串 → innerHTML 被清空重写而 effect 不重跑
+			// → 牌全部重叠在 (0,0) 且 mask 未应用 → 看起来只剩一张牌（单张卡牌 bug）。
+			var html = react.useMemo(function () { return buildPokerSVGBase(count, suit); }, [count, suit]);
+			react.useLayoutEffect(function () {
+				var holder = svgRef.current;
+				// svgRef 指向包裹 span；牌张 g 必须在 <svg> 内才会渲染，先定位 svg 元素
+				var svg = holder ? holder.querySelector("svg") : null;
+				if (!svg) return;
+				var five = count > 3;
+				var n = five ? 5 : 3;
+				// 叠放顺序：牌堆顶牌最后画；扇形最右的牌最后画（右手握牌）
+				var order = open ? (five ? [1, 2, 3, 4, 5] : [1, 3, 2]) : (five ? [1, 2, 3, 4, 5] : [1, 2, 3]);
+				// z-order 映射：index 越大越在上（越后画）
+				var z = {};
+				for (var zi = 0; zi < order.length; zi++) z[order[zi]] = zi;
+				var tfs = pokerTransforms(count, !!open);
+				// 首次应用（新挂载 / innerHTML 重建后）：模板 transform 是 translate(0,0)，
+				// 直接设目标值会从中心"滑入"牌堆（0.45s 内看起来像单张牌）。先禁用过渡
+				// 提交最终位姿再恢复 CSS 过渡 → 只有后续 open 切换才播放形变动画。
+				var fresh = svg.getAttribute('data-ccg-ready') !== '1';
+				if (fresh) {
+					var freshEls = svg.querySelectorAll('.ccg-poker-motion,.ccg-poker-mask-card');
+					for (var fi = 0; fi < freshEls.length; fi++) freshEls[fi].style.transition = 'none';
+				}
+				for (var i = 0; i < order.length; i++) {
+					var g = svg.querySelector('.ccg-poker-card[data-i="' + order[i] + '"]');
+					if (g) svg.appendChild(g);
+				}
+				// 强制同步布局：DOM 移动后先提交当前样式，transform 变化才能触发 transition
+				void svg.getBoundingClientRect();
+				// 更新真实牌 + 本牌 mask 的 occluder
+				for (var j = 1; j <= n; j++) {
+					var card = svg.querySelector('.ccg-poker-card[data-i="' + j + '"]');
+					if (!card) continue;
+					var motion = card.querySelector('.ccg-poker-motion');
+					if (motion) {
+						motion.style.transitionDelay = '0ms';
+						motion.setAttribute('transform', tfs[j]);
+					}
+					var mid = card.getAttribute('data-mask-id');
+					if (mid) card.setAttribute('mask', 'url(#' + mid + ')');
+					var cuts = svg.querySelectorAll('.ccg-poker-mask-card[data-mask-owner="' + j + '"]');
+					for (var k = 0; k < cuts.length; k++) {
+						var cut = cuts[k];
+						var ci = Number(cut.getAttribute('data-i'));
+						cut.style.transitionDelay = '0ms';
+						cut.setAttribute('transform', tfs[ci]);
+						// 只有绘制顺序在 owner 之上的牌（z 更大）才挖空 owner
+						cut.setAttribute('visibility', (z[ci] > z[j]) ? 'visible' : 'hidden');
+					}
+				}
+			if (fresh) {
+					// 无过渡地提交最终位姿后恢复 CSS 过渡（后续 open 切换正常动画）
+					svg.setAttribute('data-ccg-ready', '1');
+					void svg.getBoundingClientRect();
+					var restored = svg.querySelectorAll('.ccg-poker-motion,.ccg-poker-mask-card');
+					for (var ri = 0; ri < restored.length; ri++) restored[ri].style.transition = '';
+				}
+			}, [open, count, suit]);
+			return react.createElement("span", { className: "ccg-poker-icon" },
+				react.createElement("span", { ref: svgRef, className: "ccg-poker-svg", dangerouslySetInnerHTML: { __html: html } })
+			);
+		}
 		/** 解析 argsRaw 一次（提取路径与行数共用，避免重复 JSON.parse）。 */
 		function parseArgsRaw(argsRaw) {
 			if (!argsRaw) return null;
@@ -1706,8 +2927,10 @@ window.__ModuleLoader__.load({
 				return label;
 			}
 			if (group.textAfter && group.toolCount === 0) {
-				// 纯 think 段闭合后显示"思考"（"运行了 0 条命令"不好看）
-				return _T("thinkOnly");
+				// 纯 think 段闭合后显示"思考了N次"（"运行了 0 条命令"不好看）；
+				// 兜底：段内无 think 节点（理论上不可能）时按 1 次计。
+				var thinkCount = group.thinkCount > 0 ? group.thinkCount : 1;
+				return _T("segmentThink") + thinkCount + _T("segmentThinkSuffix");
 			}
 			// 运行中（段未闭合）：显示段内最后一个节点（当前正在执行的工具 / 思考内容）
 			var last = group.lastActiveKey ? nodes.get(group.lastActiveKey) : null;
@@ -1732,6 +2955,30 @@ window.__ModuleLoader__.load({
 				else fallback += _T("failurePrefix") + group.failures + _T("failureSuffix");
 			}
 			return fallback;
+		}
+		/** 段内文件路径（basename → 绝对路径）：read/edit 类工具调用解析出的文件。
+		 *  供 GroupHeader 把标题里的文件名渲染成可点击复制元素。复用 classifySegmentTools
+		 *  的结果，按 leaderKey 缓存（段闭合后字段稳定）。 */
+		var segmentFilePathsCache = new Map();
+		function segmentFilePaths(group, nodes) {
+			if (!group || !group.textAfter || group.toolCount === 0) return null;
+			var cacheKey = segmentCacheKey(group, nodes);
+			if (segmentFilePathsCache.has(cacheKey)) return segmentFilePathsCache.get(cacheKey);
+			var stats = classifySegmentTools(group, nodes);
+			var map = new Map();
+			var kinds = ["read", "edit"];
+			for (var k = 0; k < kinds.length; k++) {
+				var items = stats[kinds[k]];
+				for (var i = 0; i < items.length; i++) {
+					var it = items[i];
+					if (it && it.fileName && it.filePath) {
+						// 同一 basename 多个路径时保留最后一个（标题只显示一个文件名）
+						map.set(it.fileName, it.filePath);
+					}
+				}
+			}
+			segmentFilePathsCache.set(cacheKey, map);
+			return map;
 		}
 		/** think 摘要行：运行中横向自动滚动跟随末尾（官方 ReasoningRow 的 data-follow-end 行为）。
 		 *  节流逻辑与官方 useThrottledVisualUpdate 一致：变化时排队一条 3 帧的 rAF 链，
@@ -1853,7 +3100,7 @@ window.__ModuleLoader__.load({
 		 *  段内所有含 text 的节点的 text 正文统一在步骤折叠栏下方渲染（始终显示、不折叠、
 		 *  唯一一份——官方渲染 + CSS 隐藏 think 行）。
 		 *  finalKey：回合最终总结节点（由 turn 级单独渲染，段内跳过避免重复）。 */
-		function renderSegment(props, group, open, sessionId, nodes, finalKey) {
+		function renderSegment(props, group, open, sessionId, nodes, finalKey, closed) {
 			if (!group.isLeader) return hiddenMarker();
 			var inner = [];
 			var textBodies = [];
@@ -1886,7 +3133,21 @@ window.__ModuleLoader__.load({
 				setGroupOpen(sessionId, group.leaderKey, !open);
 			};
 			var title = segmentTitle(group, nodes);
+			var filePaths = segmentFilePaths(group, nodes);
 			var danger = group.failures > 0;
+			// 运行中 = 段未闭合（!textAfter）且回合未结束（!closed）。一个步骤 = 步骤折叠栏内
+			// 所有工具调用+思考（computeGroup 以 text 为边界向前/向后扩展），text 是唯一闭合标记：
+			//   步骤开始（text 尚未出现）→ 卡牌动画；text 出现（步骤结束）→ 牌堆/扇形。
+			// 回合结束后（closed，含中断/出错）强制牌堆，即使最后一个步骤段没有 text
+			// （中断/出错时可能没有最终总结 text），避免永久动画。
+			// 注意：整回合折叠下 text 常只在回合最终总结出现，此前该回合所有步骤折叠栏
+			// 都保持动画，直至最终 text 一并切牌堆——这正是"未闭合全程动画"的语义。
+			var running = !group.textAfter && !closed;
+			var pokerIcon = (foldIconStyle === "poker" && running)
+				? react.createElement(PokerAnimIcon, { open: open })
+				: (foldIconStyle === "poker"
+					? react.createElement(PokerIcon, { count: group.toolCount, suit: foldSuitFor(group.leaderKey), open: open })
+					: undefined);
 			// 顺序：步骤折叠栏行 → 段内内容（think 完整内容 / 工具卡片，折叠时不可见）
 			// → 段内 text 正文（始终显示）——think 在 text 上方，符合"先思考后正文"的阅读顺序
 			return react.createElement(
@@ -1894,27 +3155,64 @@ window.__ModuleLoader__.load({
 				{ className: "ccg-group-root", "data-ccg-count": String(group.toolCount), "data-ccg-open": open ? "true" : undefined },
 				react.createElement(
 					GroupHeader,
-					{ count: group.toolCount, open: open, onToggle: toggle, label: title, danger: danger, isTurn: false }
+					{ count: group.toolCount, open: open, onToggle: toggle, label: title, danger: danger, isTurn: false, filePaths: filePaths, pokerIcon: pokerIcon }
 				),
 				react.createElement(FoldClip, { open: open }, inner),
 				textBodies
 			);
 		}
 
+		// ---- 会话快照读取层（DSH 0.1.1 / 0.1.2 双版本兼容） ----
+		// 0.1.1：useSession 快照（ConversationSnapshot）自带 .chat（ChatSnapshot：order/
+		//        nodes/locations/timeline/legacy），顶层另有 turnEnds/turnTimings 兼容字段。
+		// 0.1.2：快照拆分——SessionSnapshot 不再有 chat/turnEnds/turnTimings；chat 数据由
+		//        框架注入的 useChat 提供（props.useChat，快照即 ChatSnapshot），turnEnds/
+		//        turnTimings 收进 ChatSnapshot.legacy（两个版本的 ChatSnapshot.legacy 切片
+		//        均有这两个 Map，统一从这里读，顶层兼容字段兜底）。
+		// hooks 顺序安全：useChat 的存在性由宿主版本决定、进程内恒定 → 任一环境下 hook
+		// 数量恒定；0.1.2 上对 useSession 读已移除的顶层字段只是普通属性访问，得到
+		// undefined 不抛错。快照缺省（store 未就绪）时各字段为 undefined，由下游
+		// computeGroup/computeTurnFold 的空值守卫兜底回内置渲染。
+		function useChatSnapshotData(props) {
+			var useSession = props.useSession;
+			var useChat = props.useChat;
+			var chat = useChat
+				? useChat(function (s) { return s; })
+				: (useSession ? useSession(function (s) { return s.chat; }) : undefined);
+			var topEnds = useSession ? useSession(function (s) { return s.turnEnds; }) : undefined;
+			var topTimings = useSession ? useSession(function (s) { return s.turnTimings; }) : undefined;
+			var safe = chat && typeof chat === "object" ? chat : {};
+			var legacy = safe.legacy && typeof safe.legacy === "object" ? safe.legacy : {};
+			return {
+				order: safe.order,
+				nodes: safe.nodes,
+				locations: safe.locations,
+				timeline: safe.timeline,
+				turnEnds: legacy.turnEnds !== undefined ? legacy.turnEnds : topEnds,
+				turnTimings: legacy.turnTimings !== undefined ? legacy.turnTimings : topTimings
+			};
+		}
+
 		// ---- 工具调用节点：步骤分组 + 整回合折叠 ----
 		function GroupedToolCallView(props) {
 			var node = props.node;
-			var useSession = props.useSession;
 			var sessionId = props.sessionId;
+			// 快照订阅与缓存清理必须无条件调用（React hooks 顺序：foldActive() 的条件 return
+			// 不能插在快照 hooks 之间——切换折叠模式重渲染时 hook 数量变化会崩条目）。
 			// 会话切换时清理纯计算缓存（幂等：仅 sessionId 变化时执行一次）
 			trackSession(sessionId);
-			// 订阅会话快照：order/nodes 变化时重渲染；locations/turnEnds 提供"回合是否结束"信号。
-			var order = useSession(function (s) { return s.chat.order; });
-			var nodes = useSession(function (s) { return s.chat.nodes; });
-			var locations = useSession(function (s) { return s.chat.locations; });
-			var turnEnds = useSession(function (s) { return s.turnEnds; });
-			var turnTimings = useSession(function (s) { return s.turnTimings; });
-			var timeline = useSession(function (s) { return s.chat.timeline; });
+			var chatSnap = useChatSnapshotData(props);
+			var order = chatSnap.order;
+			var nodes = chatSnap.nodes;
+			var locations = chatSnap.locations;
+			var turnEnds = chatSnap.turnEnds;
+			var turnTimings = chatSnap.turnTimings;
+			var timeline = chatSnap.timeline;
+			// 订阅折叠模式（与快照订阅同为无条件调用，保持 hooks 顺序）
+			useFoldMode();
+			// 数据计算与订阅和"是否接管折叠"无关，全部无条件执行：折叠模式切换会让组件
+			// 在接管/委托两条渲染路径间切换，任何 hook 放在条件 return 之后都会因 hook
+			// 数量变化而崩条目。接管与否只决定渲染路径（foldActive() 判定在全部 hooks 之后）。
 			var group = useMemo(function () { return computeGroup(order, nodes, node); }, [order, nodes, node]);
 			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node, timeline); }, [order, nodes, locations, turnEnds, node, timeline]);
 			var leaderKey = group ? group.leaderKey : "";
@@ -1925,7 +3223,7 @@ window.__ModuleLoader__.load({
 			// 只有回合折叠栏节点需要实时秒表（成员不渲染折叠栏）。
 			var closed = fold ? fold.closed : true;
 			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
-			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
+			var liveNow = useLiveNow(foldActive() && isTurnHeaderNode && !closed);
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
@@ -1938,6 +3236,18 @@ window.__ModuleLoader__.load({
 			var approxTtft = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
 			var ttftMs = officialTtft !== undefined ? officialTtft : approxTtft;
 			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
+			// 已折叠行数：回合折叠栏收纳的内容行数（仅 >0 时注入指标，绝不显示"已折叠0行"）。
+			if (fold && fold.foldedRows > 0) {
+				headerMetrics = headerMetrics ? Object.assign({}, headerMetrics, { foldedRows: fold.foldedRows }) : { foldedRows: fold.foldedRows };
+			}
+			// 订阅字段显隐设置（改动后立即重算标题文案）
+			useFieldVisibility();
+			// 订阅折叠图标样式（改动后立即切换前导图标）
+			useFoldIconStyle();
+			var filteredMetrics = filterVisibleMetrics(headerMetrics);
+
+			// 未接管折叠：整段委托内置渲染（此时全部 hooks 已执行完毕，路径切换安全）
+			if (!foldActive()) return renderBuiltinToolCall(props);
 
 			// 兜底：找不到自己的节点时，原样委托内置渲染（补齐 renderSlot），绝不白屏。
 			if (!group) return renderBuiltinToolCall(props);
@@ -1953,28 +3263,48 @@ window.__ModuleLoader__.load({
 			if (fold && fold.foldable && !fold.outsideScope) {
 				var turnOpen = turnOverride === null ? !closed : turnOverride;
 				var finalKey = fold.finalAssistantKey;
+				if (isExcludedSegmentTool(node)) {
+					// 排除工具（如 todo_write）：不套步骤折叠栏、也不并入任何段，官方工具卡片
+					// 原样渲染；只参与整回合折叠——回合折叠栏展开时显示、收起时隐藏。
+					if (fold.isTurnHeader) {
+						// 排除工具恰好是回合第一条中间节点：由它渲染回合折叠栏 + 官方工具卡片。
+						var toggleTurnX = function () {
+							setTurnOpen(sessionId, fold.turn, !turnOpen);
+						};
+						var baseLabelX = turnHeaderLabel(filteredMetrics, closed) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+						var turnLabelX = closed ? turnLabelWithStatus(baseLabelX, fold.turnStatus) : baseLabelX;
+						return react.createElement(
+							"div",
+							{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
+							react.createElement(GroupHeader, { label: turnLabelX, count: fold.toolCount, open: turnOpen, onToggle: toggleTurnX, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn), gearIcon: react.createElement(GearIcon, null), pokerIcon: turnPokerIcon(fold, closed, turnOpen) }),
+							react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
+							react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinToolCall(props))
+						);
+					}
+					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinToolCall(props)) : hiddenMarker();
+				}
 				if (!fold.isTurnHeader) {
 					// 成员：回合折叠栏展开时显示自己的段内内容（非 leader 由段 leader 统一渲染）；收起时隐藏。
-					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderSegment(props, group, open, sessionId, nodes, finalKey)) : hiddenMarker();
+					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderSegment(props, group, open, sessionId, nodes, finalKey, closed)) : hiddenMarker();
 				}
 				// 折叠栏节点：渲染回合折叠栏（文案 = 本回合性能指标 + 状态标签，无数据则退回
 				// "运行了 N 条命令"）；折叠栏下方常驻分隔线（收起/展开都显示），其下接自己的段内内容。
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnOpen);
 				};
-				var baseLabel = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var baseLabel = turnHeaderLabel(filteredMetrics, closed) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 				var turnLabel = closed ? turnLabelWithStatus(baseLabel, fold.turnStatus) : baseLabel;
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-					react.createElement(GroupHeader, { label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
+					react.createElement(GroupHeader, { label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn), gearIcon: react.createElement(GearIcon, null), pokerIcon: turnPokerIcon(fold, closed, turnOpen) }),
 					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
-					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderSegment(props, group, open, sessionId, nodes, finalKey))
+					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderSegment(props, group, open, sessionId, nodes, finalKey, closed))
 				);
 			}
 
 			// 未整回合折叠：步骤分组逻辑。
-			return renderSegment(props, group, open, sessionId, nodes, fold ? fold.finalAssistantKey : undefined);
+			return renderSegment(props, group, open, sessionId, nodes, fold ? fold.finalAssistantKey : undefined, closed);
 		}
 
 		// ---- 助手节点（Think / 最终消息）：整回合折叠支持 ----
@@ -1982,20 +3312,25 @@ window.__ModuleLoader__.load({
 		// 回合结束后，除最终总结消息外的所有 assistant-step（即 Think 行）都收进回合折叠栏。
 		function GroupedAssistantView(props) {
 			var node = props.node;
-			var useSession = props.useSession;
 			var sessionId = props.sessionId;
-			var order = useSession(function (s) { return s.chat.order; });
-			var nodes = useSession(function (s) { return s.chat.nodes; });
-			var locations = useSession(function (s) { return s.chat.locations; });
-			var turnEnds = useSession(function (s) { return s.turnEnds; });
-			var turnTimings = useSession(function (s) { return s.turnTimings; });
-			var timeline = useSession(function (s) { return s.chat.timeline; });
+			// 快照订阅必须无条件调用（见 GroupedToolCallView 的 hooks 顺序说明）
+			var chatSnap = useChatSnapshotData(props);
+			var order = chatSnap.order;
+			var nodes = chatSnap.nodes;
+			var locations = chatSnap.locations;
+			var turnEnds = chatSnap.turnEnds;
+			var turnTimings = chatSnap.turnTimings;
+			var timeline = chatSnap.timeline;
+			// 订阅折叠模式（与快照订阅同为无条件调用，保持 hooks 顺序）
+			useFoldMode();
+			// 数据计算与订阅和"是否接管折叠"无关，全部无条件执行（hooks 顺序说明见
+			// GroupedToolCallView）；接管与否只决定渲染路径（foldActive() 判定在全部 hooks 之后）。
 			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node, timeline); }, [order, nodes, locations, turnEnds, node, timeline]);
 			var turn = fold ? fold.turn : undefined;
 			var turnOverride = useTurnOverride(sessionId, turn);
 			var closed = fold ? fold.closed : true;
 			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
-			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
+			var liveNow = useLiveNow(foldActive() && isTurnHeaderNode && !closed);
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
@@ -2008,11 +3343,22 @@ window.__ModuleLoader__.load({
 			var approxTtft = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
 			var ttftMs = officialTtft !== undefined ? officialTtft : approxTtft;
 			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
+			// 已折叠行数：回合折叠栏收纳的内容行数（仅 >0 时注入指标，绝不显示"已折叠0行"）。
+			if (fold && fold.foldedRows > 0) {
+				headerMetrics = headerMetrics ? Object.assign({}, headerMetrics, { foldedRows: fold.foldedRows }) : { foldedRows: fold.foldedRows };
+			}
+			// 订阅字段显隐设置（改动后立即重算标题文案）
+			useFieldVisibility();
+			// 订阅折叠图标样式（改动后立即切换前导图标）
+			useFoldIconStyle();
+			var filteredMetrics = filterVisibleMetrics(headerMetrics);
 			// 纯 think 节点也参与步骤分组（段 = 两个 text 之间的 tool-call + think）。
 			var segGroup = useMemo(function () { return computeGroup(order, nodes, node); }, [order, nodes, node]);
 			var segManual = useGroupOverride(sessionId, segGroup ? segGroup.leaderKey : "");
 			var segOpen = segManual === null ? !(segGroup && segGroup.autoCollapsed) : segManual;
 
+			// 未接管折叠：整段委托内置渲染（此时全部 hooks 已执行完毕，路径切换安全）
+			if (!foldActive()) return renderBuiltinAssistant(props);
 			// 无法安全定位折叠栏（回合内无任何中间节点）/ 节点在折叠作用域之外（用户消息上方）：
 			// 原样委托内置渲染。不要求本回合必须有工具调用——仅上下文注入/思考的回合同样折叠。
 			if (!fold || !fold.foldable || fold.outsideScope) {
@@ -2020,6 +3366,26 @@ window.__ModuleLoader__.load({
 			}
 			var turnOpen = turnOverride === null ? !closed : turnOverride;
 			if (fold.isFinalAssistant) {
+				if (fold.isTurnHeader) {
+					// 单节点回合：该节点既是回合折叠栏又是最终总结消息（headerKey 兜底自
+					// finalAssistantKey）。渲染回合折叠栏 + 分隔线 + 最终总结正文——正文始终
+					// 可见（回合折叠栏收起也保留），think 行由 CSS
+					// [data-ccg-turn-folded] [data-variant="think"]{display:none} 隐藏。
+					var toggleTurnF = function () {
+						setTurnOpen(sessionId, fold.turn, !turnOpen);
+					};
+					var baseLabelF = turnHeaderLabel(filteredMetrics, closed) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+					var turnLabelF = closed ? turnLabelWithStatus(baseLabelF, fold.turnStatus) : baseLabelF;
+					return react.createElement(
+						"div",
+						{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
+						react.createElement(GroupHeader, { label: turnLabelF, count: fold.toolCount, open: turnOpen, onToggle: toggleTurnF, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn), pokerIcon: turnPokerIcon(fold, closed, turnOpen) }),
+						react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
+						react.createElement("div", { "data-ccg-turn-folded": "true", style: { display: "contents" } },
+							renderBuiltinAssistant(props)
+						)
+					);
+				}
 				// 最终总结消息保持可见；回合结束后隐藏其内部的 Think 行（"只显示最终结果"）。
 				// 运行中（isFinalAssistant 恒为 false）不会走到这里，流式 Think 保持内置行为。
 				return react.createElement(
@@ -2028,48 +3394,31 @@ window.__ModuleLoader__.load({
 					renderBuiltinAssistant(props)
 				);
 			}
-			// think 节点（含 think+text 同一节点）：纯 think 段（段内无工具调用）不套步骤折叠栏，
-			// 直接官方渲染（官方 Think 行 + text 正文，与官方一致）；工具段（段内有工具）
-			// 收进步骤折叠，think 用官方 Think 行、text 正文由 renderSegment 统一在段外渲染。
+			// think 节点（含 think+text 同一节点）：统一收进步骤折叠栏——纯 think 段同样套
+			// 步骤折叠栏（运行中标题"正在思考 · 摘要"流式滚动、闭合后标题"思考了N次"），
+			// 工具段 think 用官方 Think 行、text 正文由 renderSegment 统一在段外渲染。
+			// 不做"纯 think / 混合步骤"的预判：computeGroup 按当前快照实时归类，工具到达
+			// 只是折叠栏标题切换、内容区增长，步骤折叠栏自 think 一开始就存在，无翻转跳变。
 			if (isThinkNode(node) && segGroup) {
-				if (segGroup.toolCount === 0) {
-					// 纯 think 段：不套步骤折叠栏，直接官方渲染（无重复、无双层折叠）
-					if (fold.isTurnHeader) {
-						// think 是回合第一条中间节点：回合折叠栏下方直接接官方 think 行。
-						var toggleTurn3 = function () {
-							setTurnOpen(sessionId, fold.turn, !turnOpen);
-						};
-						var baseLabel3 = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
-						var turnLabel3 = closed ? turnLabelWithStatus(baseLabel3, fold.turnStatus) : baseLabel3;
-						return react.createElement(
-							"div",
-							{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-							react.createElement(GroupHeader, { label: turnLabel3, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn3, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
-							react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
-							react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinAssistant(props))
-						);
-					}
-					return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinAssistant(props)) : hiddenMarker();
-				}
 				if (fold.isTurnHeader) {
 					// think 是回合第一条中间节点：同时是 turn 折叠栏和段 leader——回合折叠栏下方接步骤折叠行。
 					var toggleTurn2 = function () {
 						setTurnOpen(sessionId, fold.turn, !turnOpen);
 					};
-					var baseLabel2 = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+					var baseLabel2 = turnHeaderLabel(filteredMetrics, closed) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 					var turnLabel2 = closed ? turnLabelWithStatus(baseLabel2, fold.turnStatus) : baseLabel2;
 					return react.createElement(
 						"div",
 						{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-						react.createElement(GroupHeader, { label: turnLabel2, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn2, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
+						react.createElement(GroupHeader, { label: turnLabel2, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn2, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn), gearIcon: react.createElement(GearIcon, null), pokerIcon: turnPokerIcon(fold, closed, turnOpen) }),
 						react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 						react.createElement(FoldClip, { open: turnOpen, live: !closed },
-							renderSegment(props, segGroup, segOpen, sessionId, nodes, fold.finalAssistantKey)
+							renderSegment(props, segGroup, segOpen, sessionId, nodes, fold.finalAssistantKey, closed)
 						)
 					);
 				}
 				if (!turnOpen) return hiddenMarker();
-				return renderSegment(props, segGroup, segOpen, sessionId, nodes, fold.finalAssistantKey);
+				return renderSegment(props, segGroup, segOpen, sessionId, nodes, fold.finalAssistantKey, closed);
 			}
 			if (!fold.isTurnHeader) {
 				// 中间 Think 节点（含 text 的普通消息）：回合折叠栏展开时显示；收起时隐藏。
@@ -2080,12 +3429,12 @@ window.__ModuleLoader__.load({
 			var toggleTurn = function () {
 				setTurnOpen(sessionId, fold.turn, !turnOpen);
 			};
-			var baseLabel = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+			var baseLabel = turnHeaderLabel(filteredMetrics, closed) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 			var turnLabel = closed ? turnLabelWithStatus(baseLabel, fold.turnStatus) : baseLabel;
 			return react.createElement(
 				"div",
 				{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-				react.createElement(GroupHeader, { label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
+				react.createElement(GroupHeader, { label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn), gearIcon: react.createElement(GearIcon, null), pokerIcon: turnPokerIcon(fold, closed, turnOpen) }),
 				react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 				react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinAssistant(props))
 			);
@@ -2095,20 +3444,25 @@ window.__ModuleLoader__.load({
 		// 若上下文注入恰好是回合第一条"中间节点"，则由它渲染回合折叠栏。
 		function GroupedContextView(props) {
 			var node = props.node;
-			var useSession = props.useSession;
 			var sessionId = props.sessionId;
-			var order = useSession(function (s) { return s.chat.order; });
-			var nodes = useSession(function (s) { return s.chat.nodes; });
-			var locations = useSession(function (s) { return s.chat.locations; });
-			var turnEnds = useSession(function (s) { return s.turnEnds; });
-			var turnTimings = useSession(function (s) { return s.turnTimings; });
-			var timeline = useSession(function (s) { return s.chat.timeline; });
+			// 快照订阅必须无条件调用（见 GroupedToolCallView 的 hooks 顺序说明）
+			var chatSnap = useChatSnapshotData(props);
+			var order = chatSnap.order;
+			var nodes = chatSnap.nodes;
+			var locations = chatSnap.locations;
+			var turnEnds = chatSnap.turnEnds;
+			var turnTimings = chatSnap.turnTimings;
+			var timeline = chatSnap.timeline;
+			// 订阅折叠模式（与快照订阅同为无条件调用，保持 hooks 顺序）
+			useFoldMode();
+			// 数据计算与订阅和"是否接管折叠"无关，全部无条件执行（hooks 顺序说明见
+			// GroupedToolCallView）；接管与否只决定渲染路径（foldActive() 判定在全部 hooks 之后）。
 			var fold = useMemo(function () { return computeTurnFold(order, nodes, locations, turnEnds, node, timeline); }, [order, nodes, locations, turnEnds, node, timeline]);
 			var turn = fold ? fold.turn : undefined;
 			var turnOverride = useTurnOverride(sessionId, turn);
 			var closed = fold ? fold.closed : true;
 			var isTurnHeaderNode = !!(fold && fold.foldable && !fold.outsideScope && fold.isTurnHeader);
-			var liveNow = useLiveNow(isTurnHeaderNode && !closed);
+			var liveNow = useLiveNow(foldActive() && isTurnHeaderNode && !closed);
 			var metrics = useMemo(function () { return computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow); }, [turn, nodes, locations, turnTimings, liveNow]);
 			// 运行中展示指标：消耗token 在真实基线之上叠加动画偏移持续增长（真实值到达时校正基线）
 			var displayMetrics = useMemo(function () { return turnDisplayMetrics(sessionId, turn, metrics, closed, liveNow); }, [sessionId, turn, metrics, closed, liveNow]);
@@ -2121,7 +3475,18 @@ window.__ModuleLoader__.load({
 			var approxTtft = turn !== undefined ? ttftCache.get(sessionId + "::" + turn) : undefined;
 			var ttftMs = officialTtft !== undefined ? officialTtft : approxTtft;
 			var headerMetrics = ttftMs !== undefined && displayMetrics ? Object.assign({}, displayMetrics, { ttftMs: ttftMs }) : displayMetrics;
+			// 已折叠行数：回合折叠栏收纳的内容行数（仅 >0 时注入指标，绝不显示"已折叠0行"）。
+			if (fold && fold.foldedRows > 0) {
+				headerMetrics = headerMetrics ? Object.assign({}, headerMetrics, { foldedRows: fold.foldedRows }) : { foldedRows: fold.foldedRows };
+			}
+			// 订阅字段显隐设置（改动后立即重算标题文案）
+			useFieldVisibility();
+			// 订阅折叠图标样式（改动后立即切换前导图标）
+			useFoldIconStyle();
+			var filteredMetrics = filterVisibleMetrics(headerMetrics);
 
+			// 未接管折叠：整段委托内置渲染（此时全部 hooks 已执行完毕，路径切换安全）
+			if (!foldActive()) return renderBuiltinContext(props);
 			// 无法安全定位折叠栏（回合内无任何中间节点）/ 折叠作用域之外（用户消息上方）的
 			// 上下文行不参与折叠，始终原样渲染。不要求本回合必须有工具调用——仅上下文
 			// 注入/思考的回合同样折叠。
@@ -2135,12 +3500,12 @@ window.__ModuleLoader__.load({
 				var toggleTurn = function () {
 					setTurnOpen(sessionId, fold.turn, !turnOpen);
 				};
-				var baseLabel = turnHeaderLabel(headerMetrics) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
+				var baseLabel = turnHeaderLabel(filteredMetrics, closed) || (_T("headerPrefix") + " " + fold.toolCount + " " + _T("headerSuffix"));
 				var turnLabel = closed ? turnLabelWithStatus(baseLabel, fold.turnStatus) : baseLabel;
 				return react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": String(fold.toolCount), "data-ccg-open": turnOpen ? "true" : undefined, "data-ccg-turn": "true" },
-					react.createElement(GroupHeader, { label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn) }),
+					react.createElement(GroupHeader, { label: turnLabel, count: fold.toolCount, open: turnOpen, onToggle: toggleTurn, isTurn: true, live: !closed, right: turnRoundLabel(fold.turn), gearIcon: react.createElement(GearIcon, null), pokerIcon: turnPokerIcon(fold, closed, turnOpen) }),
 					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" }),
 					react.createElement(FoldClip, { open: turnOpen, live: !closed }, renderBuiltinContext(props))
 				);
@@ -2165,14 +3530,24 @@ window.__ModuleLoader__.load({
 			var node = props.node;
 			var useSession = props.useSession;
 			var sessionId = props.sessionId;
-			// 会话切换时清理纯计算缓存（幂等：仅 sessionId 变化时执行一次）
+			// 快照订阅与缓存清理必须无条件调用（见 GroupedToolCallView 的 hooks 顺序说明）。
+			// running 在两个版本都在 Session/Conversation 快照顶层（0.1.2 未被拆分移走），
+			// 继续从 useSession 读；order/turnTimings 走双版本适配层。
 			trackSession(sessionId);
-			var order = useSession(function (s) { return s.chat.order; });
-			var running = useSession(function (s) { return s.running === true; });
-			var turnTimings = useSession(function (s) { return s.turnTimings; });
-			var liveNow = useLiveNow(running);
-			// 占位条件：会话运行中 + 该 user 是最后一条消息（其后尚无任何中间节点）
-			var isPending = running && order.length > 0 && order[order.length - 1] === node.key;
+			var chatSnap = useChatSnapshotData(props);
+			var order = chatSnap.order;
+			var running = useSession ? useSession(function (s) { return s.running === true; }) : false;
+			var turnTimings = chatSnap.turnTimings;
+			// 订阅折叠模式（与快照订阅同为无条件调用，保持 hooks 顺序）
+			useFoldMode();
+			// 占位条件：接管折叠 + 会话运行中 + 该 user 是最后一条消息（其后尚无任何中间节点）。
+			// 在 hooks 之前计算（只依赖订阅值），直播秒表只在占位真正显示时启动。
+			var isPending = foldActive() && running && Array.isArray(order) && order.length > 0 && order[order.length - 1] === node.key;
+			var liveNow = useLiveNow(isPending);
+			// 订阅字段显隐设置与折叠图标样式（无条件调用——hooks 顺序）
+			useFieldVisibility();
+			useFoldIconStyle();
+			if (!foldActive()) return renderBuiltinUser(props);
 			if (!isPending) return renderBuiltinUser(props);
 			// 回合开始时间 / 回合号：turnTimings 中运行中（有 startTime、无 endTime）的回合
 			var startTime = null;
@@ -2187,7 +3562,10 @@ window.__ModuleLoader__.load({
 			}
 			var now = typeof liveNow === "number" ? liveNow : Date.now();
 			var durationMs = typeof startTime === "number" ? Math.max(0, now - startTime) : 0;
-			var label = turnHeaderLabel({ durationMs: durationMs }) || (_T("headerPrefix") + " 0 " + _T("headerSuffix"));
+			var label = turnHeaderLabel(filterVisibleMetrics({ durationMs: durationMs }), false) || (_T("headerPrefix") + " 0 " + _T("headerSuffix"));
+			var placeholderPokerIcon = foldIconStyle === "poker"
+				? react.createElement(PokerSpinIcon, { open: true })
+				: undefined;
 			return react.createElement(
 				"div",
 				{ style: { display: "contents" } },
@@ -2195,20 +3573,155 @@ window.__ModuleLoader__.load({
 				react.createElement(
 					"div",
 					{ className: "ccg-group-root", "data-ccg-count": "0", "data-ccg-open": "true", "data-ccg-turn": "true" },
-					react.createElement(GroupHeader, { label: label, count: 0, open: true, onToggle: function () {}, isTurn: true, live: true, right: turnRoundLabel(runningTurn) }),
+					react.createElement(GroupHeader, { label: label, count: 0, open: true, onToggle: function () {}, isTurn: true, live: true, right: turnRoundLabel(runningTurn), gearIcon: react.createElement(GearIcon, null), pokerIcon: placeholderPokerIcon }),
 					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" })
 				)
 			);
 		}
 
+		// ---- 设置 → 对话 → 「回合折叠方式」行（shadow 官方 transcript-view 行）----
+		// DSH 0.1.2+ 官方注册了 settings.general.item 的 "transcript-view" 行（normal/compact
+		// 两选项）。本插件以 priority:-1 + 同 id shadow 覆盖该行，提供三个选项：
+		//   normal    → 官方 normal（不折叠）
+		//   compact   → 官方 compact（官方折叠）
+		//   turn-fold → 官方 normal + 插件接管（foldMode=turn-fold）
+		// 选项状态 = 官方 transcriptView 值；turn-fold 额外用插件的 foldMode 标记。
+		// 依赖 settingsScope 服务（DSH 0.1.2+）；旧版无该服务时静默跳过（不注册行）。
+		function SettingsTranscriptViewRow(props) {
+			var useTranscriptView = props.useTranscriptView;
+			var setTranscriptView = props.setTranscriptView;
+			// 订阅官方 transcriptView（normal/compact）与插件 foldMode（turn-fold 标记）。
+			var official = useTranscriptView(function (v) { return v; });
+			useFoldMode();
+			var openState = react.useState(false);
+			var open = openState[0];
+			var setOpen = openState[1];
+			// 行卸载（菜单开着时切换设置分区/离开设置页）时菜单项随行一起卸载，同样
+			// 不会派发 mouseleave——用 cleanup 兜底清掉滞留的悬浮提示。
+			react.useEffect(function () {
+				return function () { hideSettingsTip(); };
+			}, []);
+			var officialMode = (official && official.value && official.value.transcriptView) || "normal";
+			// 展示选中项：插件标记 turn-fold 时显示 turn-fold（官方已被我们置为 normal）。
+			// 选项文字用英文（与官方 Normal/Compact 风格一致）；悬浮 title 用中文提示。
+			var OPTIONS = [
+				{ id: "normal", label: _T("settingsTranscriptNormal"), tip: _T("settingsTranscriptNormalTip") },
+				{ id: "compact", label: _T("settingsTranscriptCompact"), tip: _T("settingsTranscriptCompactTip") },
+				{ id: "turn-fold", label: _T("settingsTranscriptTurnFold"), tip: _T("settingsTranscriptTurnFoldTip") }
+			];
+			var selected = foldMode === "turn-fold" ? "turn-fold" : officialMode;
+			var selectedLabel = OPTIONS[0].label;
+			var selectedTip = OPTIONS[0].tip;
+			for (var oi = 0; oi < OPTIONS.length; oi++) {
+				if (OPTIONS[oi].id === selected) { selectedLabel = OPTIONS[oi].label; selectedTip = OPTIONS[oi].tip; }
+			}
+			// 菜单关闭（选中一项 / 点击外部 / Esc / 再点选择器）时菜单项整体卸载，React
+			// 不会再派发 mouseleave，悬浮提示会滞留到下一次 hover——关闭时一并清除。
+			var closeMenu = function () { setOpen(false); hideSettingsTip(); };
+			var selectMode = function (id) {
+				closeMenu();
+				if (id === "turn-fold") {
+					// 插件接管：官方置 normal（避免双重折叠）+ 插件标记 turn-fold
+					setFoldMode("turn-fold");
+					if (officialMode !== "normal") setTranscriptView("normal");
+				} else {
+					setFoldMode("auto");
+					setTranscriptView(id);
+				}
+			};
+			var selector = react.createElement(
+				"button",
+				{
+					type: "button",
+					className: "ccg-settings-selector",
+					"aria-haspopup": "menu",
+					"aria-expanded": open ? "true" : undefined,
+					onClick: function () { if (open) { closeMenu(); } else { setOpen(true); } }
+				},
+				selectedLabel,
+				Menu ? react.createElement(IconChevronDownOutline14, { size: 14, className: "ccg-settings-selector-chevron" }) : null
+			);
+			var items = [];
+			for (var mi = 0; mi < OPTIONS.length; mi++) {
+				// 自定义即时 tooltip（原生 title 有 ~1s 延迟）：mouseenter 用当前项
+				// 的 DOM rect 定位，mouseleave 立即隐藏。display:block + width:100%
+				// 让整行都可触发（itemLabel flex:1 占满按钮宽）。
+				// 注意：var mi 是函数作用域，闭包必须立即捕获当前 tip（IIFE），
+				// 否则循环结束后 mi=length，所有 handler 都访问 OPTIONS[length] 崩溃。
+				(function (tip) {
+					items.push({
+						id: OPTIONS[mi].id,
+						label: react.createElement(
+							"span",
+							{
+								key: "opt-" + OPTIONS[mi].id,
+								style: { display: "block", width: "100%" },
+								onMouseEnter: function (e) { showSettingsTip(tip, e.currentTarget.getBoundingClientRect()); },
+								onMouseLeave: hideSettingsTip
+							},
+							OPTIONS[mi].label
+						)
+					});
+				})(OPTIONS[mi].tip);
+			}
+			return react.createElement(
+				"div",
+				{ className: "ccg-settings-row" },
+				react.createElement(
+					"div",
+					{ className: "ccg-settings-row-text" },
+					react.createElement("div", { className: "ccg-settings-row-title" }, _T("settingsTranscriptTitle")),
+					react.createElement("div", { className: "ccg-settings-row-desc" }, _T("settingsTranscriptDesc"))
+				),
+				Menu
+					? react.createElement(Menu, {
+						open: open,
+						onClose: closeMenu,
+						items: items,
+						selectedId: selected,
+						onSelect: selectMode,
+						align: "end",
+						portal: true,
+						anchor: selector
+					})
+					: selector
+			);
+		}
+
 		// ---- Cordis 插件入口 ----
 		// 关键：委托渲染内置组件时，内置组件（ToolCallTree 等）依赖由"条目自身
-		// inject 声明"提供的 hook（如 useHostDescription，来自 connection 服务的
-		// hostDescription 可观察源）。我们的条目必须声明同样的 inject，否则手动
+		// inject 声明"提供的 hook（如 useConnectionGeneration，来自 connection 服务的
+		// generation 可观察源）。我们的条目必须声明同样的 inject，否则手动
 		// createElement 内置组件会因缺少这些 hook 而崩溃，SlotErrorBoundary 会把
 		// 我们的条目"abdicate"（踢出槽位），折叠随即永久失效。
-		exports.inject = ["slots", "connection"];
+		exports.inject = ["slots", "connection", "settingsScope"];
 		exports.apply = function (ctx) {
+			// 设置 → 对话 → 「回合折叠方式」行：shadow 官方 transcript-view 行（priority:-1）。
+			// 通过 ctx.settingsScope（DSH 服务注入）读写官方 ui-chat 命名空间的 transcriptView 字段。
+			// 旧版/测试环境无 settingsScope 或 slots 时静默跳过。
+			try {
+				var slotsService2 = ctx.slots;
+				if (slotsService2 && ctx.settingsScope && typeof ctx.settingsScope.bind === "function") {
+					var transcriptScope = ctx.settingsScope.bind({ namespace: "ui-chat" });
+					var settingsRowInject = function () {
+						return {
+							hooks: { transcriptView: transcriptScope },
+							setTranscriptView: function (mode) { transcriptScope.set("transcriptView", mode); }
+						};
+					};
+					slotsService2.inject("settings.general.item", function () {
+						return slotsService2.register({
+							name: "settings.general.item",
+							id: "transcript-view",
+							order: 12,
+							locale: "conversation",
+							priority: -1,
+							inject: settingsRowInject
+						}, SettingsTranscriptViewRow);
+					});
+				}
+			} catch (e) { /* settingsScope 或 slots 不可用：跳过设置行注册 */ }
+			// 一次性"新版本更新说明"通知：独立 React 根挂在 <body> 上，与折叠渲染无关。
 			// 一次性"新版本更新说明"通知：独立 React 根挂在 <body> 上，与折叠渲染无关。
 			// 特性检测（document / react-dom createRoot / ctx.effect）让极简宿主与
 			// 测试环境（mock ctx 无 effect、loader 不提供 react-dom）静默跳过。
@@ -2228,14 +3741,39 @@ window.__ModuleLoader__.load({
 						if (host.parentNode) host.parentNode.removeChild(host);
 					};
 				});
+				// 字段设置弹窗 + 全局 Toast：同一独立 React 根（Toast 常驻，不随弹窗显隐）。
+				ctx.effect(function () {
+					var host = document.getElementById("__dsh-turn-fold-gear");
+					if (!host && document.body && typeof document.createElement === "function") {
+						host = document.createElement("div");
+						host.id = "__dsh-turn-fold-gear";
+						document.body.appendChild(host);
+					}
+					if (!host) return undefined;
+					var root = ReactDOM.createRoot(host);
+					root.render(react.createElement(react.Fragment, null,
+						react.createElement(FieldVisibilityPopup, null),
+						react.createElement(TurnFoldToast, null),
+						react.createElement(SettingsTip, null)
+					));
+					return function () {
+						try { root.unmount(); } catch (e) { /* already gone */ }
+						if (host.parentNode) host.parentNode.removeChild(host);
+					};
+				});
 			}
 			ctx.inject(["slots", "connection"], function (scope) {
 				slotsService = scope.slots;
 				var connection = scope.connection;
-				// 与内置 tool-call 条目一致的 inject：把 connection.hostDescription
-				// 以 useHostDescription 形式注入组件 props，委托渲染时原样透传。
+				// 双版本兼容：DSH 0.1.2+ 用 connection.generation（Host facts，含 .host.home），
+				// 旧版用 connection.hostDescription（直接含 .home），哪个存在就注入哪个。
+				// 内置组件（ToolCallTree）通过 use<Name> prop 消费钩子，插件透传 props 时
+				// 同时带上两个 hook 名，内置组件只消费当前版本存在的那一个。
 				var hostDescriptionInject = function () {
-					return { hooks: { hostDescription: connection.hostDescription } };
+					if (connection && connection.generation) {
+						return { hooks: { connectionGeneration: connection.generation } };
+					}
+					return { hooks: { hostDescription: connection && connection.hostDescription } };
 				};
 				scope.slots.inject("conversation.chat.node", function () {
 					return scope.slots.register({

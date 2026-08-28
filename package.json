@@ -22,7 +22,9 @@
   },
   "scripts": {
     "check": "node --check client.js && node --check index.js",
-    "test": "node --test --test-isolation=none \"tests/*.test.mjs\""
+    "test": "node --test --test-isolation=none \"tests/*.test.mjs\"",
+    "sync:icons": "node scripts/sync-icons.mjs --inject",
+    "icons:check": "node scripts/sync-icons.mjs"
   },
   "keywords": [
     "deepseek-harness",
@@ -36,6 +38,9 @@
   "files": [
     "index.js",
     "client.js",
+    "icons/default.json",
+    "assets/dsh-turn-fold-customize-icons.md",
+    "scripts/sync-icons.mjs",
     "cordis.patch.yml",
     "install.ps1",
     "LICENSE",
