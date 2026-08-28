@@ -39,6 +39,10 @@ describe('CSS 折叠隐藏规则', () => {
       '展开间距应挂在直接子元素 .ccg-fold-clip 上（16px，排除回合栏）——header 在 DisclosureRow 内部 DOM，挂 header 无法既命中又不跨层泄漏')
     assert.doesNotMatch(css, /\.ccg-group-root\[data-ccg-open\][^{]*\.ccg-header\{margin/,
       '不得再用 header 承载展开间距（后代选择器跨层泄漏 / > 选择器匹配不上 DisclosureRow 内部 DOM）')
+    // 防跳动：fold-clip 的 margin-top 参与过渡（收起时 16px 间距随高度一起动画，
+    // 不在收起开始瞬间瞬跳）；占位栏补 16px 顶部间距（交接给正式栏不位移）
+    assert.match(css, /transition:grid-template-rows \.28s[^}]*margin-top \.28s/, 'fold-clip 过渡应包含 margin-top')
+    assert.match(css, /\.ccg-group-root\[data-ccg-placeholder\]\{margin-top:16px\}/, '占位栏应补 16px 顶部间距')
   })
 
   it('展开间距不跨层泄漏：回合嵌套段自己的 fold-clip 命中 16px，回合的不命中', () => {

@@ -340,5 +340,6 @@ git push --follow-tags
     `'chat'`（`message.think`=思考 等）；旧版全在 `'conversation'`。插件注册时**按条目 key
     对应复制**同 key 官方条目的声明（`detectChatLocale`，无对应时 `ctx.locale` 试查后回退
     `'conversation'`），转发给官方组件的 `t` 一律过 `wrapLocaleT` 兜底（查不到 key 时用
-    内嵌的完整官方 chat 词典做 `{占位符}` 插值兜底，不再裸显 `"message.think"` /
-    `"message.contextInjection"` 等任何原始 key）。
+    内嵌的官方词典合并本——chat + conversation + common 共 282 词条——做 `{占位符}`
+    插值兜底，不再裸显 `"message.think"` / `"message.contextInjection"` /
+    `"tool.title.read"` 等任何原始 key）。

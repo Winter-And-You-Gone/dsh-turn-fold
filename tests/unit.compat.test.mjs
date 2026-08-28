@@ -264,6 +264,8 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
     assert.equal(T.wrapLocaleT(broken)('message.think'), '思考')
     assert.equal(T.wrapLocaleT(broken)('row.running'), '运行中')
     assert.equal(T.wrapLocaleT(broken)('message.contextInjection'), '上下文注入', '上下文注入行不裸显 key')
+    assert.equal(T.wrapLocaleT(broken)('tool.title.read'), '读取', '工具标题词（conversation 词典）也兜底')
+    assert.equal(T.wrapLocaleT(broken)('copy'), '复制', 'common 公共词也兜底')
     assert.equal(T.wrapLocaleT(broken)('message.turnProcess.toolCalls.other', { count: 3 }), '3 次工具调用', '兜底词条做 {占位符} 插值')
     const prev = dom.window.document.documentElement.lang
     dom.window.document.documentElement.lang = 'en' // 用插件实例自己的 dom（isolation=none 下 global document 属于最后加载的文件）
@@ -271,6 +273,7 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
       assert.equal(T.wrapLocaleT(broken)('message.think'), 'Think')
       assert.equal(T.wrapLocaleT(broken)('row.failed'), 'Failed')
       assert.equal(T.wrapLocaleT(broken)('message.contextInjection'), 'Context injection')
+      assert.equal(T.wrapLocaleT(broken)('tool.title.read'), 'Read')
     } finally {
       dom.window.document.documentElement.lang = prev
     }

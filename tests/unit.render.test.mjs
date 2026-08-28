@@ -581,6 +581,9 @@ describe('回合折叠栏 0 秒占位（GroupedUserView）', () => {
     assert.ok(placeholder.textContent.includes('耗时'), '占位显示耗时')
     const divider = container.querySelector('.ccg-turn-divider')
     assert.ok(divider, '分隔线存在')
+    // 交接位置接续：正式回合栏在下一个 flowItem 顶部（隔官方 16px flow gap），
+    // 占位栏必须自带 16px 顶部间距，否则交接瞬间整栏下跳 16px
+    assert.equal(placeholder.getAttribute('data-ccg-placeholder'), 'true', '占位栏应带 placeholder 标记（16px 顶部间距锚点）')
   })
   it('会话未运行：不渲染占位', () => {
     const nodes = [userNode('u', 100)]
