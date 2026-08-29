@@ -834,9 +834,8 @@ window.__ModuleLoader__.load({
 		// 机制与 dsh-wallpaper-engine 同款：localStorage 记录"已通知过的版本号"，
 		// 每次发布新版本时把 NOTICE_VERSION 改成新版本号并更新 NOTICE_CONTENT 正文，
 		// 加载时存值与当前版本不符就弹一次，点「知道了」后写入当前版本、下次不再弹。
-		// 注意：v0.3.1 是特例——v0.3.0 发布时还没有本通知功能，其大版本更新日志从未
-		// 展示过，因此该版本合并展示 v0.3.0 + v0.3.1 两节内容，仅此一次；之后的版本
-		// 直接追加新版本节，历史节保留供新用户回溯。
+		// 注意：v0.4.0 起更新说明只保留一节（合并 v0.3.1 + v0.4.0 的内容）；更早的
+		// v0.3.0 节已按用户要求移除——该版内容从未对老用户展示过，新用户看合并节即可。
 		var NOTICE_KEY = "dsh-turn-fold:notice-version";
 		var NOTICE_VERSION = "0.4.0";
 		var NOTICE_CONTENT = {
@@ -844,29 +843,13 @@ window.__ModuleLoader__.load({
 				title: "v0.4.0 更新说明",
 				sections: [
 					{
-						version: "v0.3.0",
-						note: "大版本更新 · 此前未展示",
-						items: [
-							{ title: "⏱️ 回合折叠栏", detail: "用户发送消息后即时呈现（零秒占位），实时显示回合耗时、首字 TTFT、消耗 token、tok/s 及缓存命中率；数值采用滚轮数字动画逐位滚动，右侧对齐显示回合序号。" },
-							{ title: "🗂️ 步骤分组折叠", detail: "按 text 边界自动分组，运行中动态标题显示官方图标、工具名称及参数摘要（或思考内容），附加 shimmer 光泽动效；默认始终折叠；编辑类工具标题附带行数变更统计。" },
-							{ title: "📦 整回合折叠", detail: "回合结束后自动收拢为一个回合折叠栏，并标注状态标签（已完成 / 已停止 / 已中断）；仅保留最终总结正文可见。" },
-							{ title: "🌐 界面语言适配", detail: "界面语言跟随 DSH 界面语言实时切换，支持简体中文及英语。" },
-							{ title: "✨ 过渡动画", detail: "展开与折叠配备平滑过渡动画（CSS grid 0fr→1fr 轨道过渡配合淡入效果），尊重 prefers-reduced-motion 无障碍设置。" }
-						]
-					},
-					{
-						version: "v0.3.1",
+						version: "v0.4.0",
 						items: [
 							{ title: "🃏 扑克牌折叠图标", detail: "步骤折叠栏与回合折叠栏的前导图标改为扑克牌：运行中显示四花色循环卡牌动画，完成后收起为随机花色的牌堆（工具数 ≤3 用 3 张、>3 用 5 张），展开时牌张绕底边中点扇形展开并带形变过渡动画；牌张遮挡采用 luminance mask 动态挖空上层覆盖区域，牌身透明、不依赖背景色，壁纸/透明背景下依然正确。" },
 							{ title: "🧠 纯 Think 段也折叠", detail: "思考内容统一收进步骤折叠栏：运行中标题「正在思考 · 最新一行」流式滚动（shimmer 光泽）、闭合后显示「思考了N次」；不再有「裸 Think 行直接显示」与「工具段折叠」之间的切换跳变。" },
 							{ title: "🚫 排除工具不折叠", detail: "todo_write（更新任务清单）不套步骤折叠栏、也不并入任何步骤分组，始终以官方工具卡片原样显示；仍参与整回合折叠（回合结束收进回合折叠栏）。" },
 							{ title: "🏷️ 包名更名", detail: "npm 包名由 dsh-turn-fold 变更为 @winteries/dsh-turn-fold，解决插件市场「已安装」页因同名插件歧义而缺失描述的问题；旧包名 dsh-turn-fold 仍会同步发布，无需迁移。" },
-							{ title: "📣 版本更新说明", detail: "新增「新版本更新说明」机制：每个新版本首次加载时自动弹出一次（本版本合并展示 v0.3.0 大版本更新日志，仅此一次）。" }
-						]
-					},
-					{
-						version: "v0.4.0",
-						items: [
+							{ title: "📣 版本更新说明", detail: "新增「新版本更新说明」机制：每个新版本首次加载时自动弹出一次。" },
 							{ title: "🔤 新版 DSH 词条适配", detail: "适配新版 DSH 官方词典的命名空间拆分：折叠栏内的「思考」「上下文注入」等官方词条不再裸显 message.think / message.contextInjection 等原始 key；四个委托渲染入口分别跟随官方条目声明的语言命名空间。" },
 							{ title: "🛟 内置官方词典兜底", detail: "内嵌官方 chat / conversation / common 三本词典共 282 条词条（含 {占位符} 插值）作为兜底：宿主词典缺失或错位时，折叠栏内的官方文案仍全部正常显示。" },
 							{ title: "🖱️ 设置行提示修复", detail: "「回合折叠方式」下拉框选项的悬浮提示在点击选择或关闭菜单后立即消失，不再滞留屏幕。" },
@@ -881,29 +864,13 @@ window.__ModuleLoader__.load({
 				title: "What's new in v0.4.0",
 				sections: [
 					{
-						version: "v0.3.0",
-						note: "Major release — first shown here",
-						items: [
-							{ title: "⏱️ Live turn header", detail: "Appears immediately when a message is sent (0-second placeholder), displaying turn duration, TTFT, tokens consumed, tok/s, and cache-hit rate in real time with rolling-digit animations; the turn number is right-aligned on the header." },
-							{ title: "🗂️ Segment folding", detail: "Groups tool calls and Think blocks between text boundaries automatically; dynamic running titles show official icons, tool name, and argument summary (or Think content) with a shimmer animation; always collapsed by default; edit tools display line-change statistics." },
-							{ title: "📦 Whole-turn collapse", detail: "Collapses the entire turn into a single turn fold bar after completion, with status tags (Completed / Stopped / Interrupted); only the final summary message remains visible." },
-							{ title: "🌐 Locale adaptation", detail: "The plugin interface language follows the DSH UI language in real time, with support for Simplified Chinese and English." },
-							{ title: "✨ Smooth transitions", detail: "Expand and collapse use smooth CSS grid 0fr→1fr transitions with fade-in animations, respecting prefers-reduced-motion accessibility settings." }
-						]
-					},
-					{
-						version: "v0.3.1",
+						version: "v0.4.0",
 						items: [
 							{ title: "🃏 Poker-card fold icons", detail: "Step and turn fold bars now show poker-card icons: a four-suit card animation while running, collapsing to a random-suit deck on completion (3 cards for ≤3 tools, 5 cards for >3); expanding fans the cards out with morph transitions. Occlusion uses luminance masks that dynamically cut out the overlapping area of the card above — the card body stays transparent, so it works correctly over wallpapers and transparent backgrounds without any background-color dependency." },
 							{ title: "🧠 Think-only segments fold too", detail: "All thinking now wraps into step fold bars: while running the header shows \"Thinking · latest line\" (streaming, shimmer), and \"Thought N times\" once closed — no more jump between a bare Think row and a folded tool segment when a tool arrives mid-segment." },
 							{ title: "🚫 Excluded tools stay unfolded", detail: "todo_write (task-list updates) skips the step fold bar and doesn't join any segment — it renders as the bare official tool card; still participates in whole-turn collapse (folded into the turn fold bar when the turn ends)." },
 							{ title: "🏷️ Package rename", detail: "The npm package was renamed from dsh-turn-fold to @winteries/dsh-turn-fold, resolving the missing description in the market Installed tab caused by a same-name collision; the legacy dsh-turn-fold package keeps receiving synchronized releases, so no migration is needed." },
-							{ title: "📣 Release notes", detail: "Introduced the per-version \"What's new\" notice that appears automatically once after each release (this release merges the v0.3.0 major changelog — just this once)." }
-						]
-					},
-					{
-						version: "v0.4.0",
-						items: [
+							{ title: "📣 Release notes", detail: "Introduced the per-version \"What's new\" notice that appears automatically once after each release." },
 							{ title: "🔤 New-DSH locale adaptation", detail: "Adapts to the new DSH locale-namespace split: official labels like \"Think\" and \"Context injection\" no longer leak raw keys (message.think / message.contextInjection) inside fold bars; each delegated renderer now follows the locale namespace declared by its official entry." },
 							{ title: "🛟 Embedded dictionary fallback", detail: "All three official dictionaries — chat / conversation / common, 282 entries total — are embedded with {placeholder} interpolation as a fallback: if the host dictionary is missing or mismatched, every official label inside fold bars still renders correctly." },
 							{ title: "🖱️ Settings-row tooltip fix", detail: "Hover tooltips on the fold-mode dropdown now disappear immediately after selecting an option or closing the menu, instead of lingering on screen." },
@@ -3085,14 +3052,19 @@ window.__ModuleLoader__.load({
 					if (raw) {
 						var parsed = JSON.parse(raw);
 						if (parsed && typeof parsed === "object") {
-							// compat 校验：插件要求的最低版本（简单字符串前缀比较）
+							// compat 校验：图标包声明 ">=x.y.z" 时与插件版本（NOTICE_VERSION）逐段
+							// 比较——某段大于即兼容、小于即不兼容、相等继续比下一段。注意不能
+							// 逐段只判"小于"：0.4.0 满足 ">=0.3.1"（minor 4>3 已定局，patch 0<1
+							// 不能翻案），否则升版后 localStorage 图标包会被误判不兼容。
 							var compat = parsed.meta && parsed.meta.compat;
 							var ok = true;
 							if (typeof compat === "string" && /^>=/.test(compat)) {
 								var need = compat.slice(2).split(".").map(Number);
 								var have = String(NOTICE_VERSION || "0").split(".").map(Number);
-								for (var ci = 0; ci < need.length; ci++) {
-									if ((have[ci] || 0) < (need[ci] || 0)) { ok = false; break; }
+								for (var ci = 0; ci < Math.max(need.length, have.length); ci++) {
+									var nv = need[ci] || 0, hv = have[ci] || 0;
+									if (hv > nv) break;
+									if (hv < nv) { ok = false; break; }
 								}
 							}
 							if (ok) return parsed;
