@@ -1,6 +1,6 @@
 {
   "name": "@winteries/dsh-turn-fold",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "main": "index.js",
   "description": "将工具调用与 Think 段自动折叠为步骤折叠栏：运行中动态显示正在执行的工具与思考内容，闭合后按工具类型汇总。回合结束后整回合收拢为一个回合折叠栏，只保留最终总结正文，实时显示耗时与 token 消耗，并标注回合序号与结束状态，支持点击展开查看完整过程。",

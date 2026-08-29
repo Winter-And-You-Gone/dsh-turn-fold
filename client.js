@@ -838,10 +838,10 @@ window.__ModuleLoader__.load({
 		// 展示过，因此该版本合并展示 v0.3.0 + v0.3.1 两节内容，仅此一次；之后的版本
 		// 直接追加新版本节，历史节保留供新用户回溯。
 		var NOTICE_KEY = "dsh-turn-fold:notice-version";
-		var NOTICE_VERSION = "0.3.1";
+		var NOTICE_VERSION = "0.4.0";
 		var NOTICE_CONTENT = {
 			zh: {
-				title: "v0.3.1 更新说明",
+				title: "v0.4.0 更新说明",
 				sections: [
 					{
 						version: "v0.3.0",
@@ -863,13 +863,22 @@ window.__ModuleLoader__.load({
 							{ title: "🏷️ 包名更名", detail: "npm 包名由 dsh-turn-fold 变更为 @winteries/dsh-turn-fold，解决插件市场「已安装」页因同名插件歧义而缺失描述的问题；旧包名 dsh-turn-fold 仍会同步发布，无需迁移。" },
 							{ title: "📣 版本更新说明", detail: "新增「新版本更新说明」机制：每个新版本首次加载时自动弹出一次（本版本合并展示 v0.3.0 大版本更新日志，仅此一次）。" }
 						]
+					},
+					{
+						version: "v0.4.0",
+						items: [
+							{ title: "🔤 新版 DSH 词条适配", detail: "适配新版 DSH 官方词典的命名空间拆分：折叠栏内的「思考」「上下文注入」等官方词条不再裸显 message.think / message.contextInjection 等原始 key；四个委托渲染入口分别跟随官方条目声明的语言命名空间。" },
+							{ title: "🛟 内置官方词典兜底", detail: "内嵌官方 chat / conversation / common 三本词典共 282 条词条（含 {占位符} 插值）作为兜底：宿主词典缺失或错位时，折叠栏内的官方文案仍全部正常显示。" },
+							{ title: "🖱️ 设置行提示修复", detail: "「回合折叠方式」下拉框选项的悬浮提示在点击选择或关闭菜单后立即消失，不再滞留屏幕。" },
+							{ title: "🃏 扑克牌图标打磨", detail: "设置页折叠图标选择器预览升级：牌堆/扇形展示完整花色池（含 DeepSeek 鲸鱼牌面）并每秒轮换花色；卡牌比例修正为 5:7、修复旋转动画变形；回合折叠栏交接与占位阶段不再跳动。" }
+						]
 					}
 				],
 				hint: "本提示每个新版本只出现一次，点下方按钮即可关闭。",
 				dismiss: "知道了"
 			},
 			en: {
-				title: "What's new in v0.3.1",
+				title: "What's new in v0.4.0",
 				sections: [
 					{
 						version: "v0.3.0",
@@ -890,6 +899,15 @@ window.__ModuleLoader__.load({
 							{ title: "🚫 Excluded tools stay unfolded", detail: "todo_write (task-list updates) skips the step fold bar and doesn't join any segment — it renders as the bare official tool card; still participates in whole-turn collapse (folded into the turn fold bar when the turn ends)." },
 							{ title: "🏷️ Package rename", detail: "The npm package was renamed from dsh-turn-fold to @winteries/dsh-turn-fold, resolving the missing description in the market Installed tab caused by a same-name collision; the legacy dsh-turn-fold package keeps receiving synchronized releases, so no migration is needed." },
 							{ title: "📣 Release notes", detail: "Introduced the per-version \"What's new\" notice that appears automatically once after each release (this release merges the v0.3.0 major changelog — just this once)." }
+						]
+					},
+					{
+						version: "v0.4.0",
+						items: [
+							{ title: "🔤 New-DSH locale adaptation", detail: "Adapts to the new DSH locale-namespace split: official labels like \"Think\" and \"Context injection\" no longer leak raw keys (message.think / message.contextInjection) inside fold bars; each delegated renderer now follows the locale namespace declared by its official entry." },
+							{ title: "🛟 Embedded dictionary fallback", detail: "All three official dictionaries — chat / conversation / common, 282 entries total — are embedded with {placeholder} interpolation as a fallback: if the host dictionary is missing or mismatched, every official label inside fold bars still renders correctly." },
+							{ title: "🖱️ Settings-row tooltip fix", detail: "Hover tooltips on the fold-mode dropdown now disappear immediately after selecting an option or closing the menu, instead of lingering on screen." },
+							{ title: "🃏 Poker icon polish", detail: "The fold-icon selector previews in settings now show the full face pool (including the DeepSeek whale face) cycling suits every second; card ratio corrected to 5:7, spin-animation distortion fixed, and the placeholder-to-real turn-bar handoff no longer jumps." }
 						]
 					}
 				],
