@@ -845,6 +845,7 @@ window.__ModuleLoader__.load({
 					{
 						version: "v0.4.0",
 						items: [
+							{ title: "🧩 适配 DeepSeek Harness 新旧版本", detail: "完整适配新版 DSH 的界面与数据结构变化（对话词典命名空间拆分、快照结构、回合折叠设置行），旧版本继续无缝兼容——同一份代码在新旧版本上都正常折叠；此前新版下折叠失效、官方词条裸显（message.think 等）的问题全部修复。" },
 							{ title: "🃏 扑克牌折叠图标", detail: "步骤折叠栏与回合折叠栏的前导图标改为扑克牌：运行中显示四花色循环卡牌动画，完成后收起为随机花色的牌堆（工具数 ≤3 用 3 张、>3 用 5 张），展开时牌张绕底边中点扇形展开并带形变过渡动画；牌张遮挡采用 luminance mask 动态挖空上层覆盖区域，牌身透明、不依赖背景色，壁纸/透明背景下依然正确。" },
 							{ title: "🧠 纯 Think 段也折叠", detail: "思考内容统一收进步骤折叠栏：运行中标题「正在思考 · 最新一行」流式滚动（shimmer 光泽）、闭合后显示「思考了N次」；不再有「裸 Think 行直接显示」与「工具段折叠」之间的切换跳变。" },
 							{ title: "🚫 排除工具不折叠", detail: "todo_write（更新任务清单）不套步骤折叠栏、也不并入任何步骤分组，始终以官方工具卡片原样显示；仍参与整回合折叠（回合结束收进回合折叠栏）。" },
@@ -866,6 +867,7 @@ window.__ModuleLoader__.load({
 					{
 						version: "v0.4.0",
 						items: [
+							{ title: "🧩 Adapts to new and old DeepSeek Harness", detail: "Fully adapts to the latest DSH changes (locale-namespace split, snapshot restructuring, the fold-mode settings row) while older versions keep working unchanged — one codebase folds correctly on both; the new-DSH failures (folding silently off, raw keys like message.think) are all fixed." },
 							{ title: "🃏 Poker-card fold icons", detail: "Step and turn fold bars now show poker-card icons: a four-suit card animation while running, collapsing to a random-suit deck on completion (3 cards for ≤3 tools, 5 cards for >3); expanding fans the cards out with morph transitions. Occlusion uses luminance masks that dynamically cut out the overlapping area of the card above — the card body stays transparent, so it works correctly over wallpapers and transparent backgrounds without any background-color dependency." },
 							{ title: "🧠 Think-only segments fold too", detail: "All thinking now wraps into step fold bars: while running the header shows \"Thinking · latest line\" (streaming, shimmer), and \"Thought N times\" once closed — no more jump between a bare Think row and a folded tool segment when a tool arrives mid-segment." },
 							{ title: "🚫 Excluded tools stay unfolded", detail: "todo_write (task-list updates) skips the step fold bar and doesn't join any segment — it renders as the bare official tool card; still participates in whole-turn collapse (folded into the turn fold bar when the turn ends)." },
