@@ -3215,8 +3215,12 @@ window.__ModuleLoader__.load({
 				var hasPip = five ? (ci === 5 || ci === 3) : (ci === 2 || ci === 3);
 				var pip = "";
 				if (hasPip) {
+					// Logo 不用花色的 pipScale：花色 glyph 的 24 盒自带内边距，而鲸鱼墨迹
+					// 几乎填满 24 盒，同 scale 会撑出卡边。按卡牌几何独立取缩放（与翻牌
+					// 动画 POKER_SPIN_LOGO_SCALE 同款公式），宽度向约束自然留出描边余量。
+					var pipScaleUsed = isLogo ? (Math.min(w * 0.72, h * 0.58) / 24) * info.factor : pipScale;
 					var pipInner = isLogo ? '<use href="#' + logoId + '" fill="currentColor"/>' : info.path;
-					pip = '<g class="ccg-poker-pip" transform="translate(' + (x + w / 2) + ', ' + (y + h / 2) + ') scale(' + pipScale + ') translate(' + (-info.cx) + ', ' + (-info.cy) + ')">' + pipInner + '</g>';
+					pip = '<g class="ccg-poker-pip" transform="translate(' + (x + w / 2) + ', ' + (y + h / 2) + ') scale(' + pipScaleUsed + ') translate(' + (-info.cx) + ', ' + (-info.cy) + ')">' + pipInner + '</g>';
 				}
 				parts.push(
 					'<g class="ccg-poker-card" data-i="' + ci + '" data-mask-id="' + mid + '">' +

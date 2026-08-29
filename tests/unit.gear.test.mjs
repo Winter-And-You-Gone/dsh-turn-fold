@@ -233,6 +233,12 @@ describe('齿轮图标 & 字段设置弹窗', () => {
       assert.match(svg, /<defs>.*ccg-poker-logo-\d+/, 'defs 应注入 Logo path（唯一 id）')
       assert.match(svg, /<use href="#ccg-poker-logo-\d+" fill="currentColor"\/>/, 'pip 处应以 <use> 引用 Logo')
       assert.match(svg, /class="ccg-poker-pip"/, 'Logo 与花色共用 pip 结构（同变换/scale）')
+      // 防溢出：Logo 墨迹填满 24 盒，不能用花色 pipScale(0.28)——按卡牌几何独立缩放
+      // （min(w×0.72, h×0.58)/24，3 张堆 = 0.1821…），宽度向留出描边余量
+      assert.match(svg, /ccg-poker-pip" transform="translate\([^)]*\) scale\(0\.18\d*\)/,
+        'Logo pip 应使用独立缩放（~0.182，而非花色的 0.28）')
+      assert.ok(!svg.includes('scale(0.28)translate') && !/ccg-poker-pip"[^>]*scale\(0\.28\)/.test(svg),
+        'Logo pip 不得使用花色的 0.28 缩放')
       assert.ok(!svg.includes('axis-deepseek-UID'), 'id 占位应已被替换')
       // 每实例 id 唯一（同页多个折叠栏不冲突）
       const svg2 = T.buildPokerSVGBase(3, 'deepseek')
