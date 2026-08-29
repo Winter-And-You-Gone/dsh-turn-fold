@@ -175,6 +175,27 @@ injection + `__test` export, no copy-paste drift) and is layered in four parts:
 > sandbox), `--test-isolation=none` is required (already built into `npm test`);
 > it also works on regular Linux/macOS CI (Node ≥ 22.9).
 
+## Fold icons (poker cards)
+
+Step/turn fold bars default to **animated poker cards** (Settings → Conversation →
+fold icons switches back to the official chevron):
+
+- **Settled**: collapses into a deck (≤3 tools in the segment → 3 cards, >3 → 5);
+  expanding fans them out;
+- **Face pool**: ♠ ♥ ♦ ♣ + the DeepSeek whale logo — **five faces**, picked randomly
+  per fold bar and memoized by leaderKey;
+- **Running**: the step bar plays a five-face rotation, the turn bar a diagonal-axis
+  flip (four suits cycling, logo on the back) — native SVG animation;
+- **Occlusion**: luminance masks cut the lower card where an upper card covers it
+  (transforms stay frame-aligned during animation); card bodies stay transparent,
+  correct over wallpapers;
+- **Settings preview**: the 4 static deck/fan forms cycle faces once per second
+  (phase-offset, 4 different faces visible at any moment), plus the two running
+  animations;
+- **Data source**: `icons/default.json` (suit paths, card geometry, fan/stack
+  transform tables, animation template) — after editing run `npm run sync:icons`,
+  verify with `npm run icons:check`.
+
 ## Custom icons (Agent Skill)
 
 Users who want to customize the fold-bar icons get help from the AI assistant:
