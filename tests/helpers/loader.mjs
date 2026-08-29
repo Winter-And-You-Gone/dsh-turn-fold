@@ -44,6 +44,7 @@ const TEST_EXPORTS = [
   'turnPokerIcon',
   'buildPokerSVGBase',
   'foldSuitFor',
+  'pokerFacePool',
   'segmentFilePaths',
   'renderTitleFileLinks',
   'FileLink',

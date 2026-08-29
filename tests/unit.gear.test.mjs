@@ -147,13 +147,16 @@ describe('齿轮图标 & 字段设置弹窗', () => {
     assert.ok(firstChild.classList.contains('ccg-gear-icon-option-text'), '文字在前')
     assert.ok(secondChild.classList.contains('ccg-gear-icon-option-preview'), '预览在后')
 
-    // poker 预览 7 个图标（♠3牌折叠 / ♥3牌展开 / ♦5牌折叠 / ♣5牌展开 /
-    // DeepSeek Logo 牌堆、牌面翻转、牌面轮换——四花色 + Logo 全覆盖）
+    // poker 预览 6 个图标（4 个静态牌堆/扇形——每秒按牌面池轮换，四花色 + Logo——
+    // + 牌面翻转 + 牌面轮换）
     const pokerItems = pokerPreview.querySelectorAll('.ccg-gear-icon-option-preview-item')
-    assert.strictEqual(pokerItems.length, 7, 'poker 预览 7 种图标')
-    // 静态牌堆/扇形预览覆盖四种花色 + Logo（suit 变体不再全是黑桃）
-    const suitsShown = [...pokerPreview.querySelectorAll('.ccg-poker-icon')].length
-    assert.ok(suitsShown >= 5, '静态扑克预览 ≥5 个（四花色 + Logo）')
+    assert.strictEqual(pokerItems.length, 6, 'poker 预览 6 种图标')
+    // 静态牌堆/扇形 4 个。判定用 svg 内的 .ccg-poker-card（仅静态 PokerIcon 有牌堆
+    // 结构）——spin/anim 在 open=false 时不渲染 data-* 属性，:not 排除不可靠；
+    // 每个预览项在放大气泡里还有一份副本，只数可见项（tooltip > preview-item 直链）。
+    const allIcons = [...pokerPreview.querySelectorAll(':scope > .ccg-preview-tooltip > .ccg-gear-icon-option-preview-item > .ccg-poker-icon')]
+    const staticIcons = allIcons.filter((el) => el.querySelector('.ccg-poker-card'))
+    assert.strictEqual(staticIcons.length, 4, '静态牌堆/扇形预览 4 个（每秒轮换牌面）')
 
     // default 预览 2 个图标（右箭头、下箭头）
     const defaultItems = defaultPreview.querySelectorAll('.ccg-gear-icon-option-preview-item')
@@ -171,8 +174,8 @@ describe('齿轮图标 & 字段设置弹窗', () => {
   it('每个预览图标外包放大气泡（hover 显示，无尖尖）', () => {
     // 展开后：每个预览项都包在 .ccg-preview-tooltip 里，内含原预览项 + 放大气泡
     const tips = dom.window.document.querySelectorAll('.ccg-gear-icon-option-preview .ccg-preview-tooltip')
-    // poker 7（四花色 + Logo + 翻牌 + 轮换）+ default 2 = 9 个预览项
-    assert.strictEqual(tips.length, 9, '每个预览图标一个 tooltip 包裹')
+    // poker 6（4 静态轮换 + 翻牌 + 轮换）+ default 2 = 8 个预览项
+    assert.strictEqual(tips.length, 8, '每个预览图标一个 tooltip 包裹')
     for (const tip of tips) {
       const item = tip.querySelector('.ccg-gear-icon-option-preview-item')
       assert.ok(item, 'tooltip 内含原预览项')
@@ -219,6 +222,9 @@ describe('齿轮图标 & 字段设置弹窗', () => {
 
   // ── 牌面随机池：四花色 + DeepSeek Logo ──
   describe('牌面随机池（foldSuitFor / buildPokerSVGBase）', () => {
+    it('pokerFacePool：四花色 + deepseek（Logo 数据存在时）', () => {
+      assert.deepStrictEqual(T.pokerFacePool(), ['spade', 'heart', 'diamond', 'club', 'deepseek'])
+    })
     it('随机池含 5 种牌面：四花色 + deepseek（Logo 数据存在时）', () => {
       assert.ok(T.iconConfig && T.iconConfig.pokerSpinDeepseek, '内置图标数据应含 DeepSeek Logo path')
       const seen = new Set()
@@ -259,6 +265,25 @@ describe('齿轮图标 & 字段设置弹窗', () => {
       assert.ok(!svg.includes('ccg-poker-logo-'), '花色分支不应注入 Logo defs')
       assert.match(svg, /class="ccg-poker-pip"[^>]*><path /, '花色 pip 仍内联 path')
       assert.equal((svg.match(/ccg-poker-card/g) || []).length, 3)
+    })
+
+    it('牌面轮换动画模板：卡牌 5:7（card-base 5.7143×8，遮挡 mask 同比收窄）', () => {
+      const svg = T.POKER_ANIM_SVG
+      assert.match(svg, /class="anim-base-rect"\s+x="-2\.8571"\s+y="-4"\s+width="5\.7143"\s+height="8"/,
+        'card-base 应为 5:7（此前是 8×8 方形）')
+      assert.equal((svg.match(/class="anim-mask-rect" x="-3\.1143"[^>]*width="6\.2286"/g) || []).length, 4,
+        '4 个遮挡 occluder 应随卡牌宽度同比收窄')
+    })
+
+    it('设置预览：4 个静态牌堆/扇形同一时刻牌面互不相同（相位错开轮换）', () => {
+      // FoldIconSelector 的 4 个静态预览取 pool[(tick+i)%5]，i 为预览序号——
+      // 池长 5 > 4，任意 tick 下 4 个牌面两两不同
+      const pool = T.pokerFacePool()
+      const at = (t, i) => pool[(t + i) % pool.length]
+      for (let t = 0; t < 5; t++) {
+        const shown = [at(t, 0), at(t, 1), at(t, 2), at(t, 3)]
+        assert.strictEqual(new Set(shown).size, 4, 'tick=' + t + ' 时 4 个预览牌面互不相同')
+      }
     })
   })
 
