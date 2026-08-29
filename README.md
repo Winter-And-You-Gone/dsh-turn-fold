@@ -55,18 +55,13 @@ text：……                                             ← 下一个 text 出
 
 ### 效果示意
 
-折叠前后对比（左：工具调用全部展开、逐条显示；右：下一个 text 出现后自动收成步骤折叠栏）：
+段闭合标题：按工具类型汇总 + 编辑行数统计（`[ +11 -11 ]`，悬停括号 +N 变绿 / -N 变红）：
 
-<table>
-  <tr>
-    <td align="center"><b>折叠前</b></td>
-    <td align="center"><b>折叠后</b></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/images/segment-before-collapse.png" alt="折叠前" width="300"/></td>
-    <td align="center"><img src="docs/images/segment-after-collapse.png" alt="折叠后" width="300"/></td>
-  </tr>
-</table>
+![段折叠栏：编辑了 client.js [ +11 -11 ]](docs/images/segment-edit-stats.png)
+
+标题里的文件名可点击复制完整路径：悬停变 DeepSeek 蓝 + 白色下划实线：
+
+![文件名悬停](docs/images/segment-file-hover.png)
 
 ## 功能二：运行中回合折叠栏 + 整回合折叠成一个回合折叠栏
 
@@ -129,9 +124,14 @@ text：……                                             ← 下一个 text 出
 
 ### 效果示意
 
-回合结束后，整回合收成一个带指标的回合折叠栏，只保留最终总结正文：
+回合进行中/手动展开：回合折叠栏实时显示耗时、首字、token、tok/s、缓存命中率、
+已折叠步数（右端对齐轮次），过程内容按步骤分组折叠、工具卡片与 Think 行原样可读：
 
-![回合结束折叠](docs/images/turn-collapsed.png)
+![回合展开态](docs/images/turn-expanded.png)
+
+回合结束后（或手动收起）：整回合收进回合折叠栏，只保留最终总结正文与用量脚注：
+
+![整回合折叠](docs/images/turn-folded.png)
 
 ## 组件样式与行距
 
@@ -249,6 +249,10 @@ chevron）：
   两个运行态动画预览；
 - **数据源**：`icons/default.json`（花色路径、卡牌几何、扇形/牌堆变换表、动画
   模板），改完 `npm run sync:icons` 注入、`npm run icons:check` 校验。
+
+设置弹窗（回合折叠栏字段显隐 + 折叠图标选择；预览项悬浮 2x 放大）：
+
+![设置弹窗](docs/images/gear-popup.png)
 
 ## 自定义图标（Agent Skill）
 

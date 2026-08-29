@@ -37,18 +37,15 @@ text: …                                               ← next text message
 
 ### Screenshots
 
-Before/after collapse (left: all tool calls expanded, listed one by one; right: auto-collapsed into step fold bars after the next text message):
+Closed-segment header: per-type summary + edit line stats (`[ +11 -11 ]`; hovering
+the bracket turns +N green / -N red):
 
-<table>
-  <tr>
-    <td align="center"><b>Before collapse</b></td>
-    <td align="center"><b>After collapse</b></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/images/segment-before-collapse.png" alt="Before collapse" width="300"/></td>
-    <td align="center"><img src="docs/images/segment-after-collapse.png" alt="After collapse" width="300"/></td>
-  </tr>
-</table>
+![Step fold bar: Edited client.js [ +11 -11 ]](docs/images/segment-edit-stats.png)
+
+Filenames in the header are click-to-copy: hover turns DeepSeek blue with a white
+solid underline:
+
+![Filename hover](docs/images/segment-file-hover.png)
 
 ## Feature 2: Live turn fold bar + collapse the whole turn into a turn fold bar
 
@@ -82,9 +79,16 @@ Before/after collapse (left: all tool calls expanded, listed one by one; right: 
 
 ### Screenshots
 
-After the turn ends, the whole turn collapses into a turn fold bar with metrics, keeping only the final summary body:
+Turn running (or manually expanded): the turn fold bar shows duration, TTFT, tokens,
+tok/s, cache hit, folded steps and the turn number in real time; the process content
+folds into step groups while tool cards and Think rows stay readable:
 
-![Turn-end collapse](docs/images/turn-collapsed.png)
+![Turn expanded](docs/images/turn-expanded.png)
+
+After the turn ends (or on manual collapse): the whole turn folds into the turn fold
+bar, keeping only the final summary body and the usage footer:
+
+![Turn folded](docs/images/turn-folded.png)
 
 ## Component styles & spacing
 
@@ -195,6 +199,11 @@ fold icons switches back to the official chevron):
 - **Data source**: `icons/default.json` (suit paths, card geometry, fan/stack
   transform tables, animation template) — after editing run `npm run sync:icons`,
   verify with `npm run icons:check`.
+
+Settings popup (turn fold bar field toggles + fold icon selector; preview items
+magnify 2x on hover):
+
+![Settings popup](docs/images/gear-popup.png)
 
 ## Custom icons (Agent Skill)
 
