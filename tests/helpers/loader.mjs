@@ -42,6 +42,8 @@ const TEST_EXPORTS = [
   'getFoldIconStyle',
   'useFoldIconStyle',
   'turnPokerIcon',
+  'buildPokerSVGBase',
+  'foldSuitFor',
   'segmentFilePaths',
   'renderTitleFileLinks',
   'FileLink',

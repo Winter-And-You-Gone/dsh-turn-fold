@@ -213,6 +213,45 @@ describe('齿轮图标 & 字段设置弹窗', () => {
     })
   })
 
+  // ── 牌面随机池：四花色 + DeepSeek Logo ──
+  describe('牌面随机池（foldSuitFor / buildPokerSVGBase）', () => {
+    it('随机池含 5 种牌面：四花色 + deepseek（Logo 数据存在时）', () => {
+      assert.ok(T.iconConfig && T.iconConfig.pokerSpinDeepseek, '内置图标数据应含 DeepSeek Logo path')
+      const seen = new Set()
+      for (let i = 0; i < 200; i++) seen.add(T.foldSuitFor('pool-probe-' + i))
+      for (const face of ['spade', 'heart', 'diamond', 'club', 'deepseek']) {
+        assert.ok(seen.has(face), '随机池应能抽到 ' + face + '（200 次抽样未出现）')
+      }
+    })
+    it('同一 leaderKey 记忆牌面（重渲染不变）', () => {
+      const first = T.foldSuitFor('stable-key')
+      for (let i = 0; i < 10; i++) assert.strictEqual(T.foldSuitFor('stable-key'), first)
+    })
+
+    it('buildPokerSVGBase deepseek：pip 用 <use> 引 Logo（每实例唯一 id）', () => {
+      const svg = T.buildPokerSVGBase(3, 'deepseek')
+      assert.match(svg, /<defs>.*ccg-poker-logo-\d+/, 'defs 应注入 Logo path（唯一 id）')
+      assert.match(svg, /<use href="#ccg-poker-logo-\d+" fill="currentColor"\/>/, 'pip 处应以 <use> 引用 Logo')
+      assert.match(svg, /class="ccg-poker-pip"/, 'Logo 与花色共用 pip 结构（同变换/scale）')
+      assert.ok(!svg.includes('axis-deepseek-UID'), 'id 占位应已被替换')
+      // 每实例 id 唯一（同页多个折叠栏不冲突）
+      const svg2 = T.buildPokerSVGBase(3, 'deepseek')
+      const id1 = svg.match(/ccg-poker-logo-\d+/)[0]
+      const id2 = svg2.match(/ccg-poker-logo-\d+/)[0]
+      assert.notStrictEqual(id1, id2, '两次生成的 Logo id 应不同')
+      // 结构不变：仍 3 张牌 + 每张一个 mask 定义
+      assert.equal((svg.match(/ccg-poker-card/g) || []).length, 3)
+      assert.equal((svg.match(/<mask id="ccg-poker-mask-/g) || []).length, 3)
+    })
+
+    it('buildPokerSVGBase 花色：不受 Logo 分支影响（无 Logo id、pip 内联 path）', () => {
+      const svg = T.buildPokerSVGBase(3, 'spade')
+      assert.ok(!svg.includes('ccg-poker-logo-'), '花色分支不应注入 Logo defs')
+      assert.match(svg, /class="ccg-poker-pip"[^>]*><path /, '花色 pip 仍内联 path')
+      assert.equal((svg.match(/ccg-poker-card/g) || []).length, 3)
+    })
+  })
+
   // ── 文件名链接（步骤折叠栏标题中的文件可点击复制） ──
   describe('文件名链接（segmentFilePaths / renderTitleFileLinks / GroupHeader）', () => {
     function toolWithPath(key, seq, name, path) {

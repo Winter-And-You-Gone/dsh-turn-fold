@@ -3064,11 +3064,14 @@ window.__ModuleLoader__.load({
 			club: { path: "", cx: 12, cy: 12, factor: 1 }
 		};
 		var POKER_SUITS = ["spade", "heart", "diamond", "club"];
-		/** 每个步骤折叠栏随机花色，按 leaderKey 记忆（重渲染保持同花色不变）。 */
+		/** 每个步骤/回合折叠栏随机一个"牌面"（四花色 + DeepSeek Logo 五选一，按 leaderKey
+		 *  记忆，重渲染保持同一牌面不变）。Logo 仅在 pokerSpinDeepseek 数据存在时入池；
+		 *  池在调用时计算（兼容 localStorage 图标包覆盖的加载时机）。 */
 		var foldSuitMap = new Map();
 		function foldSuitFor(key) {
 			if (foldSuitMap.has(key)) return foldSuitMap.get(key);
-			var suit = POKER_SUITS[Math.floor(Math.random() * POKER_SUITS.length)];
+			var pool = POKER_SPIN_DEEPSEEK ? POKER_SUITS.concat(["deepseek"]) : POKER_SUITS;
+			var suit = pool[Math.floor(Math.random() * pool.length)];
 			foldSuitMap.set(key, suit);
 			return suit;
 		}
@@ -3185,7 +3188,11 @@ window.__ModuleLoader__.load({
 		 *  保持真实扑克牌 5:7 比例（w = h × 5/7），几何参数从 iconConfig 读取。 */
 		function buildPokerSVGBase(count, suit) {
 			var five = count > 3;
-			var info = POKER_PIPS[suit] || POKER_PIPS.spade;
+			// suit = "deepseek"：牌面用 DeepSeek 鲸鱼 Logo（与四花色一起入随机池）。
+			// Logo path 与花色同为 24 单位空间、几何中心 (12,12)，无 fill 属性（继承
+			// currentColor）；defs 里以每实例唯一 id 注入一次，pip 处 <use> 引用。
+			var isLogo = suit === "deepseek" && !!POKER_SPIN_DEEPSEEK;
+			var info = isLogo ? { cx: 12, cy: 12, factor: 1 } : (POKER_PIPS[suit] || POKER_PIPS.spade);
 			var cfg = iconConfig && iconConfig.pokerSVGBase;
 			// 真实扑克牌比例 5:7：高不变，宽 = 高 × 5/7，中心对齐
 			var h = five ? (cfg && cfg.hFive) || 8 : (cfg && cfg.hThree) || 8.5;
@@ -3195,7 +3202,12 @@ window.__ModuleLoader__.load({
 			var n = five ? 5 : 3;
 			var seq = (++pokerSVGSeq);
 			var maskBase = "ccg-poker-mask-" + seq;
+			var logoId = null;
 			var defs = "";
+			if (isLogo) {
+				logoId = "ccg-poker-logo-" + seq;
+				defs += POKER_SPIN_DEEPSEEK.replace("axis-deepseek-UID", logoId);
+			}
 			var parts = [];
 			for (var ci = 1; ci <= n; ci++) {
 				var mid = maskBase + "-" + ci;
@@ -3203,7 +3215,8 @@ window.__ModuleLoader__.load({
 				var hasPip = five ? (ci === 5 || ci === 3) : (ci === 2 || ci === 3);
 				var pip = "";
 				if (hasPip) {
-					pip = '<g class="ccg-poker-pip" transform="translate(' + (x + w / 2) + ', ' + (y + h / 2) + ') scale(' + pipScale + ') translate(' + (-info.cx) + ', ' + (-info.cy) + ')">' + info.path + '</g>';
+					var pipInner = isLogo ? '<use href="#' + logoId + '" fill="currentColor"/>' : info.path;
+					pip = '<g class="ccg-poker-pip" transform="translate(' + (x + w / 2) + ', ' + (y + h / 2) + ') scale(' + pipScale + ') translate(' + (-info.cx) + ', ' + (-info.cy) + ')">' + pipInner + '</g>';
 				}
 				parts.push(
 					'<g class="ccg-poker-card" data-i="' + ci + '" data-mask-id="' + mid + '">' +
