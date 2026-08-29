@@ -147,9 +147,13 @@ describe('齿轮图标 & 字段设置弹窗', () => {
     assert.ok(firstChild.classList.contains('ccg-gear-icon-option-text'), '文字在前')
     assert.ok(secondChild.classList.contains('ccg-gear-icon-option-preview'), '预览在后')
 
-    // poker 预览 6 个图标（3牌折叠/展开、5牌折叠/展开、牌面翻转、牌面轮换）
+    // poker 预览 7 个图标（♠3牌折叠 / ♥3牌展开 / ♦5牌折叠 / ♣5牌展开 /
+    // DeepSeek Logo 牌堆、牌面翻转、牌面轮换——四花色 + Logo 全覆盖）
     const pokerItems = pokerPreview.querySelectorAll('.ccg-gear-icon-option-preview-item')
-    assert.strictEqual(pokerItems.length, 6, 'poker 预览 6 种图标')
+    assert.strictEqual(pokerItems.length, 7, 'poker 预览 7 种图标')
+    // 静态牌堆/扇形预览覆盖四种花色 + Logo（suit 变体不再全是黑桃）
+    const suitsShown = [...pokerPreview.querySelectorAll('.ccg-poker-icon')].length
+    assert.ok(suitsShown >= 5, '静态扑克预览 ≥5 个（四花色 + Logo）')
 
     // default 预览 2 个图标（右箭头、下箭头）
     const defaultItems = defaultPreview.querySelectorAll('.ccg-gear-icon-option-preview-item')
@@ -167,8 +171,8 @@ describe('齿轮图标 & 字段设置弹窗', () => {
   it('每个预览图标外包放大气泡（hover 显示，无尖尖）', () => {
     // 展开后：每个预览项都包在 .ccg-preview-tooltip 里，内含原预览项 + 放大气泡
     const tips = dom.window.document.querySelectorAll('.ccg-gear-icon-option-preview .ccg-preview-tooltip')
-    // poker 6 + default 2 = 8 个预览项
-    assert.strictEqual(tips.length, 8, '每个预览图标一个 tooltip 包裹')
+    // poker 7（四花色 + Logo + 翻牌 + 轮换）+ default 2 = 9 个预览项
+    assert.strictEqual(tips.length, 9, '每个预览图标一个 tooltip 包裹')
     for (const tip of tips) {
       const item = tip.querySelector('.ccg-gear-icon-option-preview-item')
       assert.ok(item, 'tooltip 内含原预览项')

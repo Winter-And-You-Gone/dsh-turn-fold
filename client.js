@@ -2647,11 +2647,15 @@ window.__ModuleLoader__.load({
 				value: "poker",
 				labelKey: "foldIconPoker",
 				descKey: "foldIconPokerDesc",
+				// 静态牌堆/扇形预览覆盖全部牌面池：四花色各占一个形态 + DeepSeek Logo
+				// 牌堆（suit="deepseek"，Logo 缩放已按卡牌几何收敛在描边内）；
+				// 另附两种运行态动画预览（翻牌 / 五牌面轮换）。
 				previews: [
-					react.createElement(PokerIcon, { key: "3c", count: 3, suit: "spade", open: false }),
-					react.createElement(PokerIcon, { key: "3o", count: 3, suit: "spade", open: true }),
-					react.createElement(PokerIcon, { key: "5c", count: 5, suit: "spade", open: false }),
-					react.createElement(PokerIcon, { key: "5o", count: 5, suit: "spade", open: true }),
+					react.createElement(PokerIcon, { key: "3c-s", count: 3, suit: "spade", open: false }),
+					react.createElement(PokerIcon, { key: "3o-h", count: 3, suit: "heart", open: true }),
+					react.createElement(PokerIcon, { key: "5c-d", count: 5, suit: "diamond", open: false }),
+					react.createElement(PokerIcon, { key: "5o-c", count: 5, suit: "club", open: true }),
+					react.createElement(PokerIcon, { key: "3c-ds", count: 3, suit: "deepseek", open: false }),
 					react.createElement(PokerSpinIcon, { key: "spin", open: true }),
 					react.createElement(PokerAnimIcon, { key: "anim", open: false })
 				]
