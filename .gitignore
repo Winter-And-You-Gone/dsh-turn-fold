@@ -22,3 +22,10 @@ Thumbs.db
 
 # Local session-data scratch (never commit conversations)
 .session-extract/
+
+# Local agent/memory files (workspace-only, never commit)
+AGENTS.md
+MEMORY.md
+.agents/
+.zcode/
+CLAUDE.md
