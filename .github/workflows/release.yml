@@ -26,12 +26,30 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm pack --dry-run
-      - run: npm publish
+      # 版本已在 npm 上（如维护者手动发布）时跳过对应 publish——重复推送同一
+      # tag、或手动发过主包/旧包名之一时，workflow 不再红叉。
+      # 检查走 npmjs（发布目标 registry）；setup-node 已写入 .npmrc。
+      - name: Check versions on npm
+        id: versions
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if npm view "@winteries/dsh-turn-fold@$version" version >/dev/null 2>&1; then
+            echo "已发布：@winteries/dsh-turn-fold@$version → 跳过主包 publish"
+            echo "main_published=true" >> "$GITHUB_OUTPUT"
+          fi
+          if npm view "dsh-turn-fold@$version" version >/dev/null 2>&1; then
+            echo "已发布：dsh-turn-fold@$version → 跳过旧包名 publish"
+            echo "legacy_published=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run npm publish
+        if: steps.versions.outputs.main_published != 'true'
+        run: npm publish
       # 包名更名后，已安装旧包的用户其更新仍走旧包名，因此同一份源码
       # 还要以 dsh-turn-fold 再发布一次（脚本就地替换 package.json /
       # cordis.patch.yml 的包名，紧接着 npm publish；旧包名与主包名都需
       # 在 npmjs.com 配置好指向本工作流的 Trusted Publishing）。
       - name: Publish legacy package name
+        if: steps.versions.outputs.legacy_published != 'true'
         run: |
           node scripts/publish-legacy.mjs
           npm publish
