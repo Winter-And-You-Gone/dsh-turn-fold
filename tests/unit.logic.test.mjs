@@ -201,7 +201,7 @@ describe('segmentLabel / summarizeArgs（步骤折叠栏标题）', () => {
 
   it('summarizeArgs：取 argsRaw 中最长字符串值（-m 正文 / 路径） · 截断到上限', () => {
     assert.equal(T.summarizeArgs(JSON.stringify({ args: ['commit', '-m', 'Commit 1: core +tests'] })), 'Commit 1: core +tests')
-    assert.equal(T.summarizeArgs(JSON.stringify({ path: 'X:\\DeepSeek Harness\\dsh-plugins\\dsh-turn-fold' })), 'X:\\DeepSeek Harness\\dsh-plugins\\dsh-turn-fold')
+    assert.equal(T.summarizeArgs(JSON.stringify({ path: 'C:\\Users\\Test\\long folder name\\plugin' })), 'C:\\Users\\Test\\long folder name\\plugin')
     assert.equal(T.summarizeArgs('not-json'), 'not-json')
     assert.equal(T.summarizeArgs(JSON.stringify({ a: 'x'.repeat(100) }), 20), 'x'.repeat(20) + '…')
     assert.equal(T.summarizeArgs(''), '')
