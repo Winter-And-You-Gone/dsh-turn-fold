@@ -236,9 +236,11 @@ describe('回合折叠方式设置行（shadow 官方 transcript-view）', () =>
 })
 
 // ── 兼容适配：同 slot 同 key/priority 已被其他插件占用时自动让位 ──
-// 背景：easyrewrite 等插件也用 priority -1 注册 conversation.chat.node 的 user key，
-// 若双方同 priority 同时注册，slots 系统抛 "already has an entry for key ... at priority"
-// 导致启动失败（Failed to load plugins）。本插件注册前探测，冲突时自动让位。
+// 背景：其它插件（如 easyrewrite）也可能用 priority -1 注册 conversation.chat.node
+// 或 settings.general.item 的同一 key/id，若双方同 priority 同时注册，slots 系统抛
+// "already has an entry for key ... at priority" 导致启动失败（Failed to load
+// plugins）。本插件注册前探测，冲突时自动让位。user 格已整体让位退出（0 秒占位
+// 迁往 conversation.input.dock），让位逻辑保护剩余三格与设置行。
 describe('注册冲突自动让位（兼容适配）', () => {
   function applyWith(slotsSvc) {
     const regs = []
@@ -250,41 +252,41 @@ describe('注册冲突自动让位（兼容适配）', () => {
     return regs
   }
 
-  it('无冲突：user key 保持 priority -1（shadow 内置 0）', () => {
+  it('无冲突：context key 保持 priority -1（shadow 内置 0）', () => {
     const { svc } = makeSlots([
-      { options: { key: 'user', priority: 0 } }, // 内置官方条目
+      { options: { key: 'context', priority: 0 } }, // 内置官方条目
     ])
     const regs = []
     svc.inject = (name, factory) => regs.push(factory())
     applyWith(svc)
-    const user = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
-    assert.ok(user, '注册 user 条目')
-    assert.equal(user.options.priority, -1, '无占用时仍用 -1')
+    const context = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'context')
+    assert.ok(context, '注册 context 条目')
+    assert.equal(context.options.priority, -1, '无占用时仍用 -1')
   })
 
-  it('user key 已被其他插件占 priority -1 → 让位到不冲突的 priority（1，跳过官方 0 保留位）', () => {
+  it('context key 已被其他插件占 priority -1 → 让位到不冲突的 priority（1，跳过官方 0 保留位）', () => {
     const { svc } = makeSlots([
-      { options: { key: 'user', priority: -1 } }, // 其他插件（如 easyrewrite）已占 -1
+      { options: { key: 'context', priority: -1 } }, // 其他插件已占 -1
     ])
     const regs = []
     svc.inject = (name, factory) => regs.push(factory())
     applyWith(svc)
-    const user = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
-    assert.ok(user, '注册 user 条目')
-    assert.notEqual(user.options.priority, -1, '不再与占用者同 priority')
-    assert.equal(user.options.priority, 1, '让位到 1（官方 0 保留，绝不落回官方档）')
+    const context = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'context')
+    assert.ok(context, '注册 context 条目')
+    assert.notEqual(context.options.priority, -1, '不再与占用者同 priority')
+    assert.equal(context.options.priority, 1, '让位到 1（官方 0 保留，绝不落回官方档）')
   })
 
-  it('user key 占 -1 且 0 也被占 → 让位到 1', () => {
+  it('context key 占 -1 且 0 也被占 → 让位到 1', () => {
     const { svc } = makeSlots([
-      { options: { key: 'user', priority: -1 } }, // 其他插件占 -1
-      { options: { key: 'user', priority: 0 } },  // 内置占 0
+      { options: { key: 'context', priority: -1 } }, // 其他插件占 -1
+      { options: { key: 'context', priority: 0 } },  // 内置占 0
     ])
     const regs = []
     svc.inject = (name, factory) => regs.push(factory())
     applyWith(svc)
-    const user = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
-    assert.equal(user.options.priority, 1, '-1 和 0 都被占时让位到 1')
+    const context = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'context')
+    assert.equal(context.options.priority, 1, '-1 和 0 都被占时让位到 1')
   })
 
   it('settings.general.item 的 transcript-view 行被占 priority -1 → 同样让位', () => {
@@ -299,14 +301,16 @@ describe('注册冲突自动让位（兼容适配）', () => {
     assert.equal(row.options.priority, 1, 'transcript-view 行让位到 1（官方 0 保留）')
   })
 
-  it('其余 key（tool-call/assistant-step/context）未被占时不受影响', () => {
+  it('一个 key 被占只影响自己，其余 key 不受影响', () => {
     const { svc } = makeSlots([
-      { options: { key: 'user', priority: -1 } }, // 只有 user 被其他插件占
+      { options: { key: 'tool-call', priority: -1 } }, // 只有 tool-call 被其他插件占
     ])
     const regs = []
     svc.inject = (name, factory) => regs.push(factory())
     applyWith(svc)
-    for (const key of ['tool-call', 'assistant-step', 'context']) {
+    const toolCall = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'tool-call')
+    assert.equal(toolCall.options.priority, 1, 'tool-call 被占，让位到 1')
+    for (const key of ['assistant-step', 'context']) {
       const entry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === key)
       assert.ok(entry, `注册 ${key} 条目`)
       assert.equal(entry.options.priority, -1, `${key} 未被占，保持 -1`)

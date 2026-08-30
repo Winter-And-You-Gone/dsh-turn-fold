@@ -983,12 +983,13 @@ window.__ModuleLoader__.load({
 				   用 > 直接子选择器则什么都匹配不上。fold-clip 天然锚定最近的 group-root；
 				   :not([data-ccg-turn]) 排除回合栏（其折叠栏-内容间距由分隔线 4px/8px 承担）。 */
 				".ccg-group-root[data-ccg-open]:not([data-ccg-turn]) > .ccg-fold-clip{margin-top:16px}",
-				/* 0 秒占位栏与正式回合栏的位置接续：占位栏渲染在 user 消息的 flowItem 内
-				   （正下方、无间距），正式回合栏在下一个 flowItem 顶部（官方 column 有
-				   16px flow gap）——不补这 16px，第一条中间节点到达、占位交接给正式栏的
-				   瞬间整栏会向下跳一下。补齐后交接前后栏位置逐像素一致（只剩文案/图标
-				   内容切换，无位移）。 */
-				".ccg-group-root[data-ccg-placeholder]{margin-top:16px}",
+				/* 0 秒占位条（输入区 dock）：占位栏渲染在输入区 dock 条内，与 composer 卡片
+				   留 8px 间距；出现时 180ms 淡入（覆盖"刷新页面恰好落在回合空窗"的瞬间，
+				   避免占位条硬切闪现），respect prefers-reduced-motion。 */
+				".ccg-dock-run{margin:0 0 8px}",
+				".ccg-dock-run .ccg-group-root{animation:ccg-dock-run-in .18s ease-out}",
+				"@keyframes ccg-dock-run-in{from{opacity:0}to{opacity:1}}",
+				"@media (prefers-reduced-motion:reduce){.ccg-dock-run .ccg-group-root{animation:none}}",
 				/* 分隔线颜色：--dsw-alias-line-secondary 在 DSH 0.1.1/0.1.2 均无定义（官方自身
 				   也有悬空引用），两版的线 token 是 --dsw-alias-border-l1，var() 链式兜底后
 				   仍回退字面量（老版本/未知主题） */
@@ -4194,42 +4195,42 @@ window.__ModuleLoader__.load({
 			return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinContext(props)) : hiddenMarker();
 		}
 
-		// 内置 UserMessageNodeView 无 renderSlot，原样转发即可。
-		function renderBuiltinUser(props) {
-			var Builtin = builtinComponent("user");
-			if (!Builtin) return null;
-			return react.createElement(Builtin, Object.assign({}, props, { t: wrapLocaleT(props.t) }));
-		}
-
-		// ---- 回合折叠栏 0 秒占位 ----
+		// ---- 回合折叠栏 0 秒占位（输入区 dock 条目） ----
 		// 用户发送消息后、agent 输出第一条中间节点前，会话处于"运行中且最后一条消息是
 		// user"：此时没有任何节点承载回合折叠栏（官方回合折叠栏由回合第一条中间节点渲染），
-		// 模型响应前的等待期回合折叠栏迟迟不出现。这里在 user 消息下方渲染回合折叠栏占位
-		// （耗时从回合开始计时，0 秒即出现）；第一条中间节点到达后条件失效，占位消失，
-		// 回合折叠栏转交中间节点正式渲染（位置连续：都在 user 消息下方）。
-		function GroupedUserView(props) {
-			var node = props.node;
+		// 模型响应前的等待期回合折叠栏迟迟不出现。占位回合折叠栏渲染在输入区上方的
+		// conversation.input.dock（list slot，按 id 共存——与官方 todo/queue dock 不存在
+		// priority 冲突面），耗时从回合开始计时、0 秒即出现；第一条中间节点到达后条件
+		// 失效、占位消失，回合折叠栏转交中间节点正式渲染。
+		// 历史注记（2026-08-30）：占位条原挂在 shadow user 格的 GroupedUserView 内、
+		// 渲染在 user 消息正下方。为与其它占用 user 格的插件（dsh-easyrewrite 撤回/
+		// 重编辑气泡）共存，占位条迁出 user 格——本插件不再注册 conversation.chat.node
+		// 的 user key，user 消息交由官方或专用插件渲染。
+		function RunningTurnDock(props) {
 			var useSession = props.useSession;
-			var sessionId = props.sessionId;
-			// 快照订阅与缓存清理必须无条件调用（见 GroupedToolCallView 的 hooks 顺序说明）。
-			// running 在两个版本都在 Session/Conversation 快照顶层（0.1.2 未被拆分移走），
-			// 继续从 useSession 读；order/turnTimings 走双版本适配层。
-			trackSession(sessionId);
+			// 快照订阅必须无条件调用（hooks 顺序，见 GroupedToolCallView 说明）。session 域
+			// slot 条目的标准 props 组含 useSession/useChat（官方 QueueDock 同源用法）：
+			// 0.1.2 经 props.useChat 读拆分后的 ChatSnapshot，旧版从 SessionSnapshot 顶层读。
 			var chatSnap = useChatSnapshotData(props);
-			var order = chatSnap.order;
 			var running = useSession ? useSession(function (s) { return s.running === true; }) : false;
-			var turnTimings = chatSnap.turnTimings;
 			// 订阅折叠模式（与快照订阅同为无条件调用，保持 hooks 顺序）
 			useFoldMode();
-			// 占位条件：接管折叠 + 会话运行中 + 该 user 是最后一条消息（其后尚无任何中间节点）。
-			// 在 hooks 之前计算（只依赖订阅值），直播秒表只在占位真正显示时启动。
-			var isPending = foldActive() && running && Array.isArray(order) && order.length > 0 && order[order.length - 1] === node.key;
+			var order = chatSnap.order;
+			var nodes = chatSnap.nodes;
+			var turnTimings = chatSnap.turnTimings;
+			// 占位条件：接管折叠 + 会话运行中 + 最后一条消息是 user（其后尚无任何中间节点；
+			// steering 消息不算——与旧 user 格占位行为一致）。在 useLiveNow 之前计算（只依赖
+			// 订阅值），直播秒表只在占位真正显示时启动。
+			var lastNode = null;
+			if (Array.isArray(order) && order.length > 0 && nodes && typeof nodes.get === "function") {
+				lastNode = nodes.get(order[order.length - 1]) || null;
+			}
+			var isPending = foldActive() && running && !!lastNode && lastNode.kind === "user";
 			var liveNow = useLiveNow(isPending);
 			// 订阅字段显隐设置与折叠图标样式（无条件调用——hooks 顺序）
 			useFieldVisibility();
 			useFoldIconStyle();
-			if (!foldActive()) return renderBuiltinUser(props);
-			if (!isPending) return renderBuiltinUser(props);
+			if (!isPending) return null;
 			// 回合开始时间 / 回合号：turnTimings 中运行中（有 startTime、无 endTime）的回合
 			var startTime = null;
 			var runningTurn = null;
@@ -4249,13 +4250,11 @@ window.__ModuleLoader__.load({
 				: undefined;
 			return react.createElement(
 				"div",
-				{ style: { display: "contents" } },
-				renderBuiltinUser(props),
+				{ className: "ccg-dock-run" },
 				react.createElement(
 					"div",
-					{ className: "ccg-group-root", "data-ccg-count": "0", "data-ccg-open": "true", "data-ccg-turn": "true", "data-ccg-placeholder": "true" },
-					react.createElement(GroupHeader, { label: label, count: 0, open: true, onToggle: function () {}, isTurn: true, live: true, right: turnRoundLabel(runningTurn), gearIcon: react.createElement(GearIcon, null), pokerIcon: placeholderPokerIcon }),
-					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" })
+					{ className: "ccg-group-root", "data-ccg-count": "0", "data-ccg-open": "true", "data-ccg-turn": "true" },
+					react.createElement(GroupHeader, { label: label, count: 0, open: true, onToggle: function () {}, isTurn: true, live: true, right: turnRoundLabel(runningTurn), gearIcon: react.createElement(GearIcon, null), pokerIcon: placeholderPokerIcon })
 				)
 			);
 		}
@@ -4547,15 +4546,24 @@ window.__ModuleLoader__.load({
 						inject: hostDescriptionInject
 					}, GroupedContextView);
 				});
-				scope.slots.inject("conversation.chat.node", function () {
-					return scope.slots.register({
-						name: "conversation.chat.node",
-						key: "user",
-						priority: resolveChatNodePriority(scope.slots, "user"),
-						locale: detectChatLocale(scope.slots, "user"),
-						inject: hostDescriptionInject
-					}, GroupedUserView);
-				});
+				// 0 秒占位条：输入区 dock（list slot，按 id 共存，不存在 priority 冲突面；
+				// 与官方 todo=0/queue=20 错开取 order 10）。旧版 DSH 未声明该 slot 时
+				// register 抛 "not declared"——inject/register 对未知 slot 的行为版本间
+				// 有差异，两层都兜住：失败仅跳过占位条（装饰性功能），绝不能拖垮插件加载。
+				try {
+					scope.slots.inject("conversation.input.dock", function () {
+						try {
+							return scope.slots.register({
+								name: "conversation.input.dock",
+								id: "turn-fold-running",
+								order: 10
+							}, RunningTurnDock);
+						} catch (e) {
+							try { if (typeof console !== "undefined" && console.warn) console.warn("[dsh-turn-fold] conversation.input.dock 注册失败（当前 DSH 版本未声明该 slot？），0 秒占位条已跳过"); } catch (e2) { /* 忽略 */ }
+							return undefined;
+						}
+					});
+				} catch (e) { /* 同上：宿主不接受该 slot 的 inject，静默跳过 */ }
 			});
 		};
 

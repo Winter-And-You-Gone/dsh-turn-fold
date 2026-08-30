@@ -40,9 +40,11 @@ describe('CSS 折叠隐藏规则', () => {
     assert.doesNotMatch(css, /\.ccg-group-root\[data-ccg-open\][^{]*\.ccg-header\{margin/,
       '不得再用 header 承载展开间距（后代选择器跨层泄漏 / > 选择器匹配不上 DisclosureRow 内部 DOM）')
     // 防跳动：fold-clip 的 margin-top 参与过渡（收起时 16px 间距随高度一起动画，
-    // 不在收起开始瞬间瞬跳）；占位栏补 16px 顶部间距（交接给正式栏不位移）
+    // 不在收起开始瞬间瞬跳）；0 秒占位条已迁往输入区 dock（.ccg-dock-run）
     assert.match(css, /transition:grid-template-rows \.28s[^}]*margin-top \.28s/, 'fold-clip 过渡应包含 margin-top')
-    assert.match(css, /\.ccg-group-root\[data-ccg-placeholder\]\{margin-top:16px\}/, '占位栏应补 16px 顶部间距')
+    assert.match(css, /\.ccg-dock-run\{margin:0 0 8px\}/, 'dock 占位条应与 composer 卡片留 8px 间距')
+    assert.match(css, /@keyframes ccg-dock-run-in\{from\{opacity:0\}to\{opacity:1\}\}/, 'dock 占位条出现时淡入')
+    assert.doesNotMatch(css, /data-ccg-placeholder/, '旧 user 格占位栏的 16px 间距锚点规则应已移除')
   })
 
   it('展开间距不跨层泄漏：回合嵌套段自己的 fold-clip 命中 16px，回合的不命中', () => {

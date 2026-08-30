@@ -284,8 +284,12 @@ describe('connection 双版本兼容（DSH 0.1.2+ generation / 旧版 hostDescri
         cb({ slots: svc, connection: { hostDescription: { getSnapshot: () => ({ home: 'C:/Users/Test' }), subscribe: () => () => {} } } })
       },
     })
-    assert.equal(regs.length, 4, '旧版也应注册 4 个条目')
-    for (const entry of regs) {
+    assert.equal(regs.length, 4, '旧版也应注册 4 个条目（3 个 chat.node + 1 个 dock 占位条）')
+    // dock 占位条（conversation.input.dock）不消费 connection hook，只有 chat.node
+    // 三格声明 inject；双版本 hook 透传回归只针对这三个条目。
+    const chatNodeEntries = regs.filter((e) => e.options.name === 'conversation.chat.node')
+    assert.equal(chatNodeEntries.length, 3, 'chat.node 三格（tool-call + assistant-step + context）')
+    for (const entry of chatNodeEntries) {
       const hooks = entry.options.inject().hooks
       assert.ok(hooks.hostDescription, `条目 ${entry.options.key} 应声明 hostDescription（旧版）`)
       assert.equal(hooks.connectionGeneration, undefined, '旧版不注入 connectionGeneration')
@@ -306,8 +310,12 @@ describe('connection 双版本兼容（DSH 0.1.2+ generation / 旧版 hostDescri
         cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
       },
     })
-    assert.equal(regs.length, 4, '新版也应注册 4 个条目')
-    for (const entry of regs) {
+    assert.equal(regs.length, 4, '新版也应注册 4 个条目（3 个 chat.node + 1 个 dock 占位条）')
+    // dock 占位条（conversation.input.dock）不消费 connection hook，只有 chat.node
+    // 三格声明 inject；双版本 hook 透传回归只针对这三个条目。
+    const chatNodeEntries = regs.filter((e) => e.options.name === 'conversation.chat.node')
+    assert.equal(chatNodeEntries.length, 3, 'chat.node 三格（tool-call + assistant-step + context）')
+    for (const entry of chatNodeEntries) {
       const hooks = entry.options.inject().hooks
       assert.ok(hooks.connectionGeneration, `条目 ${entry.options.key} 应声明 connectionGeneration（新版）`)
       assert.equal(hooks.hostDescription, undefined, '新版不注入 hostDescription')

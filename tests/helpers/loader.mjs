@@ -28,7 +28,7 @@ const TEST_EXPORTS = [
   'GroupedToolCallView',
   'GroupedAssistantView',
   'GroupedContextView',
-  'GroupedUserView',
+  'RunningTurnDock',
   'GroupHeader',
   'GearIcon',
   'FieldVisibilityPopup',

@@ -298,7 +298,6 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
       entries: () => [
         { component: function OfficialTool() {}, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
         { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
-        { component: function OfficialContext() {}, options: { key: 'context', priority: 0, locale: 'chat' } },
       ],
       entriesOfSlot: () => [],
       inject: (name, factory) => { regs.push(factory()) },
@@ -311,8 +310,8 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
     }
     assert.equal(ours['tool-call'], 'conversation', '工具卡标题词（tool.title.read=读取）在 conversation 词典')
     assert.equal(ours['assistant-step'], 'chat', 'message.think=思考 在 chat 词典')
-    assert.equal(ours['context'], 'chat')
-    assert.equal(ours['user'], 'conversation', '无同 key 官方条目且无 ctx.locale 探针 → 回退 conversation')
+    assert.equal(ours['context'], 'conversation', '无同 key 官方条目且无 ctx.locale 探针 → 回退 conversation')
+    assert.equal(ours['user'], undefined, 'user 格已让位退出，不再注册')
   })
 
   it('无官方条目且无 chat 词典时全部回退 conversation（0.1.1 行为不变）', () => {
@@ -325,7 +324,7 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
     }
     pluginExports.apply({ inject(deps, cb) { cb({ slots: emptySlots, connection: {} }) } })
     const oursFallback = regsFallback.filter((r) => r.options.priority === -1 && r.options.name === 'conversation.chat.node')
-    assert.ok(oursFallback.length >= 4)
+    assert.ok(oursFallback.length >= 3)
     for (const r of oursFallback) assert.equal(r.options.locale, 'conversation', '回退 conversation（0.1.1 行为不变）')
   })
 })
