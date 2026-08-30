@@ -317,3 +317,64 @@ describe('注册冲突自动让位（兼容适配）', () => {
     }
   })
 })
+
+// ── 注册异常软降级（防启动崩溃 + 用户可见提示）──
+// 背景：slots.inject 的回调若让异常外泄，延迟执行路径（目标 slot 声明晚于插件加载，
+// 回调在官方声明者的 register 栈里跑 / 声明订阅里 queueMicrotask re-throw）会打断
+// 官方 UI 激活 → web 整页无法启动（easyrewrite 事故的装机失败形态）。本插件所有
+// register 都必须 catch 在回调内：单条目降级 + console.warn + 一次性 Toast，绝不外泄。
+describe('注册异常软降级（异常不外泄，防启动崩溃）', () => {
+  function makeThrowingSlots({ throwKeys = [], throwInjectNames = [], throwRegisterNames = [] } = {}) {
+    const regs = []
+    const svc = {
+      regs,
+      entries() { return [] },
+      entriesOfSlot() { return [] },
+      inject(name, factory) {
+        if (throwInjectNames.includes(name)) {
+          throw new Error(`slots.inject("${name}") 同步失败（模拟宿主拒绝）`)
+        }
+        const entry = factory()
+        if (entry) regs.push(entry)
+        return entry
+      },
+      register(options, component) {
+        if (throwKeys.includes(options.key) || throwRegisterNames.includes(options.name)) {
+          throw new Error(`keyed slot "${options.name}" already has an entry (模拟同位冲突抛错)`)
+        }
+        return { component, options }
+      },
+    }
+    return { svc, regs }
+  }
+
+  function applyWith(slotsSvc) {
+    pluginExports.apply({
+      slots: slotsSvc,
+      settingsScope: { bind() { return makeScope() } },
+      inject(deps, cb) { cb({ slots: slotsSvc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } }) },
+    })
+  }
+
+  it('chat.node 同位冲突 register 抛错 → 异常不外泄，其余条目照常 + 弹一次冲突 Toast', () => {
+    const { svc, regs } = makeThrowingSlots({ throwKeys: ['assistant-step'] })
+    assert.doesNotThrow(() => applyWith(svc), 'register 抛错必须被回调内的 catch 吞掉（外泄会带崩 web 启动）')
+    assert.ok(regs.some((r) => r.options.key === 'tool-call'), 'tool-call 照常注册')
+    assert.ok(regs.some((r) => r.options.key === 'context'), 'context 照常注册')
+    assert.ok(regs.some((r) => r.options.id === 'transcript-view'), '设置行照常注册')
+    assert.ok(regs.some((r) => r.options.id === 'turn-fold-running'), 'dock 占位条照常注册')
+    assert.ok(!regs.some((r) => r.options.key === 'assistant-step'), '肇事条目已跳过（单条目降级）')
+    const toast = T.getToast()
+    assert.ok(toast && typeof toast.text === 'string' && toast.text.includes('渲染位冲突'), '用户可见的冲突提示 Toast 已入队')
+  })
+
+  it('dock inject 同步抛 + 设置行 register 抛错 → 均不外泄，chat.node 三格照常', () => {
+    const { svc, regs } = makeThrowingSlots({ throwInjectNames: ['conversation.input.dock'], throwRegisterNames: ['settings.general.item'] })
+    assert.doesNotThrow(() => applyWith(svc))
+    for (const key of ['tool-call', 'assistant-step', 'context']) {
+      assert.ok(regs.some((r) => r.options.key === key), `${key} 照常注册`)
+    }
+    assert.ok(!regs.some((r) => r.options.id === 'transcript-view'), '设置行条目已降级跳过')
+    assert.ok(!regs.some((r) => r.options.id === 'turn-fold-running'), 'dock 条目已降级跳过')
+  })
+})

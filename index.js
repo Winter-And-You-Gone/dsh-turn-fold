@@ -63,9 +63,15 @@ const provider = {
 export function apply(ctx) {
   // 用 ctx.inject 延迟注册：`skills` 服务就绪后回调执行。旧版 DSH（无 skills
   // 服务）不阻塞、不报错——折叠功能仍在前端正常工作，仅自定义图标 skill 不可用。
+  // 注意：回调是延迟执行的，外层 try/catch 包不住它——回调体内必须再包一层，
+  // 否则注册冲突（如同名 skill provider）会在服务就绪回调栈里抛出。
   try {
     ctx.inject(['skills'], (scope) => {
-      scope.skills.registerProvider(() => provider)
+      try {
+        scope.skills.registerProvider(() => provider)
+      } catch (error) {
+        console.warn('[dsh-turn-fold] skill provider registration skipped:', error)
+      }
     })
   } catch (error) {
     console.warn('[dsh-turn-fold] skill provider registration skipped:', error)

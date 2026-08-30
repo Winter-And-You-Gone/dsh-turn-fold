@@ -132,6 +132,8 @@ window.__ModuleLoader__.load({
 				fieldSettingsDone: "完成",
 				// 文件链接复制 Toast
 				fileCopiedToast: "已复制绝对路径",
+				// 注册冲突降级 Toast（一次性，页面加载内只提示一次）
+				slotConflictToast: "检测到与其他插件的渲染位冲突，本插件部分功能已停用（详见控制台）",
 				// 折叠图标样式选择
 				foldIconLabel: "折叠图标",
 				foldIconDefault: "默认",
@@ -195,6 +197,8 @@ window.__ModuleLoader__.load({
 				fieldSettingsDone: "Done",
 				// File link copy toast
 				fileCopiedToast: "Absolute path copied",
+				// Slot-conflict degradation toast (one-shot per page load)
+				slotConflictToast: "A renderer-slot conflict with another plugin was detected; parts of this plugin are disabled (see console)",
 				// Fold icon style selector
 				foldIconLabel: "Fold icon",
 				foldIconDefault: "Default",
@@ -2573,6 +2577,28 @@ window.__ModuleLoader__.load({
 				onDone: function () { clearToast(); }
 			});
 		}
+		// ---- 注册冲突降级（防启动崩溃 + 用户可见提示） ----
+		// slots.inject 的回调若让异常外泄，延迟执行路径（目标 slot 声明晚于插件加载时，
+		// 回调在官方声明者的 register 栈里跑 / 声明订阅里 queueMicrotask re-throw）会
+		// 打断官方 UI 激活 → web 整页无法启动。所有 register 调用必须 catch 在回调内：
+		// 单个条目降级（跳过），绝不外泄。降级时 console.warn 留排查线索，并弹一次
+		// Toast 告知用户（齿轮根在 apply 时已常驻挂载，宿主尚未挂载时 Toast 快照会在
+		// 挂载后显示）。本函数只在 catch 块里调用，自身任何异常都必须吞掉。
+		var slotConflictToasted = false;
+		function noteSlotDegradation(slot, cell, err) {
+			try {
+				var detail = err && typeof err.message === "string" ? err.message : String(err);
+				try {
+					if (typeof console !== "undefined" && console.warn) {
+						console.warn("[dsh-turn-fold] 渲染位注册失败（" + slot + " → " + cell + "）：" + detail + " —— 该条目已跳过，插件其余功能不受影响，DSH 启动不受影响");
+					}
+				} catch (e) { /* 忽略 */ }
+				if (!slotConflictToasted) {
+					slotConflictToasted = true;
+					showToast(_T("slotConflictToast"));
+				}
+			} catch (e) { /* 通知路径绝不外泄 */ }
+		}
 		/** 步骤折叠栏标题中的文件链接：点击复制绝对路径，悬停变 DeepSeek 主题蓝色。 */
 		function FileLink(props) {
 			var fullPath = props.path;
@@ -4409,14 +4435,20 @@ window.__ModuleLoader__.load({
 						}
 					};
 					slotsService2.inject("settings.general.item", function () {
-						return slotsService2.register({
-							name: "settings.general.item",
-							id: "transcript-view",
-							order: 12,
-							locale: "conversation",
-							priority: resolveSettingsRowPriority(slotsService2),
-							inject: settingsRowInject
-						}, SettingsTranscriptViewRow);
+						try {
+							return slotsService2.register({
+								name: "settings.general.item",
+								id: "transcript-view",
+								order: 12,
+								locale: "conversation",
+								priority: resolveSettingsRowPriority(slotsService2),
+								inject: settingsRowInject
+							}, SettingsTranscriptViewRow);
+						} catch (err) {
+							// 同 chat.node：异常不外泄（延迟路径下外泄会带崩 web 启动）
+							noteSlotDegradation("settings.general.item", "transcript-view", err);
+							return undefined;
+						}
 					});
 				}
 			} catch (e) { /* settingsScope 或 slots 不可用：跳过设置行注册 */ }
@@ -4520,31 +4552,47 @@ window.__ModuleLoader__.load({
 					}
 				};
 				scope.slots.inject("conversation.chat.node", function () {
-					return scope.slots.register({
-						name: "conversation.chat.node",
-						key: "tool-call",
-						priority: resolveChatNodePriority(scope.slots, "tool-call"),
-						locale: detectChatLocale(scope.slots, "tool-call"),
-						inject: hostDescriptionInject
-					}, GroupedToolCallView);
+					try {
+						return scope.slots.register({
+							name: "conversation.chat.node",
+							key: "tool-call",
+							priority: resolveChatNodePriority(scope.slots, "tool-call"),
+							locale: detectChatLocale(scope.slots, "tool-call"),
+							inject: hostDescriptionInject
+						}, GroupedToolCallView);
+					} catch (err) {
+						// 异常绝不外泄：延迟路径下回调在官方声明者栈里跑，外泄会带崩 web 启动
+						noteSlotDegradation("conversation.chat.node", "tool-call", err);
+						return undefined;
+					}
 				});
 				scope.slots.inject("conversation.chat.node", function () {
-					return scope.slots.register({
-						name: "conversation.chat.node",
-						key: "assistant-step",
-						priority: resolveChatNodePriority(scope.slots, "assistant-step"),
-						locale: detectChatLocale(scope.slots, "assistant-step"),
-						inject: hostDescriptionInject
-					}, GroupedAssistantView);
+					try {
+						return scope.slots.register({
+							name: "conversation.chat.node",
+							key: "assistant-step",
+							priority: resolveChatNodePriority(scope.slots, "assistant-step"),
+							locale: detectChatLocale(scope.slots, "assistant-step"),
+							inject: hostDescriptionInject
+						}, GroupedAssistantView);
+					} catch (err) {
+						noteSlotDegradation("conversation.chat.node", "assistant-step", err);
+						return undefined;
+					}
 				});
 				scope.slots.inject("conversation.chat.node", function () {
-					return scope.slots.register({
-						name: "conversation.chat.node",
-						key: "context",
-						priority: resolveChatNodePriority(scope.slots, "context"),
-						locale: detectChatLocale(scope.slots, "context"),
-						inject: hostDescriptionInject
-					}, GroupedContextView);
+					try {
+						return scope.slots.register({
+							name: "conversation.chat.node",
+							key: "context",
+							priority: resolveChatNodePriority(scope.slots, "context"),
+							locale: detectChatLocale(scope.slots, "context"),
+							inject: hostDescriptionInject
+						}, GroupedContextView);
+					} catch (err) {
+						noteSlotDegradation("conversation.chat.node", "context", err);
+						return undefined;
+					}
 				});
 				// 0 秒占位条：输入区 dock（list slot，按 id 共存，不存在 priority 冲突面；
 				// 与官方 todo=0/queue=20 错开取 order 10）。旧版 DSH 未声明该 slot 时
@@ -4559,11 +4607,14 @@ window.__ModuleLoader__.load({
 								order: 10
 							}, RunningTurnDock);
 						} catch (e) {
-							try { if (typeof console !== "undefined" && console.warn) console.warn("[dsh-turn-fold] conversation.input.dock 注册失败（当前 DSH 版本未声明该 slot？），0 秒占位条已跳过"); } catch (e2) { /* 忽略 */ }
+							noteSlotDegradation("conversation.input.dock", "turn-fold-running", e);
 							return undefined;
 						}
 					});
-				} catch (e) { /* 同上：宿主不接受该 slot 的 inject，静默跳过 */ }
+				} catch (e) {
+					// inject 本身同步抛（声明等待 setup 失败等）：同样降级 + 提示，不外泄
+					noteSlotDegradation("conversation.input.dock", "turn-fold-running", e);
+				}
 			});
 		};
 
