@@ -46,12 +46,12 @@ const menuLoaded = loadPlugin({ window: dom.window, uiPrimitives: makeMenuMock()
 const TM = menuLoaded.test
 
 // 生成一个可复用的 slots mock（记录注册条目）
-function makeSlots() {
+function makeSlots(extraEntries = []) {
   const regs = []
   return {
     regs,
     svc: {
-      entries() { return [] },
+      entries() { return [...extraEntries] },
       entriesOfSlot() { return [] },
       inject(name, factory) { regs.push(factory()) },
       register(options, component) { return { component, options } },
@@ -232,5 +232,84 @@ describe('回合折叠方式设置行（shadow 官方 transcript-view）', () =>
     act(() => { root.unmount() })
     assert.equal(TM.getSettingsTip(), null, '行卸载后 tooltip 被兜底清除')
     dom.window.document.body.removeChild(container)
+  })
+})
+
+// ── 兼容适配：同 slot 同 key/priority 已被其他插件占用时自动让位 ──
+// 背景：easyrewrite 等插件也用 priority -1 注册 conversation.chat.node 的 user key，
+// 若双方同 priority 同时注册，slots 系统抛 "already has an entry for key ... at priority"
+// 导致启动失败（Failed to load plugins）。本插件注册前探测，冲突时自动让位。
+describe('注册冲突自动让位（兼容适配）', () => {
+  function applyWith(slotsSvc) {
+    const regs = []
+    pluginExports.apply({
+      slots: slotsSvc,
+      settingsScope: { bind() { return makeScope() } },
+      inject(deps, cb) { cb({ slots: slotsSvc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } }) },
+    })
+    return regs
+  }
+
+  it('无冲突：user key 保持 priority -1（shadow 内置 0）', () => {
+    const { svc } = makeSlots([
+      { options: { key: 'user', priority: 0 } }, // 内置官方条目
+    ])
+    const regs = []
+    svc.inject = (name, factory) => regs.push(factory())
+    applyWith(svc)
+    const user = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
+    assert.ok(user, '注册 user 条目')
+    assert.equal(user.options.priority, -1, '无占用时仍用 -1')
+  })
+
+  it('user key 已被其他插件占 priority -1 → 让位到不冲突的 priority（1，跳过官方 0 保留位）', () => {
+    const { svc } = makeSlots([
+      { options: { key: 'user', priority: -1 } }, // 其他插件（如 easyrewrite）已占 -1
+    ])
+    const regs = []
+    svc.inject = (name, factory) => regs.push(factory())
+    applyWith(svc)
+    const user = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
+    assert.ok(user, '注册 user 条目')
+    assert.notEqual(user.options.priority, -1, '不再与占用者同 priority')
+    assert.equal(user.options.priority, 1, '让位到 1（官方 0 保留，绝不落回官方档）')
+  })
+
+  it('user key 占 -1 且 0 也被占 → 让位到 1', () => {
+    const { svc } = makeSlots([
+      { options: { key: 'user', priority: -1 } }, // 其他插件占 -1
+      { options: { key: 'user', priority: 0 } },  // 内置占 0
+    ])
+    const regs = []
+    svc.inject = (name, factory) => regs.push(factory())
+    applyWith(svc)
+    const user = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
+    assert.equal(user.options.priority, 1, '-1 和 0 都被占时让位到 1')
+  })
+
+  it('settings.general.item 的 transcript-view 行被占 priority -1 → 同样让位', () => {
+    const { svc } = makeSlots([
+      { options: { id: 'transcript-view', priority: -1 } }, // 其他插件占 -1
+    ])
+    const regs = []
+    svc.inject = (name, factory) => regs.push(factory())
+    applyWith(svc)
+    const row = regs.find((r) => r.options.name === 'settings.general.item' && r.options.id === 'transcript-view')
+    assert.ok(row, '注册设置行')
+    assert.equal(row.options.priority, 1, 'transcript-view 行让位到 1（官方 0 保留）')
+  })
+
+  it('其余 key（tool-call/assistant-step/context）未被占时不受影响', () => {
+    const { svc } = makeSlots([
+      { options: { key: 'user', priority: -1 } }, // 只有 user 被其他插件占
+    ])
+    const regs = []
+    svc.inject = (name, factory) => regs.push(factory())
+    applyWith(svc)
+    for (const key of ['tool-call', 'assistant-step', 'context']) {
+      const entry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === key)
+      assert.ok(entry, `注册 ${key} 条目`)
+      assert.equal(entry.options.priority, -1, `${key} 未被占，保持 -1`)
+    }
   })
 })

@@ -4390,13 +4390,32 @@ window.__ModuleLoader__.load({
 							setTranscriptView: function (mode) { transcriptScope.set("transcriptView", mode); }
 						};
 					};
+					// 兼容适配（同 chat.node 的 resolveChatNodePriority）：设置行也 shadow 官方
+					// transcript-view（priority 0），若 -1 已被其他插件占用则自动让位。
+					var resolveSettingsRowPriority = function (slots) {
+						try {
+							var entries = slots && typeof slots.entries === "function" ? slots.entries("settings.general.item") : null;
+							var taken = { 0: true }; // 官方渲染器默认 priority 0，预留该位避免撞官方
+							for (var i = 0; entries && i < entries.length; i++) {
+								var e = entries[i] && entries[i].options;
+								if (e && e.id === "transcript-view") taken[e.priority || 0] = true;
+							}
+							if (!taken[-1]) return -1;
+							var p = 1;
+							while (taken[p]) p += 1;
+							console.warn("[dsh-turn-fold] settings.general.item id \"transcript-view\" 的 priority -1 已被其他插件占用，自动让位到 priority " + p);
+							return p;
+						} catch (err) {
+							return -1;
+						}
+					};
 					slotsService2.inject("settings.general.item", function () {
 						return slotsService2.register({
 							name: "settings.general.item",
 							id: "transcript-view",
 							order: 12,
 							locale: "conversation",
-							priority: -1,
+							priority: resolveSettingsRowPriority(slotsService2),
 							inject: settingsRowInject
 						}, SettingsTranscriptViewRow);
 					});
@@ -4481,11 +4500,31 @@ window.__ModuleLoader__.load({
 					} catch (e) { /* 旧版无 chat 命名空间或 bind 抛错 */ }
 					return "conversation";
 				};
+				// 兼容适配：注册前探测该 key 的 priority -1 是否已被其他插件占用。
+				// 若已占用则自动让位到第一个不冲突的值（放弃该 key 的渲染权），
+				// 避免 "keyed slot ... already has an entry for key ... at priority ..." 启动失败。
+				var resolveChatNodePriority = function (slots, key) {
+					try {
+						var entries = slots && typeof slots.entries === "function" ? slots.entries("conversation.chat.node") : null;
+						var taken = { 0: true }; // 官方渲染器默认 priority 0，预留该位避免撞官方
+						for (var i = 0; entries && i < entries.length; i++) {
+							var e = entries[i] && entries[i].options;
+							if (e && e.key === key) taken[e.priority || 0] = true;
+						}
+						if (!taken[-1]) return -1;
+						var p = 1;
+						while (taken[p]) p += 1;
+						console.warn("[dsh-turn-fold] conversation.chat.node key \"" + key + "\" 的 priority -1 已被其他插件占用，自动让位到 priority " + p + "，该 key 的渲染权已让给对方");
+						return p;
+					} catch (err) {
+						return -1;
+					}
+				};
 				scope.slots.inject("conversation.chat.node", function () {
 					return scope.slots.register({
 						name: "conversation.chat.node",
 						key: "tool-call",
-						priority: -1,
+						priority: resolveChatNodePriority(scope.slots, "tool-call"),
 						locale: detectChatLocale(scope.slots, "tool-call"),
 						inject: hostDescriptionInject
 					}, GroupedToolCallView);
@@ -4494,7 +4533,7 @@ window.__ModuleLoader__.load({
 					return scope.slots.register({
 						name: "conversation.chat.node",
 						key: "assistant-step",
-						priority: -1,
+						priority: resolveChatNodePriority(scope.slots, "assistant-step"),
 						locale: detectChatLocale(scope.slots, "assistant-step"),
 						inject: hostDescriptionInject
 					}, GroupedAssistantView);
@@ -4503,7 +4542,7 @@ window.__ModuleLoader__.load({
 					return scope.slots.register({
 						name: "conversation.chat.node",
 						key: "context",
-						priority: -1,
+						priority: resolveChatNodePriority(scope.slots, "context"),
 						locale: detectChatLocale(scope.slots, "context"),
 						inject: hostDescriptionInject
 					}, GroupedContextView);
@@ -4512,7 +4551,7 @@ window.__ModuleLoader__.load({
 					return scope.slots.register({
 						name: "conversation.chat.node",
 						key: "user",
-						priority: -1,
+						priority: resolveChatNodePriority(scope.slots, "user"),
 						locale: detectChatLocale(scope.slots, "user"),
 						inject: hostDescriptionInject
 					}, GroupedUserView);
