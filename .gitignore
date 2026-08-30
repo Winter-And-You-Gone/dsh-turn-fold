@@ -29,3 +29,6 @@ MEMORY.md
 .agents/
 .zcode/
 CLAUDE.md
+
+# Local-only experiment file (icon animation lab, kept on disk, never committed)
+docs/icon-candidates.html
