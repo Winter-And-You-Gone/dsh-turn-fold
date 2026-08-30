@@ -75,8 +75,8 @@ text：……                                             ← 下一个 text 出
 ```
 
 - **发消息即出现回合折叠栏（0 秒占位）**：用户发送消息后立即出现回合折叠栏（耗时从 0 开始计时），
-  不等第一个 response——由 `user` 渲染器覆盖实现占位，第一条中间节点到达后占位消失、
-  正式回合折叠栏接替显示（位置连续）；
+  不等第一个 response——占位栏由输入区 dock 条目渲染在输入区上方，第一条中间节点到达后
+  占位消失、正式回合折叠栏接替显示；
 - **指标实时更新**：回合折叠栏中的**耗时秒数每秒走动**（从回合 `turn/start` 起计时），
   **"消耗token"按随机间隔（默认 125~250ms）刷新且持续增长**，tok/s 按已输出 token / 已耗时实时估算，
   **缓存命中率显示两位小数**（如 `80.00%`），**首字（TTFT）**在第一个请求完成
@@ -299,7 +299,14 @@ git push --follow-tags
 - DSH 会话 UI 是 Cordis 插件 + Slot 插槽系统拼出来的；聊天流每个块经
   `conversation.chat.node`（keyed slot）按类型分发渲染器。
 - Slot 注册器官方支持 **不同 priority 覆盖**（`register at a different priority to shadow it, lowest renders`）。
-  本插件用 `priority: -1` 覆盖内置的 `tool-call` / `assistant-step` / `context` **以及 `user`** 渲染器。
+  本插件用 `priority: -1` 覆盖内置的 `tool-call` / `assistant-step` / `context` 渲染器；
+  `user` 格**不再注册**——0 秒占位迁往输入区 dock 条目，`user` 格让给 user 消息专用
+  插件（如 dsh-easyrewrite 的撤回/重编辑气泡），从根上消除同 key 同 priority 抢位
+  导致对方加载失败的一类冲突。
+- **注册冲突自动让位**：注册前探测同 key/id 的 `priority: -1` 是否已被占用
+  （`ctx.slots.entries`），被占则自动让位到第一个不冲突的值（官方 `0` 恒预留，绝不
+  落回官方档）并打 `console.warn`——本插件后加载时不再与先占者冲突。
+  `conversation.chat.node` 三格与 `settings.general.item` 的 transcript-view 行都走该逻辑。
 - 展开时通过 `ctx.slots.entries('conversation.chat.node')` 取到内置组件引用做**委托渲染**，
   工具卡片/Think 行/上下文注入的内容与样式与内置完全一致。
 - 整回合折叠通过会话快照的 `turnEnds`（turn/end 事件驱动）判定回合完成，配合
@@ -314,8 +321,11 @@ git push --follow-tags
   `useChat` 快照本体，否则从 `useSession(s).chat` 取；`turnEnds`/`turnTimings` 优先读
   `chat.legacy`、顶层兼容字段兜底。所有 hooks 无条件调用（数据计算与订阅和"是否接管
   折叠"解耦），折叠模式切换（接管 ↔ 委托内置）不改变 hook 数量，条目不会崩。
-- **0 秒占位**：`user` 渲染器覆盖在「会话运行中且用户消息仍是最后一条」时渲染占位回合折叠栏
-  （耗时从运行中回合的 `startTime` 计时），第一条中间节点到达后自动交接给正式回合折叠栏。
+- **0 秒占位**：`RunningTurnDock` 条目注册到输入区 `conversation.input.dock`（list slot，
+  按 `id` 共存——与官方 todo/queue dock 不存在 priority 冲突面），在「会话运行中且
+  最后一条消息是 user」时渲染占位回合折叠栏（耗时从运行中回合的 `startTime` 计时），
+  第一条中间节点到达后自动交接给正式回合折叠栏。旧版 DSH 未声明该 slot 时注册
+  try/catch 跳过（占位条缺失不影响其余功能）。
 - **首字（TTFT）三来源（官方优先）**：① **step settle 后即实时读取官方值**——
   `assistant-step` 节点的 `data.finalNode.timing`（官方在 `assistant/message` 事件后写入
   `{ stepStartTime, firstTokenTime, completedTime }`），取回合内 step 号最小者（第一个
