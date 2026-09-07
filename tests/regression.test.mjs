@@ -322,3 +322,84 @@ describe('connection 双版本兼容（DSH 0.1.2+ generation / 旧版 hostDescri
     }
   })
 })
+
+describe('connection 三版本兼容（DSH 0.1.2-rc.1+ / 0.1.3：官方条目 inject 面探测合并）', () => {
+  // 0.1.2-rc.1 起官方 tool-call 条目的 inject 面换成 hooks.hostInfo（ToolCallTree 调
+  // useHostInfo(info => info.home)）。插件条目的 inject 完全替换官方面——不探测合并时
+  // 官方组件在插件条目栈里渲染即抛 "useHostInfo is not a function"，SlotErrorBoundary
+  // 把插件条目永久 abdicate：步骤折叠栏几乎全部消失、工具调用无法折叠（真机 0.1.3-alpha.1
+  // 症状会话实测复现）。
+  const officialHostInfo = { getSnapshot: () => ({ home: 'C:/Users/Test' }), subscribe: () => () => {} }
+
+  it('官方 tool-call 条目声明 hooks.hostInfo → 插件条目 inject 合并 hostInfo（不再 abdicate 崩溃）', () => {
+    const regs = []
+    const svc = {
+      entries() {
+        // 官方 0.1.3 真机形态：ui-tool 注册 tool-call 条目，inject 返回 { hooks: { hostInfo } }
+        return [
+          {
+            component: function OfficialToolCallTree() {},
+            options: { key: 'tool-call', priority: 0, locale: 'conversation' },
+            inject: () => ({ hooks: { hostInfo: officialHostInfo } }),
+          },
+          { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
+        ]
+      },
+      entriesOfSlot() { return [] },
+      inject(name, factory) { regs.push(factory()) },
+      register(options, component) { return { component, options } },
+    }
+    pluginExports.apply({
+      inject(deps, cb) {
+        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
+      },
+    })
+    const byKey = {}
+    for (const r of regs) {
+      if (r.options.name === 'conversation.chat.node') byKey[r.options.key] = r.options.inject().hooks
+    }
+    // 三格的 inject 面统一携带全部官方 hooks（跨类委托：think 段 leader 是
+    // assistant-step，但段内工具成员照样渲染官方 ToolCallTree、消费 tool-call
+    // 条目的 hostInfo——修复前正是这条跨类路径漏了 hostInfo 而崩溃）
+    assert.ok(byKey['tool-call'].hostInfo, 'tool-call 条目必须合并官方 hostInfo（0.1.3 崩溃根因）')
+    assert.ok(byKey['assistant-step'].hostInfo, 'assistant-step 条目同样合并 hostInfo（跨类委托渲染工具卡）')
+    assert.ok(byKey['context'].hostInfo, 'context 条目同样合并 hostInfo（跨类委托渲染工具卡）')
+    // 自备 hook 全部保留（其他版本组件可能消费）
+    assert.ok(byKey['tool-call'].connectionGeneration, '自备 connectionGeneration 保留')
+    assert.ok(byKey['assistant-step'].connectionGeneration, 'assistant-step 保留自备 connectionGeneration')
+    assert.ok(byKey['context'].connectionGeneration)
+  })
+
+  it('官方条目 inject 抛错 / priority 非 0 → 探测静默退回自备 hook，不外泄异常', () => {
+    const regsBad = []
+    const svcBad = {
+      entries() {
+        return [
+          {
+            component: function Bad() {},
+            options: { key: 'tool-call', priority: 0, locale: 'conversation' },
+            inject: () => { throw new Error('official inject boom') },
+          },
+          {
+            component: function ShadowedByOther() {},
+            options: { key: 'tool-call', priority: 7, locale: 'conversation' },
+            inject: () => ({ hooks: { hostInfo: officialHostInfo } }),
+          },
+        ]
+      },
+      entriesOfSlot() { return [] },
+      inject(name, factory) { regsBad.push(factory()) },
+      register(options, component) { return { component, options } },
+    }
+    pluginExports.apply({
+      inject(deps, cb) {
+        cb({ slots: svcBad, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
+      },
+    })
+    const toolEntry = regsBad.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'tool-call')
+    assert.ok(toolEntry)
+    const hooks = toolEntry.options.inject().hooks // 抛错条目 + priority 非 0 条目都被跳过，不外泄
+    assert.ok(hooks.connectionGeneration, '退回仅自备 connectionGeneration')
+    assert.equal(hooks.hostInfo, undefined, 'priority 7 的条目（非官方 priority 0）不参与合并')
+  })
+})

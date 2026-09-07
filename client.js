@@ -2150,8 +2150,11 @@ window.__ModuleLoader__.load({
 		// ---- 自行实现的 tool.call.toolview 分发（替代内置 renderSlot） ----
 		// 内置 ToolCallTree 调用 renderSlot("tool.call.toolview", owner, {entryKey, fallback})；
 		// 我们用 slotsService.entriesOfSlot() 找到该工具名的子视图组件，用"我们自己的
-		// 标准 kit + owner"渲染。子视图注册只有 locale（conversation），无 inject/store/children，
+		// 标准 kit + owner"渲染。子视图注册只有 locale（conversation），无 inject/store，
 		// 因此这套组合与内置渲染器给出的 props 等价。
+		// kit 的 hook 类 props（use* 函数）逐名整体透传：官方组件消费哪个由版本决定
+		//（0.1.2-rc.1+ 的 read_image 行消费 renderSlot/loadImage，标准行只用 useSessions），
+		// 不再枚举具体名字——官方未来增删 hook 名时这条链自动跟随。
 		function renderToolview(kit, owner, entryKey, fallback) {
 			var entries = slotsService ? slotsService.entriesOfSlot("tool.call.toolview") : null;
 			var entry = null;
@@ -2163,35 +2166,64 @@ window.__ModuleLoader__.load({
 			if (!entry) return fallback;
 			var Comp = entry.component;
 			var props = {};
-			if (kit.useSession) props.useSession = kit.useSession;
+			for (var hk in kit) {
+				if (Object.prototype.hasOwnProperty.call(kit, hk) && hk.indexOf("use") === 0 && typeof kit[hk] === "function") {
+					props[hk] = kit[hk];
+				}
+			}
 			if (kit.sessionId !== undefined) props.sessionId = kit.sessionId;
-			if (kit.useSessions) props.useSessions = kit.useSessions;
-			if (kit.useProjection) props.useProjection = kit.useProjection;
-			if (kit.useWorkspaces) props.useWorkspaces = kit.useWorkspaces;
 			if (kit.t) props.t = kit.t;
-			// 双版本兼容：DSH 0.1.2+ 用 useConnectionGeneration，旧版用 useHostDescription，
-			// 哪个存在就透传哪个（内置 ToolCallTree 只消费当前版本存在的那一个）。
-			if (kit.useHostDescription) props.useHostDescription = kit.useHostDescription;
-			if (kit.useConnectionGeneration) props.useConnectionGeneration = kit.useConnectionGeneration;
+			// 0.1.2-rc.1+：read_image 等条目声明 children（tool.call.images 单槽），
+			// 官方机制会给这类条目发 renderSlot；我们的手写分发同样补一个——
+			// 只处理 tool.call.images（图片画廊），其余 key 走 fallback。
+			props.renderSlot = function (key, imgOwner, imgOptions) {
+				if (key !== "tool.call.images") return imgOptions && imgOptions.fallback ? imgOptions.fallback : null;
+				return renderToolImages(kit, imgOwner);
+			};
 			for (var k in owner) if (Object.prototype.hasOwnProperty.call(owner, k)) props[k] = owner[k];
 			return react.createElement(Comp, props);
+		}
+
+		// tool.call.images（read_image 结果图片画廊）分发：单槽取第一个在位条目
+		//（ui-attachment 的 MessageImages，仅 locale 无 inject），标准 kit + owner 组装。
+		// 旧版 DSH 未声明该 slot（entriesOfSlot 返回空）→ 返回 null，read_image 行
+		// 退回文本卡片（官方 ToolRow 对 renderSlot 缺失的降级路径，不崩溃）。
+		function renderToolImages(kit, owner) {
+			try {
+				var entries = slotsService ? slotsService.entriesOfSlot("tool.call.images") : null;
+				var entry = entries && entries.length > 0 ? entries[0] : null;
+				if (!entry || !entry.component) return null;
+				var props = {};
+				for (var hk in kit) {
+					if (Object.prototype.hasOwnProperty.call(kit, hk) && hk.indexOf("use") === 0 && typeof kit[hk] === "function") {
+						props[hk] = kit[hk];
+					}
+				}
+				if (kit.sessionId !== undefined) props.sessionId = kit.sessionId;
+				if (kit.t) props.t = kit.t;
+				for (var k in owner) if (Object.prototype.hasOwnProperty.call(owner, k)) props[k] = owner[k];
+				return react.createElement(entry.component, props);
+			} catch (e) {
+				return null;
+			}
 		}
 
 		// 给内置 ToolCallTree 补齐 renderSlot（我们的 entry 无 children，拿不到原装 renderSlot）
 		function renderBuiltinToolCall(props) {
 			var Builtin = builtinComponent("tool-call");
 			if (!Builtin) return null;
-			// t 一律走 wrapLocaleT 包装：宿主 t 命名空间/词典错位时官方组件不再裸显 key
+			// kit = 全部 use* hook（0.1.3 的 useHostInfo、0.1.2 的 useConnectionGeneration、
+			// 0.1.1 的 useHostDescription——条目 inject 已按官方面合并，这里整体收集）+ 标准
+			// 非 hook 字段。不再枚举 hook 名：官方换名时随 inject 探测自动到位。
 			var kit = {
-				useSession: props.useSession,
 				sessionId: props.sessionId,
-				useSessions: props.useSessions,
-				useProjection: props.useProjection,
-				useWorkspaces: props.useWorkspaces,
-				t: wrapLocaleT(props.t),
-				useHostDescription: props.useHostDescription,
-				useConnectionGeneration: props.useConnectionGeneration
+				t: wrapLocaleT(props.t)
 			};
+			for (var hk in props) {
+				if (Object.prototype.hasOwnProperty.call(props, hk) && hk.indexOf("use") === 0 && typeof props[hk] === "function") {
+					kit[hk] = props[hk];
+				}
+			}
 			var customRenderSlot = function (key, owner, options) {
 				if (key !== "tool.call.toolview") return options && options.fallback ? options.fallback : null;
 				return renderToolview(kit, owner, options.entryKey, options.fallback);
@@ -4499,12 +4531,51 @@ window.__ModuleLoader__.load({
 				// 双版本兼容：DSH 0.1.2+ 用 connection.generation（Host facts，含 .host.home），
 				// 旧版用 connection.hostDescription（直接含 .home），哪个存在就注入哪个。
 				// 内置组件（ToolCallTree）通过 use<Name> prop 消费钩子，插件透传 props 时
-				// 同时带上两个 hook 名，内置组件只消费当前版本存在的那一个。
-				var hostDescriptionInject = function () {
-					if (connection && connection.generation) {
-						return { hooks: { connectionGeneration: connection.generation } };
-					}
-					return { hooks: { hostDescription: connection && connection.hostDescription } };
+				// 同时带上所有 hook 名，内置组件只消费当前版本存在的那一个。
+				//
+				// 0.1.2-rc.1 起官方 tool-call 条目的 inject 面从 connectionGeneration 换成了
+				// hostInfo（ToolCallTree 调 useHostInfo(info => info.home)）——插件条目的
+				// inject 完全替换官方面，缺 hostInfo 时官方组件在插件条目栈里渲染即抛
+				// TypeError，SlotErrorBoundary 把插件条目永久 abdicate，整个折叠功能静默失效。
+				// 因此不能只硬编码已知 hook 名：每次 inject 时**探测官方条目（priority 0）
+				// 的 inject 工厂**，把它返回的 hooks 逐名合并进来——官方未来再改 hook 名，
+				// shadow 条目自动跟随，不再产生"不升级就崩溃"的硬依赖。
+				// 合并面是整个 slot 的全部官方条目（不只同 key）：renderSegment/renderBuiltinToolCall
+				// 会跨类委托——think 段的 leader 是 assistant-step，但段内工具成员照样渲染官方
+				// ToolCallTree（消费 tool-call 条目的 hostInfo）；context 段同理。任一视图都可能
+				// 委托渲染任何官方组件，因此三格的 inject 面统一携带全部官方 hooks。
+				// 单条官方条目探测抛错只跳过该条（其余照常合并）；全部缺失/抛错时退回仅自备
+				// hook（各旧版行为不变）。
+				var chatNodeEntryInject = function () {
+					return function (sessionId) {
+						var hooks = {};
+						if (connection && connection.generation) {
+							hooks.connectionGeneration = connection.generation;
+						} else if (connection && connection.hostDescription) {
+							hooks.hostDescription = connection.hostDescription;
+						}
+						try {
+							var entries = slotsService && typeof slotsService.entries === "function"
+								? slotsService.entries("conversation.chat.node") : null;
+							for (var i = 0; entries && i < entries.length; i++) {
+								var e = entries[i];
+								if (!e || !e.options || (e.options.priority || 0) !== 0) continue;
+								var injectFn = e.inject;
+								if (typeof injectFn !== "function") continue;
+								try {
+									var face = injectFn.call(e, sessionId);
+									if (face && typeof face.hooks === "object" && face.hooks !== null) {
+										for (var name in face.hooks) {
+											if (!Object.prototype.hasOwnProperty.call(face.hooks, name)) continue;
+											if (face.hooks[name] === undefined || hooks[name] !== undefined) continue;
+											hooks[name] = face.hooks[name];
+										}
+									}
+								} catch (errOne) { /* 单条官方条目探测失败：跳过该条 */ }
+							}
+						} catch (err) { /* entries 不可用：退回仅自备 hook */ }
+						return { hooks: hooks };
+					};
 				};
 				// shadow 条目的 locale 命名空间按条目 key 对应跟随官方——新版同一个 slot 上
 				// 官方条目的 locale 不一致：tool-call 由 ui-tool 注册、声明 'conversation'
@@ -4558,7 +4629,7 @@ window.__ModuleLoader__.load({
 							key: "tool-call",
 							priority: resolveChatNodePriority(scope.slots, "tool-call"),
 							locale: detectChatLocale(scope.slots, "tool-call"),
-							inject: hostDescriptionInject
+							inject: chatNodeEntryInject()
 						}, GroupedToolCallView);
 					} catch (err) {
 						// 异常绝不外泄：延迟路径下回调在官方声明者栈里跑，外泄会带崩 web 启动
@@ -4573,7 +4644,7 @@ window.__ModuleLoader__.load({
 							key: "assistant-step",
 							priority: resolveChatNodePriority(scope.slots, "assistant-step"),
 							locale: detectChatLocale(scope.slots, "assistant-step"),
-							inject: hostDescriptionInject
+							inject: chatNodeEntryInject()
 						}, GroupedAssistantView);
 					} catch (err) {
 						noteSlotDegradation("conversation.chat.node", "assistant-step", err);
@@ -4587,7 +4658,7 @@ window.__ModuleLoader__.load({
 							key: "context",
 							priority: resolveChatNodePriority(scope.slots, "context"),
 							locale: detectChatLocale(scope.slots, "context"),
-							inject: hostDescriptionInject
+							inject: chatNodeEntryInject()
 						}, GroupedContextView);
 					} catch (err) {
 						noteSlotDegradation("conversation.chat.node", "context", err);
