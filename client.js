@@ -989,8 +989,16 @@ window.__ModuleLoader__.load({
 				".ccg-group-root[data-ccg-open]:not([data-ccg-turn]) > .ccg-fold-clip{margin-top:16px}",
 				/* 0 秒占位条（输入区 dock）：占位栏渲染在输入区 dock 条内，与 composer 卡片
 				   留 8px 间距；出现时 180ms 淡入（覆盖"刷新页面恰好落在回合空窗"的瞬间，
-				   避免占位条硬切闪现），respect prefers-reduced-motion。 */
-				".ccg-dock-run{margin:0 0 8px}",
+				   避免占位条硬切闪现），respect prefers-reduced-motion。
+				   横向几何对齐官方 dock 卡片（QueueDock/TodoPanel 同款）：宽度扣掉两侧
+				   composer 清空（--dsh-composer-side-clearance）与 dock 内缩
+				   （--dsh-composer-dock-inset），上限为输入卡宽（--dsh-composer-card-max-width）
+				   减两次内缩，水平居中——否则在宽栏里占位条拉满整行、左缘贴侧边栏
+				   （官方 dock 条目自带这套收束，本插件此前漏了，回合空窗期占位条出现在
+				   靠近侧边栏的左下角，1-2 秒后第一条中间节点到达才回到正文流位置）。
+				   旧版 DSH 未定义这些变量时 var() 兜底：清空 16px、内缩 8px、上限 748px
+				   （官方 clamp 的中间值），与两版官方实测几何一致。 */
+				".ccg-dock-run{box-sizing:border-box;flex:none;margin:0 0 8px;width:calc(100% - var(--dsh-composer-side-clearance,16px) - var(--dsh-composer-side-clearance,16px) - var(--dsh-composer-dock-inset,8px) - var(--dsh-composer-dock-inset,8px));max-width:calc(var(--dsh-composer-card-max-width,748px) - var(--dsh-composer-dock-inset,8px) - var(--dsh-composer-dock-inset,8px));margin-inline:auto}",
 				".ccg-dock-run .ccg-group-root{animation:ccg-dock-run-in .18s ease-out}",
 				"@keyframes ccg-dock-run-in{from{opacity:0}to{opacity:1}}",
 				"@media (prefers-reduced-motion:reduce){.ccg-dock-run .ccg-group-root{animation:none}}",
@@ -3620,9 +3628,12 @@ window.__ModuleLoader__.load({
 			return parts.join("|");
 		}
 		/** 步骤折叠栏标题：运行中（textAfter=false）取最后一个节点显示当前执行内容，闭合后按
-		 *  工具类型分组显示详细标题（命令最后）。 */
-		function segmentLabel(group, nodes) {
-			if (group.textAfter && group.toolCount > 0) {
+		 *  工具类型分组显示详细标题（命令最后）。
+		 *  @param {boolean} [closed] - 所属回合是否已结束（含用户停止/出错）。回合结束后段
+		 *    不会再有新内容到达，即使 text 未出现（被停止的回合往往没有最终 text），也必须
+		 *    走闭合标题——否则运行态标题（"正在思考/正在运行"+shimmer 动效）会永久停留。 */
+		function segmentLabel(group, nodes, closed) {
+			if ((group.textAfter || closed === true) && group.toolCount > 0) {
 				// 段闭合：按工具类型分组统计（think 不算），结果缓存
 				var cacheKey = segmentCacheKey(group, nodes);
 				var cached = segmentLabelCache.get(cacheKey);
@@ -3647,7 +3658,7 @@ window.__ModuleLoader__.load({
 				segmentLabelCache.set(cacheKey, label);
 				return label;
 			}
-			if (group.textAfter && group.toolCount === 0) {
+			if ((group.textAfter || closed === true) && group.toolCount === 0) {
 				// 纯 think 段闭合后显示"思考了N次"（"运行了 0 条命令"不好看）；
 				// 兜底：段内无 think 节点（理论上不可能）时按 1 次计。
 				var thinkCount = group.thinkCount > 0 ? group.thinkCount : 1;
@@ -3681,8 +3692,8 @@ window.__ModuleLoader__.load({
 		 *  供 GroupHeader 把标题里的文件名渲染成可点击复制元素。复用 classifySegmentTools
 		 *  的结果，按 leaderKey 缓存（段闭合后字段稳定）。 */
 		var segmentFilePathsCache = new Map();
-		function segmentFilePaths(group, nodes) {
-			if (!group || !group.textAfter || group.toolCount === 0) return null;
+		function segmentFilePaths(group, nodes, closed) {
+			if (!group || (!group.textAfter && closed !== true) || group.toolCount === 0) return null;
 			var cacheKey = segmentCacheKey(group, nodes);
 			if (segmentFilePathsCache.has(cacheKey)) return segmentFilePathsCache.get(cacheKey);
 			var stats = classifySegmentTools(group, nodes);
@@ -3781,8 +3792,13 @@ window.__ModuleLoader__.load({
 		}
 		/** 步骤折叠栏标题元素：think / 工具运行中用"前缀 + 官方图标 + 名称 + 摘要"（官方行风格），
 		 *  其余情况为纯文本。 */
-		function segmentTitle(group, nodes) {
-			if (!group.textAfter) {
+		/** 步骤折叠栏标题（React 版）：运行中（textAfter=false 且回合未结束）渲染流式运行态
+		 *  标题（"正在思考/正在运行 · 摘要" + shimmer 动效）；其余走 segmentLabel 纯文本。
+		 *  回合结束（含用户停止/出错）后即使段内 text 未出现（被打断的回合没有最终总结），
+		 *  也必须立即退出运行态标题——否则"正在思考"+动效会永久停留（bug：被停止的回合
+		 *  最后一个步骤折叠栏一直显示运行中）。 */
+		function segmentTitle(group, nodes, closed) {
+			if (!group.textAfter && closed !== true) {
 				var last = group.lastActiveKey ? nodes.get(group.lastActiveKey) : null;
 				if (last && last.kind === "assistant-step") {
 					var text = reasoningText(last);
@@ -3814,7 +3830,7 @@ window.__ModuleLoader__.load({
 					}
 				}
 			}
-			return segmentLabel(group, nodes);
+			return segmentLabel(group, nodes, closed);
 		}
 		/** 构造「仅正文」节点：过滤掉 reasoning（think）块——段外 text 正文与最终总结用
 		 *  它渲染官方 AssistantMarkdown，从结构上不产生 Think 行。此前依赖 CSS
@@ -3868,8 +3884,8 @@ window.__ModuleLoader__.load({
 			var toggle = function () {
 				setGroupOpen(sessionId, group.leaderKey, !open);
 			};
-			var title = segmentTitle(group, nodes);
-			var filePaths = segmentFilePaths(group, nodes);
+			var title = segmentTitle(group, nodes, closed);
+			var filePaths = segmentFilePaths(group, nodes, closed);
 			var danger = group.failures > 0;
 			// 运行中 = 段未闭合（!textAfter）且回合未结束（!closed）。一个步骤 = 步骤折叠栏内
 			// 所有工具调用+思考（computeGroup 以 text 为边界向前/向后扩展），text 是唯一闭合标记：

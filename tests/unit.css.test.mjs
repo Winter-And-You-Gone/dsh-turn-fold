@@ -42,7 +42,12 @@ describe('CSS 折叠隐藏规则', () => {
     // 防跳动：fold-clip 的 margin-top 参与过渡（收起时 16px 间距随高度一起动画，
     // 不在收起开始瞬间瞬跳）；0 秒占位条已迁往输入区 dock（.ccg-dock-run）
     assert.match(css, /transition:grid-template-rows \.28s[^}]*margin-top \.28s/, 'fold-clip 过渡应包含 margin-top')
-    assert.match(css, /\.ccg-dock-run\{margin:0 0 8px\}/, 'dock 占位条应与 composer 卡片留 8px 间距')
+    // dock 占位条横向几何：官方 dock 卡片同款收束（内容宽度为上限、居中），
+    // 否则宽栏里拉满整行、左缘贴侧边栏（bug：回合空窗占位条出现在左下角）
+    assert.match(css, /\.ccg-dock-run\{[^}]*margin-inline:auto/, 'dock 占位条水平居中')
+    assert.match(css, /\.ccg-dock-run\{[^}]*width:calc\(100% - var\(--dsh-composer-side-clearance,16px\)[^{]*/, 'dock 占位条宽度扣掉 composer 侧清空')
+    assert.match(css, /\.ccg-dock-run\{[^}]*max-width:calc\(var\(--dsh-composer-card-max-width,748px\)[^{]*/, 'dock 占位条上限为输入卡宽')
+    assert.match(css, /\.ccg-dock-run\{[^}]*margin:0 0 8px/, 'dock 占位条应与 composer 卡片留 8px 间距')
     assert.match(css, /@keyframes ccg-dock-run-in\{from\{opacity:0\}to\{opacity:1\}\}/, 'dock 占位条出现时淡入')
     assert.doesNotMatch(css, /data-ccg-placeholder/, '旧 user 格占位栏的 16px 间距锚点规则应已移除')
   })

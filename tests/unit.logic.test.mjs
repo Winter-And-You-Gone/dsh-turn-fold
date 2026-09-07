@@ -257,6 +257,51 @@ describe('segmentLabel / summarizeArgs（步骤折叠栏标题）', () => {
     assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令')
   })
 
+  // ── 回归：被停止/出错的回合（closed=true）──────────────────────────────
+  // 被打断的回合往往没有最终 text（段未闭合），但回合已经结束、不会再有新内容：
+  // 此时段标题必须立即退出运行态（"正在思考/正在运行"+shimmer 会永久停留），
+  // 走闭合标题（工具分组文案 / "思考了N次"）。
+  it('被停止的回合（closed=true · 无 text）：运行中工具段 → 立即走闭合标题，不再"正在运行"', () => {
+    const nodes = [
+      userNode('u', 100),
+      toolWithArgs('tc', 300, { running: true, argsRaw: JSON.stringify({ args: ['x'] }) }),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
+    assert.equal(g.textAfter, false, '段未闭合（无最终 text——被停止的回合没有总结）')
+    // 不传 closed（运行中）：仍是运行态标题（既有行为不变）
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在运行Pwsh · x')
+    // 传 closed=true（回合已结束）：立即闭合——单条命令闭合标题显示工具名+详情
+    //（既有闭合语义，见"段闭合：单次命令显示工具名"用例），绝不永久停在"正在运行"
+    assert.equal(T.segmentLabel(g, s.chat.nodes, true), '运行了Pwsh · x')
+  })
+
+  it('被停止的回合（closed=true）：think 段 → "思考了N次"，不再"正在思考"', () => {
+    const nodes = [
+      userNode('u', 100),
+      thinkOnly('th', 200, '正在分析'),
+    ]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('th'))
+    assert.equal(g.textAfter, false)
+    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在思考正在分析')
+    assert.equal(T.segmentLabel(g, s.chat.nodes, true), '思考了1次')
+  })
+
+  it('被停止的回合（closed=true）：read 段闭合标题照常按工具分组（文件名链接数据源可用）', () => {
+    const readNode = (key, seq) => makeNode(key, 'tool-call', seq, {
+      data: { root: { kind: 'tool-result', callId: key, name: 'read', argsRaw: JSON.stringify({ path: 'X:/a/b.js' }) } },
+    })
+    const nodes = [userNode('u', 100), readNode('rd', 300)]
+    const s = buildSnapshot(nodes, { turnEnds: new Map() })
+    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('rd'))
+    assert.equal(g.textAfter, false)
+    // closed=true：标题与文件路径（FileLink 数据源）按闭合语义工作
+    assert.equal(T.segmentLabel(g, s.chat.nodes, true), '读取了b.js')
+    assert.ok(T.segmentFilePaths(g, s.chat.nodes, true), '闭合标题里的文件名可渲染为链接')
+    assert.equal(T.segmentFilePaths(g, s.chat.nodes), null, '运行中不提供文件链接数据源')
+  })
+
   it('段闭合且组内有失败命令：标题追加失败数', () => {
     const nodes = [
       userNode('u', 100),

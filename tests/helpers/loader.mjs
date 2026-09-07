@@ -20,6 +20,8 @@ const TEST_EXPORTS = [
   'turnDisplayMetrics',
   'turnHeaderLabel',
   'segmentLabel',
+  'segmentTitle',
+  'segmentFilePaths',
   'summarizeArgs',
   'cacheHitPercent',
   'formatTurnDuration',

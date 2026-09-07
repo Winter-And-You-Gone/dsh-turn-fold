@@ -457,6 +457,41 @@ describe('think 步骤折叠：纯 think 段也套步骤折叠栏（标题自研
     })
     assert.ok(segTitle().textContent.includes('发现新问题'), '标题跟随最新一行（自研滚动效果）')
   })
+
+  // ── 回归：被停止/出错的回合（closed=true）── 最后一个步骤折叠栏不得停留在运行态 ──
+  // 被打断的回合没有最终 text（段未闭合），但回合已结束：步骤栏标题/动效必须立即退出
+  // 运行态（"正在思考"+shimmer 会永久停留），闭合标题照常出现。
+  it('被停止的回合：think 步骤栏退出运行态标题（无 shimmer 类），显示"思考了N次"', () => {
+    const thinkNode = (key, seq, text) => asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
+    // 两个 think 节点：th1 = 回合第一条中间节点（回合栏载体 + 段 leader），th2 = 最后
+    // 一条 assistant-step（finalAssistant，回合结束后只保留其正文——纯 think 则为空）。
+    const nodes = [userNode('u', 100), thinkNode('th1', 200, '正在分析'), thinkNode('th2', 300, '继续思考')]
+    // turnEnds 含回合号 13 → computeTurnFold 判定 closed=true；默认整回合收起
+    mount(buildSnapshot(nodes, { turnEnds: new Map([[13, {}]]) }))
+    // 用户路径：展开回合折叠栏，检视被收拢的步骤折叠栏
+    clickHeader()
+    const segRoot = container.querySelector('.ccg-group-root:not([data-ccg-turn])')
+    assert.ok(segRoot, '步骤折叠栏存在')
+    const title = segRoot.querySelector('.ccg-header .ccg-title')
+    assert.ok(title.textContent.includes('思考了2次'), '回合结束后显示闭合标题"思考了2次"')
+    const liveTitle = segRoot.querySelector('.ccg-think-title-live')
+    assert.equal(liveTitle, null, '运行态标题（shimmer）不得残留')
+  })
+
+  it('被停止的回合：运行中工具的步骤栏标题立即闭合（不再"正在运行"）', () => {
+    const runningTool = (key, seq) => makeNode(key, 'tool-call', seq, {
+      data: { root: { callId: key, name: 'pwsh', argsRaw: JSON.stringify({ args: ['x'] }) } }, // 无 kind 字段 = 运行中
+    })
+    const nodes = [userNode('u', 100), runningTool('tc', 300)]
+    mount(buildSnapshot(nodes, { turnEnds: new Map([[13, {}]]) }))
+    clickHeader()
+    const segRoot = container.querySelector('.ccg-group-root:not([data-ccg-turn])')
+    assert.ok(segRoot, '步骤折叠栏存在')
+    const title = segRoot.querySelector('.ccg-header .ccg-title')
+    assert.ok(title.textContent.includes('运行了Pwsh'), '回合结束后运行中工具段立即走闭合标题')
+    assert.ok(!title.textContent.includes('正在运行'), '不得停留在运行态标题')
+    assert.equal(segRoot.querySelector('.ccg-think-title-live'), null, '无运行态标题')
+  })
 })
 
 describe('滚轮数字（RollDigit / AnimatedLabel / 回合折叠栏 live 文案）', () => {
