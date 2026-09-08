@@ -845,20 +845,18 @@ window.__ModuleLoader__.load({
 		// 注意：v0.4.0 起更新说明只保留最新一节（不叠历史节）——老用户每版各弹一次，
 		// 新用户只看当前版本的内容即可。
 		var NOTICE_KEY = "dsh-turn-fold:notice-version";
-		var NOTICE_VERSION = "0.5.0";
+		var NOTICE_VERSION = "0.5.1";
 		var NOTICE_CONTENT = {
 			zh: {
-				title: "v0.5.0 更新说明",
+				title: "v0.5.1 更新说明",
 				sections: [
 					{
-						version: "v0.5.0",
+						version: "v0.5.1",
+						note: "v0.5.0 的加固修订",
 						items: [
-							{ title: "🚀 0 秒占位条迁至输入区", detail: "发送消息后，回合折叠栏占位立即出现在输入框上方（耗时从 0 开始计时、实时走动），首条回复到达后无缝交接给正式回合折叠栏。user 消息格完全让出——与 dsh-easyrewrite 等其他 user 消息插件和平共存，从根上消除同类冲突。" },
-							{ title: "🤝 渲染位冲突自动让位", detail: "若其他插件已占用同一渲染位（同 key 同 priority），本插件自动让位并继续加载，不再互相挤掉、不再触发启动失败；本插件后加载时同样安全。" },
-							{ title: "🛡️ 注册异常软降级", detail: "任何 slot 注册异常都不再可能带崩 DSH 网页启动：失败仅跳过单个功能并弹一次中性提示（不指涉冲突方；旧版宿主未提供的 dock 等版本缺口也走同样的安全路径）。" },
-							{ title: "🔄 适配 0.1.2-rc.1+ / 0.1.3-alpha.1", detail: "官方把渲染器 hook 改名（hostInfo 等）时折叠不再静默失效——插件条目自动跟随官方条目声明的 hook 面；read_image 图片画廊在折叠视图内正常透传显示。" },
-							{ title: "⏹️ 停止的回合立即退出运行态", detail: "用户停止或出错的回合，最后一个步骤折叠栏立即切换为闭合标题（「运行了N条命令」「思考了N次」），不再永久停留在「正在运行/正在思考」的流式动画。" },
-							{ title: "🎨 占位条对齐官方 dock 几何", detail: "0 秒占位条横向对齐官方 dock 卡片（内容宽度上限、居中），宽栏下不再拉伸整行、左缘不再贴侧边栏。" }
+							{ title: "🛡️ 注册管道统一加固", detail: "五个 slot 注册全部走同一管道（inject 外层 + register 内层都兜异常），补上 v0.5.0 漏掉的 chat.node 外层守卫与设置行静默吞异常；降级提示措辞改为中性（不再误报“与其他插件冲突”——旧版宿主未声明 dock slot 的版本缺口也走同一条安全路径）。" },
+							{ title: "🔧 步骤折叠栏健壮性", detail: "renderToolview 补上 entry.component 守卫（与 renderToolImages 一致），第三方畸形注册不再让整个 shadow 格被 SlotErrorBoundary 永久 abdicate；“段已闭合”语义收敛为单一谓词 isSegmentClosed，标题/文件链接/图标四处不再各写各的、杜绝半不同步。" },
+							{ title: "🧹 占位条与缓存", detail: "RunningTurnDock 补回 trackSession，纯问答会话之间切换时缓存清理照常触发；技能资产项目树不再引用已 gitignore 的本地实验文件；extract-icons 在新克隆上给出明确指引而非 ENOENT 堆栈。" }
 						]
 					}
 				],
@@ -866,17 +864,15 @@ window.__ModuleLoader__.load({
 				dismiss: "知道了"
 			},
 			en: {
-				title: "What's new in v0.5.0",
+				title: "What's new in v0.5.1",
 				sections: [
 					{
-						version: "v0.5.0",
+						version: "v0.5.1",
+						note: "Hardening revision to v0.5.0",
 						items: [
-							{ title: "🚀 0-second placeholder moves to the input dock", detail: "The moment you send a message, the placeholder turn fold bar appears above the composer (duration ticking from zero) and hands over seamlessly to the real fold bar once the first reply node arrives. The user message cell is fully vacated — other user-message plugins (e.g. dsh-easyrewrite) now coexist peacefully, eliminating that clash class at the root." },
-							{ title: "🤝 Automatic priority yielding", detail: "If another plugin already occupies the same renderer slot (same key and priority), this plugin automatically yields and keeps loading — no more mutual eviction, no more startup failures; the same safety applies when this plugin loads later." },
-							{ title: "🛡️ Fail-soft registration", detail: "No slot-registration failure can ever take the DSH page down again: a failed entry is skipped and surfaced once with a neutral notice (never blaming another plugin; a legacy host without the dock slot takes the same safe path)." },
-							{ title: "🔄 Adapts to 0.1.2-rc.1+ / 0.1.3-alpha.1", detail: "When official renderer hooks get renamed (hostInfo etc.), folding no longer silently dies — the plugin's shadow entries now follow whatever hooks the official entries declare; read_image picture galleries pass through correctly inside folded views." },
-							{ title: "⏹️ Stopped turns exit the running state immediately", detail: "When a turn is stopped or errors out, its last step fold bar switches to the closed title (\"Ran N commands\" / \"Thought N times\") right away instead of staying stuck on the live \"Running…/Thinking…\" shimmer forever." },
-							{ title: "🎨 Placeholder matches official dock geometry", detail: "The placeholder bar now follows the official dock card geometry (content-width cap, centered) — in wide columns it no longer stretches the full row with its left edge glued to the sidebar." }
+							{ title: "🛡️ Unified registration pipeline", detail: "All five slot registrations now share one pipeline guarding both the inject declaration wait and the register call — closing the chat.node outer-guard gap and the settings-row silent swallow that v0.5.0 missed. Degradation toast wording is now neutral (no more false “conflict with another plugin” — a legacy host without the dock slot takes the same safe path)." },
+							{ title: "🔧 Step fold-bar robustness", detail: "renderToolview now guards entry.component like renderToolImages, so a malformed third-party registration no longer permanently abdicates the whole shadow cell via SlotErrorBoundary. Segment-closed semantics are single-sourced in one isSegmentClosed predicate — title / file links / icon no longer drift out of sync." },
+							{ title: "🧹 Placeholder & caches", detail: "RunningTurnDock restores trackSession, so cache cleanup fires on session switches between pure-Q&A chats too. The bundled skill's project tree no longer cites the gitignored local lab file, and extract-icons gives clear guidance instead of an ENOENT stack on a fresh clone." }
 						]
 					}
 				],
