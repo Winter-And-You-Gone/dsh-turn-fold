@@ -842,25 +842,23 @@ window.__ModuleLoader__.load({
 		// 机制与 dsh-wallpaper-engine 同款：localStorage 记录"已通知过的版本号"，
 		// 每次发布新版本时把 NOTICE_VERSION 改成新版本号并更新 NOTICE_CONTENT 正文，
 		// 加载时存值与当前版本不符就弹一次，点「知道了」后写入当前版本、下次不再弹。
-		// 注意：v0.4.0 起更新说明只保留一节（合并 v0.3.1 + v0.4.0 的内容）；更早的
-		// v0.3.0 节已按用户要求移除——该版内容从未对老用户展示过，新用户看合并节即可。
+		// 注意：v0.4.0 起更新说明只保留最新一节（不叠历史节）——老用户每版各弹一次，
+		// 新用户只看当前版本的内容即可。
 		var NOTICE_KEY = "dsh-turn-fold:notice-version";
-		var NOTICE_VERSION = "0.4.0";
+		var NOTICE_VERSION = "0.5.0";
 		var NOTICE_CONTENT = {
 			zh: {
-				title: "v0.4.0 更新说明",
+				title: "v0.5.0 更新说明",
 				sections: [
 					{
-						version: "v0.4.0",
+						version: "v0.5.0",
 						items: [
-							{ title: "🧩 适配 DeepSeek Harness 新旧版本", detail: "完整适配新版 DSH 的界面与数据结构变化（对话词典命名空间拆分、快照结构、回合折叠设置行），旧版本继续无缝兼容——同一份代码在新旧版本上都正常折叠；此前新版下折叠失效、官方词条裸显（message.think 等）的问题全部修复。" },
-							{ title: "🃏 扑克牌折叠图标", detail: "步骤折叠栏与回合折叠栏的前导图标改为扑克牌：运行中显示四花色循环卡牌动画，完成后收起为随机花色的牌堆（工具数 ≤3 用 3 张、>3 用 5 张），展开时牌张绕底边中点扇形展开并带形变过渡动画；牌张遮挡采用 luminance mask 动态挖空上层覆盖区域，牌身透明、不依赖背景色，壁纸/透明背景下依然正确。" },
-							{ title: "🧠 纯 Think 段也折叠", detail: "思考内容统一收进步骤折叠栏：运行中标题「正在思考 · 最新一行」流式滚动（shimmer 光泽）、闭合后显示「思考了N次」；不再有「裸 Think 行直接显示」与「工具段折叠」之间的切换跳变。" },
-							{ title: "🚫 排除工具不折叠", detail: "todo_write（更新任务清单）不套步骤折叠栏、也不并入任何步骤分组，始终以官方工具卡片原样显示；仍参与整回合折叠（回合结束收进回合折叠栏）。" },
-							{ title: "🏷️ 包名更名", detail: "npm 包名由 dsh-turn-fold 变更为 @winteries/dsh-turn-fold，解决插件市场「已安装」页因同名插件歧义而缺失描述的问题；旧包名 dsh-turn-fold 仍会同步发布，无需迁移。" },
-							{ title: "📣 版本更新说明", detail: "新增「新版本更新说明」机制：每个新版本首次加载时自动弹出一次。" },
-							{ title: "🔤 新版 DSH 词条适配", detail: "适配新版 DSH 官方词典的命名空间拆分：折叠栏内的「思考」「上下文注入」等官方词条不再裸显 message.think / message.contextInjection 等原始 key；四个委托渲染入口分别跟随官方条目声明的语言命名空间。" },
-							{ title: "📚 内置官方词典兜底", detail: "内嵌官方 chat / conversation / common 三本词典共 282 条词条（含 {占位符} 插值）作为兜底：宿主词典缺失或错位时，折叠栏内的官方文案仍全部正常显示。" }
+							{ title: "🚀 0 秒占位条迁至输入区", detail: "发送消息后，回合折叠栏占位立即出现在输入框上方（耗时从 0 开始计时、实时走动），首条回复到达后无缝交接给正式回合折叠栏。user 消息格完全让出——与 dsh-easyrewrite 等其他 user 消息插件和平共存，从根上消除同类冲突。" },
+							{ title: "🤝 渲染位冲突自动让位", detail: "若其他插件已占用同一渲染位（同 key 同 priority），本插件自动让位并继续加载，不再互相挤掉、不再触发启动失败；本插件后加载时同样安全。" },
+							{ title: "🛡️ 注册异常软降级", detail: "任何 slot 注册异常都不再可能带崩 DSH 网页启动：失败仅跳过单个功能并弹一次中性提示（不指涉冲突方；旧版宿主未提供的 dock 等版本缺口也走同样的安全路径）。" },
+							{ title: "🔄 适配 0.1.2-rc.1+ / 0.1.3-alpha.1", detail: "官方把渲染器 hook 改名（hostInfo 等）时折叠不再静默失效——插件条目自动跟随官方条目声明的 hook 面；read_image 图片画廊在折叠视图内正常透传显示。" },
+							{ title: "⏹️ 停止的回合立即退出运行态", detail: "用户停止或出错的回合，最后一个步骤折叠栏立即切换为闭合标题（「运行了N条命令」「思考了N次」），不再永久停留在「正在运行/正在思考」的流式动画。" },
+							{ title: "🎨 占位条对齐官方 dock 几何", detail: "0 秒占位条横向对齐官方 dock 卡片（内容宽度上限、居中），宽栏下不再拉伸整行、左缘不再贴侧边栏。" }
 						]
 					}
 				],
@@ -868,19 +866,17 @@ window.__ModuleLoader__.load({
 				dismiss: "知道了"
 			},
 			en: {
-				title: "What's new in v0.4.0",
+				title: "What's new in v0.5.0",
 				sections: [
 					{
-						version: "v0.4.0",
+						version: "v0.5.0",
 						items: [
-							{ title: "🧩 Adapts to new and old DeepSeek Harness", detail: "Fully adapts to the latest DSH changes (locale-namespace split, snapshot restructuring, the fold-mode settings row) while older versions keep working unchanged — one codebase folds correctly on both; the new-DSH failures (folding silently off, raw keys like message.think) are all fixed." },
-							{ title: "🃏 Poker-card fold icons", detail: "Step and turn fold bars now show poker-card icons: a four-suit card animation while running, collapsing to a random-suit deck on completion (3 cards for ≤3 tools, 5 cards for >3); expanding fans the cards out with morph transitions. Occlusion uses luminance masks that dynamically cut out the overlapping area of the card above — the card body stays transparent, so it works correctly over wallpapers and transparent backgrounds without any background-color dependency." },
-							{ title: "🧠 Think-only segments fold too", detail: "All thinking now wraps into step fold bars: while running the header shows \"Thinking · latest line\" (streaming, shimmer), and \"Thought N times\" once closed — no more jump between a bare Think row and a folded tool segment when a tool arrives mid-segment." },
-							{ title: "🚫 Excluded tools stay unfolded", detail: "todo_write (task-list updates) skips the step fold bar and doesn't join any segment — it renders as the bare official tool card; still participates in whole-turn collapse (folded into the turn fold bar when the turn ends)." },
-							{ title: "🏷️ Package rename", detail: "The npm package was renamed from dsh-turn-fold to @winteries/dsh-turn-fold, resolving the missing description in the market Installed tab caused by a same-name collision; the legacy dsh-turn-fold package keeps receiving synchronized releases, so no migration is needed." },
-							{ title: "📣 Release notes", detail: "Introduced the per-version \"What's new\" notice that appears automatically once after each release." },
-							{ title: "🔤 New-DSH locale adaptation", detail: "Adapts to the new DSH locale-namespace split: official labels like \"Think\" and \"Context injection\" no longer leak raw keys (message.think / message.contextInjection) inside fold bars; each delegated renderer now follows the locale namespace declared by its official entry." },
-							{ title: "📚 Embedded dictionary fallback", detail: "All three official dictionaries — chat / conversation / common, 282 entries total — are embedded with {placeholder} interpolation as a fallback: if the host dictionary is missing or mismatched, every official label inside fold bars still renders correctly." }
+							{ title: "🚀 0-second placeholder moves to the input dock", detail: "The moment you send a message, the placeholder turn fold bar appears above the composer (duration ticking from zero) and hands over seamlessly to the real fold bar once the first reply node arrives. The user message cell is fully vacated — other user-message plugins (e.g. dsh-easyrewrite) now coexist peacefully, eliminating that clash class at the root." },
+							{ title: "🤝 Automatic priority yielding", detail: "If another plugin already occupies the same renderer slot (same key and priority), this plugin automatically yields and keeps loading — no more mutual eviction, no more startup failures; the same safety applies when this plugin loads later." },
+							{ title: "🛡️ Fail-soft registration", detail: "No slot-registration failure can ever take the DSH page down again: a failed entry is skipped and surfaced once with a neutral notice (never blaming another plugin; a legacy host without the dock slot takes the same safe path)." },
+							{ title: "🔄 Adapts to 0.1.2-rc.1+ / 0.1.3-alpha.1", detail: "When official renderer hooks get renamed (hostInfo etc.), folding no longer silently dies — the plugin's shadow entries now follow whatever hooks the official entries declare; read_image picture galleries pass through correctly inside folded views." },
+							{ title: "⏹️ Stopped turns exit the running state immediately", detail: "When a turn is stopped or errors out, its last step fold bar switches to the closed title (\"Ran N commands\" / \"Thought N times\") right away instead of staying stuck on the live \"Running…/Thinking…\" shimmer forever." },
+							{ title: "🎨 Placeholder matches official dock geometry", detail: "The placeholder bar now follows the official dock card geometry (content-width cap, centered) — in wide columns it no longer stretches the full row with its left edge glued to the sidebar." }
 						]
 					}
 				],

@@ -271,7 +271,7 @@ git push --follow-tags
 
 ## Notes
 
-- Compatible with DSH 0.1.1-rc.2 and 0.1.2-alpha.1 (the session snapshot contract difference is absorbed by an in-plugin adapter, see "How it works"); if a DSH upgrade changes the above slot contracts or built-in component props, this plugin may need small adjustments per version (that is plugin maintenance, not source modification).
+- Compatible with DSH 0.1.1-rc.2 through 0.1.3-alpha.1 (the session snapshot contract difference is absorbed by an in-plugin adapter, and official renderer hook faces are followed automatically — see "How it works"); if a DSH upgrade changes the above slot contracts or built-in component props, this plugin may need small adjustments per version (that is plugin maintenance, not source modification).
 - The fold bar text is tunable in `CONFIG` at the top of `client.js`.
 - **Coupling points checklist** (check these when upgrading DSH; any failure degrades gracefully — falls back to built-in rendering / label fallbacks plus a `console.warn`, never a blank screen):
   - Session snapshot fields: on 0.1.1 the `useSession` snapshot's `s.chat.order / nodes / locations`, `locations.getTurn()`, top-level `turnEnds` / `turnTimings`, `chat.timeline.turns`; on 0.1.2 the snapshot is split, so the framework-injected `useChat` (flat ChatSnapshot) is used instead, with `turnEnds` / `turnTimings` in `chat.legacy` (the adapter picks automatically, see "How it works") — for segment/turn grouping, completion detection, duration and status labels;
