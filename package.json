@@ -1,6 +1,6 @@
 {
   "name": "@winteries/dsh-turn-fold",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "type": "module",
   "main": "index.js",
   "description": "更好的折叠栏：将工具调用与 Think 段自动折叠为步骤折叠栏，回合结束后整回合收拢为带实时指标（耗时/首字/token/tok/s/缓存命中）的回合折叠栏，只保留最终总结正文；前导图标可自定义，内置动态扑克牌（运行中花色循环卡牌动画、收起牌堆、展开扇形），提供官方折叠方式设置行，适配 DSH 新旧版本。零侵入 DSH 源码。",
