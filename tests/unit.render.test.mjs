@@ -8,7 +8,7 @@ import { createRequire } from 'node:module'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { loadPlugin } from './helpers/loader.mjs'
-import { createSessionStore, makeUseSession, makeNode, userNode, asNode, toolNode, buildSnapshot } from './helpers/store.mjs'
+import { createSessionStore, makeUseSession, makeNode, userNode, asNode, toolNode, buildSnapshot, buildChatSnapshot } from './helpers/store.mjs'
 import { TURN13, TURN13_METRICS } from './helpers/fixtures.mjs'
 
 const require = createRequire(import.meta.url)
@@ -612,6 +612,22 @@ describe('回合折叠栏 0 秒占位（RunningTurnDock · conversation.input.do
     })
     return { store }
   }
+  /** 0.1.2+ 形状：useChat 快照本体（chat.legacy 携带 turnTimings）+ 无 chat 字段的
+   *  SessionSnapshot（`{ running }` 极简对象）——验证 dock 在拆分快照契约下同样工作，
+   *  此前只有 0.1.1 的 useSession 顶层路径被测试过。 */
+  function mountDockSplit(sessionSnapshot, chatSnapshot, sessionId = 'sess-u') {
+    const sessionStore = createSessionStore(sessionSnapshot)
+    const chatStore = createSessionStore(chatSnapshot)
+    act(() => {
+      root.render(React.createElement(T.RunningTurnDock, {
+        useSession: makeUseSession(sessionStore),
+        useChat: makeUseSession(chatStore),
+        sessionId,
+        ...injectedHooks,
+      }))
+    })
+    return { sessionStore, chatStore }
+  }
   it('运行中 + user 是最后一条消息：dock 渲染占位回合折叠栏（耗时计时 + 回合号）', () => {
     const nodes = [userNode('u', 100)]
     const snapshot = buildSnapshot(nodes, {
@@ -646,6 +662,25 @@ describe('回合折叠栏 0 秒占位（RunningTurnDock · conversation.input.do
     snapshot.running = true
     mountDock(snapshot)
     assert.equal(container.querySelector('.ccg-dock-run'), null, '无占位')
+  })
+  it('0.1.2+ 拆分快照（useChat 读 order/nodes，legacy 携带 turnTimings）：dock 同样渲染占位', () => {
+    // 0.1.2 契约：SessionSnapshot 只剩 `{ running }`（无 chat/turnTimings 顶层字段），
+    // chat 数据经 props.useChat 提供、turnTimings 收在 ChatSnapshot.legacy。
+    const nodes = [userNode('u', 100)]
+    const chatSnapshot = buildChatSnapshot(nodes, {
+      turnTimings: new Map([[13, { startTime: 1000000, endTime: undefined }]]),
+    })
+    mountDockSplit({ running: true }, chatSnapshot)
+    const placeholder = container.querySelector('.ccg-dock-run .ccg-group-root[data-ccg-turn]')
+    assert.ok(placeholder, '0.1.2 拆分快照下占位回合折叠栏同样存在')
+    assert.ok(placeholder.textContent.includes('耗时'), '占位显示耗时')
+    assert.ok(placeholder.textContent.includes('第13轮'), '回合号读自 chat.legacy.turnTimings')
+  })
+  it('0.1.2+ 拆分快照：user 之后有中间节点 → 不渲染占位', () => {
+    const nodes = [userNode('u', 100), asNode('as', 200)]
+    const chatSnapshot = buildChatSnapshot(nodes, {})
+    mountDockSplit({ running: true }, chatSnapshot)
+    assert.equal(container.querySelector('.ccg-dock-run'), null, '转交正式回合折叠栏')
   })
   it('foldMode=auto：不渲染占位（插件不接管折叠）', () => {
     const nodes = [userNode('u', 100)]

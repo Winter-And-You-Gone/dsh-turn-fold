@@ -1,5 +1,14 @@
 // 从 docs/icon-candidates.html 提取新图标数据，更新 icons/default.json
-import { readFileSync, writeFileSync } from 'fs'
+// 注意：该 HTML 是本地-only 实验场（gitignore，2026-08-30 起不入库）——新克隆/发布包
+// 上不存在属预期，此时给出明确指引后退出，而不是 ENOENT 堆栈。
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+
+if (!existsSync('docs/icon-candidates.html')) {
+  console.error('[extract-icons] docs/icon-candidates.html 不存在（本地-only 实验场，不入库）。')
+  console.error('[extract-icons] 若要运行本脚本，请先在本机恢复该实验文件（图标工作起点），')
+  console.error('[extract-icons] 或直接编辑 icons/default.json 后跑 npm run sync:icons。')
+  process.exit(1)
+}
 
 const html = readFileSync('docs/icon-candidates.html', 'utf8')
 const lines = html.split('\n')

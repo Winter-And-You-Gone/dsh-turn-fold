@@ -310,9 +310,12 @@ git push --follow-tags
 - **注册异常软降级（绝不带崩 DSH）**：slots 注入回调若让异常外泄，延迟执行路径
   （目标 slot 声明晚于插件加载时，回调跑在官方声明者的调用栈里 / 声明订阅里
   uncaught re-throw）会打断官方 UI 激活、web 整页无法启动。因此本插件**所有** slot
-  注册（chat.node 三格、设置行、dock 占位条）的异常都在回调内消化：单个条目注册
-  失败仅跳过该条目，`console.warn` 留排查线索并弹一次 Toast 告知用户；宿主半边的
-  skill 注册同样双层防护。DSH 启动不受本插件任何注册异常影响。
+  注册（chat.node 三格、设置行、dock 占位条）统一走一个注册管道：inject 声明等待
+  与回调内 register 各自兜异常（`return undefined` 即"无可清理资源"，官方
+  cachedSlotInject 对 falsy 返回无害），单个条目注册失败仅跳过该条目，`console.warn`
+  留排查线索并弹一次中性措辞的降级 Toast 告知用户（不指涉冲突方——旧版宿主未声明
+  slot 的版本缺口也走同一条降级路径）；宿主半边的 skill 注册同样双层防护。DSH 启动
+  不受本插件任何注册异常影响。
 - 展开时通过 `ctx.slots.entries('conversation.chat.node')` 取到内置组件引用做**委托渲染**，
   工具卡片/Think 行/上下文注入的内容与样式与内置完全一致。
 - 整回合折叠通过会话快照的 `turnEnds`（turn/end 事件驱动）判定回合完成，配合

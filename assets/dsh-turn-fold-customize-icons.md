@@ -9,7 +9,6 @@ dsh-turn-fold/
 ├── icons/default.json        ← 唯一数据源（meta / pokerR / pokerPips / pokerSVGBase /
 │                                pokerTransforms / pokerSpin / pokerAnimSVG / pokerSpinDeepseek）
 ├── scripts/sync-icons.mjs    ← --inject 注入到 client.js；无参运行 = 校验一致性
-├── docs/icon-candidates.html ← 图标方案实验/参考（浏览器打开）
 └── client.js                 ← 内联 `/*__ICON_DEFAULTS__*/` 块承载注入的默认值
 ```
 

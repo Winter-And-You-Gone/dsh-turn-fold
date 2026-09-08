@@ -365,7 +365,7 @@ describe('注册异常软降级（异常不外泄，防启动崩溃）', () => {
     assert.ok(regs.some((r) => r.options.id === 'turn-fold-running'), 'dock 占位条照常注册')
     assert.ok(!regs.some((r) => r.options.key === 'assistant-step'), '肇事条目已跳过（单条目降级）')
     const toast = T.getToast()
-    assert.ok(toast && typeof toast.text === 'string' && toast.text.includes('渲染位冲突'), '用户可见的冲突提示 Toast 已入队')
+    assert.ok(toast && typeof toast.text === 'string' && toast.text.includes('渲染位注册异常'), '用户可见的降级提示 Toast 已入队')
   })
 
   it('dock inject 同步抛 + 设置行 register 抛错 → 均不外泄，chat.node 三格照常', () => {

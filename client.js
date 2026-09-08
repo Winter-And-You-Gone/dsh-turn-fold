@@ -132,8 +132,10 @@ window.__ModuleLoader__.load({
 				fieldSettingsDone: "完成",
 				// 文件链接复制 Toast
 				fileCopiedToast: "已复制绝对路径",
-				// 注册冲突降级 Toast（一次性，页面加载内只提示一次）
-				slotConflictToast: "检测到与其他插件的渲染位冲突，本插件部分功能已停用（详见控制台）",
+				// 注册降级 Toast（一次性，页面加载内只提示一次）。措辞中性：降级原因
+				// 不止"与其他插件冲突"——还有旧版 DSH 未声明 slot 的版本缺口、宿主注册
+				// 抛错等，一律不指涉冲突方。
+				slotDegradedToast: "渲染位注册异常，本插件部分功能已降级（详见控制台）",
 				// 折叠图标样式选择
 				foldIconLabel: "折叠图标",
 				foldIconDefault: "默认",
@@ -197,8 +199,10 @@ window.__ModuleLoader__.load({
 				fieldSettingsDone: "Done",
 				// File link copy toast
 				fileCopiedToast: "Absolute path copied",
-				// Slot-conflict degradation toast (one-shot per page load)
-				slotConflictToast: "A renderer-slot conflict with another plugin was detected; parts of this plugin are disabled (see console)",
+				// Slot degradation toast (one-shot per page load). Neutral wording: the cause
+				// is not necessarily a plugin conflict — a legacy DSH build without the slot
+				// is a version gap, so never blame another plugin.
+				slotDegradedToast: "A renderer-slot registration issue was detected; parts of this plugin have been degraded (see console)",
 				// Fold icon style selector
 				foldIconLabel: "Fold icon",
 				foldIconDefault: "Default",
@@ -2161,18 +2165,14 @@ window.__ModuleLoader__.load({
 		// 标准 kit + owner"渲染。子视图注册只有 locale（conversation），无 inject/store，
 		// 因此这套组合与内置渲染器给出的 props 等价。
 		// kit 的 hook 类 props（use* 函数）逐名整体透传：官方组件消费哪个由版本决定
-		//（0.1.2-rc.1+ 的 read_image 行消费 renderSlot/loadImage，标准行只用 useSessions），
+		//（0.1.2-rc.1+ 的 read_image 行消费 renderSlot/loadImage——loadImage 不是 hook、
+		// 由官方 owner 携带、经下面的 owner 展开到位，标准行只用 useSessions），
 		// 不再枚举具体名字——官方未来增删 hook 名时这条链自动跟随。
-		function renderToolview(kit, owner, entryKey, fallback) {
-			var entries = slotsService ? slotsService.entriesOfSlot("tool.call.toolview") : null;
-			var entry = null;
-			if (entries) {
-				for (var i = 0; i < entries.length; i++) {
-					if (entries[i].options && entries[i].options.key === entryKey) { entry = entries[i]; break; }
-				}
-			}
-			if (!entry) return fallback;
-			var Comp = entry.component;
+		/** 标准 kit + owner → 子视图 props：use* hook 收割 + sessionId + t（+ extra 覆盖），
+		 *  最后 owner 展开压顶（owner-wins 是官方 renderEntry 的 props 合并契约，同一顺序）。
+		 *  三个手写分发（toolview / images / 内置 ToolCallTree 的 kit）共用这一份，避免
+		 *  漏改某一份再现 0.1.3 useHostInfo 那类"少透传一个 hook 即 abdicate"崩溃。 */
+		function buildEntryProps(kit, owner, extra) {
 			var props = {};
 			for (var hk in kit) {
 				if (Object.prototype.hasOwnProperty.call(kit, hk) && hk.indexOf("use") === 0 && typeof kit[hk] === "function") {
@@ -2181,15 +2181,32 @@ window.__ModuleLoader__.load({
 			}
 			if (kit.sessionId !== undefined) props.sessionId = kit.sessionId;
 			if (kit.t) props.t = kit.t;
-			// 0.1.2-rc.1+：read_image 等条目声明 children（tool.call.images 单槽），
-			// 官方机制会给这类条目发 renderSlot；我们的手写分发同样补一个——
-			// 只处理 tool.call.images（图片画廊），其余 key 走 fallback。
-			props.renderSlot = function (key, imgOwner, imgOptions) {
-				if (key !== "tool.call.images") return imgOptions && imgOptions.fallback ? imgOptions.fallback : null;
-				return renderToolImages(kit, imgOwner);
-			};
+			if (extra) for (var xk in extra) if (Object.prototype.hasOwnProperty.call(extra, xk)) props[xk] = extra[xk];
 			for (var k in owner) if (Object.prototype.hasOwnProperty.call(owner, k)) props[k] = owner[k];
-			return react.createElement(Comp, props);
+			return props;
+		}
+		function renderToolview(kit, owner, entryKey, fallback) {
+			var entries = slotsService ? slotsService.entriesOfSlot("tool.call.toolview") : null;
+			var entry = null;
+			if (entries) {
+				for (var i = 0; i < entries.length; i++) {
+					if (entries[i].options && entries[i].options.key === entryKey) { entry = entries[i]; break; }
+				}
+			}
+			if (!entry || !entry.component) return fallback;
+			var props = buildEntryProps(kit, owner, {
+				// 0.1.2-rc.1+：read_image 等条目声明 children（tool.call.images 单槽），
+				// 官方机制会给这类条目发 renderSlot；我们的手写分发同样补一个——
+				// 只处理 tool.call.images（图片画廊），其余 key 走 fallback。
+				// component 守卫同 renderToolImages：条目缺 component（第三方畸形注册）时
+				// 退 fallback，绝不让 createElement(undefined) 的渲染期异常把整个 shadow 格
+				// 永久 abdicate（工具卡/步骤折叠栏全部消失）。
+				renderSlot: function (key, imgOwner, imgOptions) {
+					if (key !== "tool.call.images") return imgOptions && imgOptions.fallback ? imgOptions.fallback : null;
+					return renderToolImages(kit, imgOwner);
+				}
+			});
+			return react.createElement(entry.component, props);
 		}
 
 		// tool.call.images（read_image 结果图片画廊）分发：单槽取第一个在位条目
@@ -2201,16 +2218,7 @@ window.__ModuleLoader__.load({
 				var entries = slotsService ? slotsService.entriesOfSlot("tool.call.images") : null;
 				var entry = entries && entries.length > 0 ? entries[0] : null;
 				if (!entry || !entry.component) return null;
-				var props = {};
-				for (var hk in kit) {
-					if (Object.prototype.hasOwnProperty.call(kit, hk) && hk.indexOf("use") === 0 && typeof kit[hk] === "function") {
-						props[hk] = kit[hk];
-					}
-				}
-				if (kit.sessionId !== undefined) props.sessionId = kit.sessionId;
-				if (kit.t) props.t = kit.t;
-				for (var k in owner) if (Object.prototype.hasOwnProperty.call(owner, k)) props[k] = owner[k];
-				return react.createElement(entry.component, props);
+				return react.createElement(entry.component, buildEntryProps(kit, owner));
 			} catch (e) {
 				return null;
 			}
@@ -2617,14 +2625,16 @@ window.__ModuleLoader__.load({
 				onDone: function () { clearToast(); }
 			});
 		}
-		// ---- 注册冲突降级（防启动崩溃 + 用户可见提示） ----
+		// ---- 注册异常软降级（防启动崩溃 + 用户可见提示） ----
 		// slots.inject 的回调若让异常外泄，延迟执行路径（目标 slot 声明晚于插件加载时，
 		// 回调在官方声明者的 register 栈里跑 / 声明订阅里 queueMicrotask re-throw）会
-		// 打断官方 UI 激活 → web 整页无法启动。所有 register 调用必须 catch 在回调内：
-		// 单个条目降级（跳过），绝不外泄。降级时 console.warn 留排查线索，并弹一次
-		// Toast 告知用户（齿轮根在 apply 时已常驻挂载，宿主尚未挂载时 Toast 快照会在
-		// 挂载后显示）。本函数只在 catch 块里调用，自身任何异常都必须吞掉。
-		var slotConflictToasted = false;
+		// 打断官方 UI 激活 → web 整页无法启动。两层都必须兜：register 的异常 catch 在
+		// 回调内（返回 undefined 即"无可清理资源"，官方 cachedSlotInject 对 falsy 返回
+		// 无害）；slots.inject 本身同步抛（声明等待 setup 失败等）也 catch 在调用点。
+		// 降级时 console.warn 留排查线索，并弹一次 Toast 告知用户（齿轮根在 apply 时已
+		// 常驻挂载，宿主尚未挂载时 Toast 快照会在挂载后显示）。以下两个函数只在 catch
+		// 块里调用，自身任何异常都必须吞掉。
+		var slotDegradedToasted = false;
 		function noteSlotDegradation(slot, cell, err) {
 			try {
 				var detail = err && typeof err.message === "string" ? err.message : String(err);
@@ -2633,11 +2643,53 @@ window.__ModuleLoader__.load({
 						console.warn("[dsh-turn-fold] 渲染位注册失败（" + slot + " → " + cell + "）：" + detail + " —— 该条目已跳过，插件其余功能不受影响，DSH 启动不受影响");
 					}
 				} catch (e) { /* 忽略 */ }
-				if (!slotConflictToasted) {
-					slotConflictToasted = true;
-					showToast(_T("slotConflictToast"));
+				if (!slotDegradedToasted) {
+					slotDegradedToasted = true;
+					showToast(_T("slotDegradedToast"));
 				}
 			} catch (e) { /* 通知路径绝不外泄 */ }
+		}
+		/** 统一的注册管道：inject 声明等待 + 回调内 register 各自兜异常，单个条目降级
+		 *  绝不外泄（外泄会带崩 web 启动）。所有 slot 注册一律走这里，别再手写双 try ——
+		 *  把"异常不外泄"从每处调用点的自觉变成管道的结构性保证。 */
+		function safeRegisterSlot(slotsSvc, options, component) {
+			var slot = options.name;
+			var cell = options.key !== undefined ? options.key : (options.id !== undefined ? options.id : "?");
+			try {
+				slotsSvc.inject(slot, function () {
+					try {
+						return slotsSvc.register(options, component);
+					} catch (err) {
+						noteSlotDegradation(slot, cell, err);
+						return undefined;
+					}
+				});
+			} catch (err) {
+				// inject 本身同步抛（声明等待 setup 失败等）：同样降级 + 提示，不外泄
+				noteSlotDegradation(slot, cell, err);
+			}
+		}
+		/** 注册前探测同 key/id 的 priority -1 是否已被其他插件占用；被占则自动让位到
+		 *  第一个空闲值（放弃该渲染位——lowest renders 语义下 p>=1 永远压不过官方 0，
+		 *  让位即弃权），避免 "keyed slot ... already has an entry ... at priority ..."
+		 *  启动失败。官方 0 位无需探测占用（官方条目就在那里，撞 0 才是错），free 扫描
+		 *  从 1 开始。chat.node 按同 key、设置行按同 id 匹配，其余 slot 复用同一实现。 */
+		function resolveSlotPriority(slots, slotName, match, label) {
+			try {
+				var entries = slots && typeof slots.entries === "function" ? slots.entries(slotName) : null;
+				var taken = {};
+				for (var i = 0; entries && i < entries.length; i++) {
+					var e = entries[i] && entries[i].options;
+					if (e && match(e)) taken[e.priority || 0] = true;
+				}
+				if (!taken[-1]) return -1;
+				var p = 1;
+				while (taken[p]) p += 1;
+				console.warn("[dsh-turn-fold] " + label + " 的 priority -1 已被其他插件占用，自动让位到 priority " + p + "，该渲染位已让给对方");
+				return p;
+			} catch (err) {
+				return -1;
+			}
 		}
 		/** 步骤折叠栏标题中的文件链接：点击复制绝对路径，悬停变 DeepSeek 主题蓝色。 */
 		function FileLink(props) {
@@ -3633,7 +3685,7 @@ window.__ModuleLoader__.load({
 		 *    不会再有新内容到达，即使 text 未出现（被停止的回合往往没有最终 text），也必须
 		 *    走闭合标题——否则运行态标题（"正在思考/正在运行"+shimmer 动效）会永久停留。 */
 		function segmentLabel(group, nodes, closed) {
-			if ((group.textAfter || closed === true) && group.toolCount > 0) {
+			if (isSegmentClosed(group, closed) && group.toolCount > 0) {
 				// 段闭合：按工具类型分组统计（think 不算），结果缓存
 				var cacheKey = segmentCacheKey(group, nodes);
 				var cached = segmentLabelCache.get(cacheKey);
@@ -3658,7 +3710,7 @@ window.__ModuleLoader__.load({
 				segmentLabelCache.set(cacheKey, label);
 				return label;
 			}
-			if ((group.textAfter || closed === true) && group.toolCount === 0) {
+			if (isSegmentClosed(group, closed) && group.toolCount === 0) {
 				// 纯 think 段闭合后显示"思考了N次"（"运行了 0 条命令"不好看）；
 				// 兜底：段内无 think 节点（理论上不可能）时按 1 次计。
 				var thinkCount = group.thinkCount > 0 ? group.thinkCount : 1;
@@ -3693,7 +3745,7 @@ window.__ModuleLoader__.load({
 		 *  的结果，按 leaderKey 缓存（段闭合后字段稳定）。 */
 		var segmentFilePathsCache = new Map();
 		function segmentFilePaths(group, nodes, closed) {
-			if (!group || (!group.textAfter && closed !== true) || group.toolCount === 0) return null;
+			if (!group || !isSegmentClosed(group, closed) || group.toolCount === 0) return null;
 			var cacheKey = segmentCacheKey(group, nodes);
 			if (segmentFilePathsCache.has(cacheKey)) return segmentFilePathsCache.get(cacheKey);
 			var stats = classifySegmentTools(group, nodes);
@@ -3790,15 +3842,22 @@ window.__ModuleLoader__.load({
 		function capitalizeFirst(s) {
 			return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 		}
-		/** 步骤折叠栏标题元素：think / 工具运行中用"前缀 + 官方图标 + 名称 + 摘要"（官方行风格），
+		/** 步骤段是否已闭合的唯一判定：text 出现（group.textAfter）或所属回合已结束
+		 *  （closed=true，含用户停止/出错——被打断的回合往往没有最终 text）。所有标题/
+		 *  图标/文件链接的闭合态分支一律经它，别再手写第二份条件——两处写法一旦漂移，
+		 *  就会出现"标题已闭合但扑克牌还在转"这类半闭合错位。 */
+		function isSegmentClosed(group, closed) {
+			return !!(group.textAfter || closed === true);
+		}
+		/** 步骤折叠栏标题：think / 工具运行中用"前缀 + 官方图标 + 名称 + 摘要"（官方行风格），
 		 *  其余情况为纯文本。 */
-		/** 步骤折叠栏标题（React 版）：运行中（textAfter=false 且回合未结束）渲染流式运行态
+		/** 步骤折叠栏标题（React 版）：运行中（!isSegmentClosed）渲染流式运行态
 		 *  标题（"正在思考/正在运行 · 摘要" + shimmer 动效）；其余走 segmentLabel 纯文本。
 		 *  回合结束（含用户停止/出错）后即使段内 text 未出现（被打断的回合没有最终总结），
 		 *  也必须立即退出运行态标题——否则"正在思考"+动效会永久停留（bug：被停止的回合
 		 *  最后一个步骤折叠栏一直显示运行中）。 */
 		function segmentTitle(group, nodes, closed) {
-			if (!group.textAfter && closed !== true) {
+			if (!isSegmentClosed(group, closed)) {
 				var last = group.lastActiveKey ? nodes.get(group.lastActiveKey) : null;
 				if (last && last.kind === "assistant-step") {
 					var text = reasoningText(last);
@@ -3887,14 +3946,14 @@ window.__ModuleLoader__.load({
 			var title = segmentTitle(group, nodes, closed);
 			var filePaths = segmentFilePaths(group, nodes, closed);
 			var danger = group.failures > 0;
-			// 运行中 = 段未闭合（!textAfter）且回合未结束（!closed）。一个步骤 = 步骤折叠栏内
+			// 运行中 = 段未闭合（isSegmentClosed 取反）。一个步骤 = 步骤折叠栏内
 			// 所有工具调用+思考（computeGroup 以 text 为边界向前/向后扩展），text 是唯一闭合标记：
 			//   步骤开始（text 尚未出现）→ 卡牌动画；text 出现（步骤结束）→ 牌堆/扇形。
 			// 回合结束后（closed，含中断/出错）强制牌堆，即使最后一个步骤段没有 text
 			// （中断/出错时可能没有最终总结 text），避免永久动画。
 			// 注意：整回合折叠下 text 常只在回合最终总结出现，此前该回合所有步骤折叠栏
 			// 都保持动画，直至最终 text 一并切牌堆——这正是"未闭合全程动画"的语义。
-			var running = !group.textAfter && !closed;
+			var running = !isSegmentClosed(group, closed);
 			var pokerIcon = (foldIconStyle === "poker" && running)
 				? react.createElement(PokerAnimIcon, { open: open })
 				: (foldIconStyle === "poker"
@@ -4282,9 +4341,14 @@ window.__ModuleLoader__.load({
 		// 的 user key，user 消息交由官方或专用插件渲染。
 		function RunningTurnDock(props) {
 			var useSession = props.useSession;
-			// 快照订阅必须无条件调用（hooks 顺序，见 GroupedToolCallView 说明）。session 域
-			// slot 条目的标准 props 组含 useSession/useChat（官方 QueueDock 同源用法）：
-			// 0.1.2 经 props.useChat 读拆分后的 ChatSnapshot，旧版从 SessionSnapshot 顶层读。
+			var sessionId = props.sessionId;
+			// dock 条目整回合常驻挂载：会话切换缓存清理也由它兜底（旧 user 格占位条承担的
+			// 职责随迁移带过来——纯问答会话没有 GroupedToolCallView 触发清理时，切走后
+			// segmentLabelCache/overrides 等不再滞留上一个会话）。快照订阅必须无条件调用
+			// （hooks 顺序，见 GroupedToolCallView 说明）。session 域 slot 条目的标准 props
+			// 组含 useSession/useChat（官方 QueueDock 同源用法）：0.1.2 经 props.useChat 读
+			// 拆分后的 ChatSnapshot，旧版从 SessionSnapshot 顶层读。
+			trackSession(sessionId);
 			var chatSnap = useChatSnapshotData(props);
 			var running = useSession ? useSession(function (s) { return s.running === true; }) : false;
 			// 订阅折叠模式（与快照订阅同为无条件调用，保持 hooks 顺序）
@@ -4466,38 +4530,16 @@ window.__ModuleLoader__.load({
 					// 兼容适配（同 chat.node 的 resolveChatNodePriority）：设置行也 shadow 官方
 					// transcript-view（priority 0），若 -1 已被其他插件占用则自动让位。
 					var resolveSettingsRowPriority = function (slots) {
-						try {
-							var entries = slots && typeof slots.entries === "function" ? slots.entries("settings.general.item") : null;
-							var taken = { 0: true }; // 官方渲染器默认 priority 0，预留该位避免撞官方
-							for (var i = 0; entries && i < entries.length; i++) {
-								var e = entries[i] && entries[i].options;
-								if (e && e.id === "transcript-view") taken[e.priority || 0] = true;
-							}
-							if (!taken[-1]) return -1;
-							var p = 1;
-							while (taken[p]) p += 1;
-							console.warn("[dsh-turn-fold] settings.general.item id \"transcript-view\" 的 priority -1 已被其他插件占用，自动让位到 priority " + p);
-							return p;
-						} catch (err) {
-							return -1;
-						}
+						return resolveSlotPriority(slots, "settings.general.item", function (o) { return o.id === "transcript-view"; }, "settings.general.item id \"transcript-view\"");
 					};
-					slotsService2.inject("settings.general.item", function () {
-						try {
-							return slotsService2.register({
-								name: "settings.general.item",
-								id: "transcript-view",
-								order: 12,
-								locale: "conversation",
-								priority: resolveSettingsRowPriority(slotsService2),
-								inject: settingsRowInject
-							}, SettingsTranscriptViewRow);
-						} catch (err) {
-							// 同 chat.node：异常不外泄（延迟路径下外泄会带崩 web 启动）
-							noteSlotDegradation("settings.general.item", "transcript-view", err);
-							return undefined;
-						}
-					});
+					safeRegisterSlot(slotsService2, {
+						name: "settings.general.item",
+						id: "transcript-view",
+						order: 12,
+						locale: "conversation",
+						priority: resolveSettingsRowPriority(slotsService2),
+						inject: settingsRowInject
+					}, SettingsTranscriptViewRow);
 				}
 			} catch (e) { /* settingsScope 或 slots 不可用：跳过设置行注册 */ }
 			// 一次性"新版本更新说明"通知：独立 React 根挂在 <body> 上，与折叠渲染无关。
@@ -4561,37 +4603,36 @@ window.__ModuleLoader__.load({
 				// ToolCallTree（消费 tool-call 条目的 hostInfo）；context 段同理。任一视图都可能
 				// 委托渲染任何官方组件，因此三格的 inject 面统一携带全部官方 hooks。
 				// 单条官方条目探测抛错只跳过该条（其余照常合并）；全部缺失/抛错时退回仅自备
-				// hook（各旧版行为不变）。
-				var chatNodeEntryInject = function () {
-					return function (sessionId) {
-						var hooks = {};
-						if (connection && connection.generation) {
-							hooks.connectionGeneration = connection.generation;
-						} else if (connection && connection.hostDescription) {
-							hooks.hostDescription = connection.hostDescription;
-						}
-						try {
-							var entries = slotsService && typeof slotsService.entries === "function"
-								? slotsService.entries("conversation.chat.node") : null;
-							for (var i = 0; entries && i < entries.length; i++) {
-								var e = entries[i];
-								if (!e || !e.options || (e.options.priority || 0) !== 0) continue;
-								var injectFn = e.inject;
-								if (typeof injectFn !== "function") continue;
-								try {
-									var face = injectFn.call(e, sessionId);
-									if (face && typeof face.hooks === "object" && face.hooks !== null) {
-										for (var name in face.hooks) {
-											if (!Object.prototype.hasOwnProperty.call(face.hooks, name)) continue;
-											if (face.hooks[name] === undefined || hooks[name] !== undefined) continue;
-											hooks[name] = face.hooks[name];
-										}
+				// hook（各旧版行为不变）。三个 shadow 格共用这一个函数（闭包只捕获稳定的
+				// connection/slotsService，不存在每格差异）。
+				var chatNodeEntryInject = function (sessionId) {
+					var hooks = {};
+					if (connection && connection.generation) {
+						hooks.connectionGeneration = connection.generation;
+					} else if (connection && connection.hostDescription) {
+						hooks.hostDescription = connection.hostDescription;
+					}
+					try {
+						var entries = slotsService && typeof slotsService.entries === "function"
+							? slotsService.entries("conversation.chat.node") : null;
+						for (var i = 0; entries && i < entries.length; i++) {
+							var e = entries[i];
+							if (!e || !e.options || (e.options.priority || 0) !== 0) continue;
+							var injectFn = e.inject;
+							if (typeof injectFn !== "function") continue;
+							try {
+								var face = injectFn.call(e, sessionId);
+								if (face && typeof face.hooks === "object" && face.hooks !== null) {
+									for (var name in face.hooks) {
+										if (!Object.prototype.hasOwnProperty.call(face.hooks, name)) continue;
+										if (face.hooks[name] === undefined || hooks[name] !== undefined) continue;
+										hooks[name] = face.hooks[name];
 									}
-								} catch (errOne) { /* 单条官方条目探测失败：跳过该条 */ }
-							}
-						} catch (err) { /* entries 不可用：退回仅自备 hook */ }
-						return { hooks: hooks };
-					};
+								}
+							} catch (errOne) { /* 单条官方条目探测失败：跳过该条 */ }
+						}
+					} catch (err) { /* entries 不可用：退回仅自备 hook */ }
+					return { hooks: hooks };
 				};
 				// shadow 条目的 locale 命名空间按条目 key 对应跟随官方——新版同一个 slot 上
 				// 官方条目的 locale 不一致：tool-call 由 ui-tool 注册、声明 'conversation'
@@ -4618,90 +4659,46 @@ window.__ModuleLoader__.load({
 					} catch (e) { /* 旧版无 chat 命名空间或 bind 抛错 */ }
 					return "conversation";
 				};
-				// 兼容适配：注册前探测该 key 的 priority -1 是否已被其他插件占用。
-				// 若已占用则自动让位到第一个不冲突的值（放弃该 key 的渲染权），
+				// 兼容适配：注册前探测同 key/id 的 priority -1 是否已被其他插件占用。
+				// 若已占用则自动让位到第一个不冲突的值（放弃该 key 的渲染权——lowest
+				// renders 语义下 p>=1 永远压不过官方 0，让位即弃权），
 				// 避免 "keyed slot ... already has an entry for key ... at priority ..." 启动失败。
+				// 官方 0 位无需探测占用（官方条目就在那里，撞 0 才是错），所以 free-priority
+				// 扫描从 1 开始。
 				var resolveChatNodePriority = function (slots, key) {
-					try {
-						var entries = slots && typeof slots.entries === "function" ? slots.entries("conversation.chat.node") : null;
-						var taken = { 0: true }; // 官方渲染器默认 priority 0，预留该位避免撞官方
-						for (var i = 0; entries && i < entries.length; i++) {
-							var e = entries[i] && entries[i].options;
-							if (e && e.key === key) taken[e.priority || 0] = true;
-						}
-						if (!taken[-1]) return -1;
-						var p = 1;
-						while (taken[p]) p += 1;
-						console.warn("[dsh-turn-fold] conversation.chat.node key \"" + key + "\" 的 priority -1 已被其他插件占用，自动让位到 priority " + p + "，该 key 的渲染权已让给对方");
-						return p;
-					} catch (err) {
-						return -1;
-					}
+					return resolveSlotPriority(slots, "conversation.chat.node", function (o) { return o.key === key; }, "conversation.chat.node key \"" + key + "\"");
 				};
-				scope.slots.inject("conversation.chat.node", function () {
-					try {
-						return scope.slots.register({
-							name: "conversation.chat.node",
-							key: "tool-call",
-							priority: resolveChatNodePriority(scope.slots, "tool-call"),
-							locale: detectChatLocale(scope.slots, "tool-call"),
-							inject: chatNodeEntryInject()
-						}, GroupedToolCallView);
-					} catch (err) {
-						// 异常绝不外泄：延迟路径下回调在官方声明者栈里跑，外泄会带崩 web 启动
-						noteSlotDegradation("conversation.chat.node", "tool-call", err);
-						return undefined;
-					}
-				});
-				scope.slots.inject("conversation.chat.node", function () {
-					try {
-						return scope.slots.register({
-							name: "conversation.chat.node",
-							key: "assistant-step",
-							priority: resolveChatNodePriority(scope.slots, "assistant-step"),
-							locale: detectChatLocale(scope.slots, "assistant-step"),
-							inject: chatNodeEntryInject()
-						}, GroupedAssistantView);
-					} catch (err) {
-						noteSlotDegradation("conversation.chat.node", "assistant-step", err);
-						return undefined;
-					}
-				});
-				scope.slots.inject("conversation.chat.node", function () {
-					try {
-						return scope.slots.register({
-							name: "conversation.chat.node",
-							key: "context",
-							priority: resolveChatNodePriority(scope.slots, "context"),
-							locale: detectChatLocale(scope.slots, "context"),
-							inject: chatNodeEntryInject()
-						}, GroupedContextView);
-					} catch (err) {
-						noteSlotDegradation("conversation.chat.node", "context", err);
-						return undefined;
-					}
-				});
+				// 三个 chat.node shadow 格 + dock 占位条统一走 safeRegisterSlot（外层
+				// inject / 内层 register 都兜住，异常不外泄）。
+				safeRegisterSlot(scope.slots, {
+					name: "conversation.chat.node",
+					key: "tool-call",
+					priority: resolveChatNodePriority(scope.slots, "tool-call"),
+					locale: detectChatLocale(scope.slots, "tool-call"),
+					inject: chatNodeEntryInject
+				}, GroupedToolCallView);
+				safeRegisterSlot(scope.slots, {
+					name: "conversation.chat.node",
+					key: "assistant-step",
+					priority: resolveChatNodePriority(scope.slots, "assistant-step"),
+					locale: detectChatLocale(scope.slots, "assistant-step"),
+					inject: chatNodeEntryInject
+				}, GroupedAssistantView);
+				safeRegisterSlot(scope.slots, {
+					name: "conversation.chat.node",
+					key: "context",
+					priority: resolveChatNodePriority(scope.slots, "context"),
+					locale: detectChatLocale(scope.slots, "context"),
+					inject: chatNodeEntryInject
+				}, GroupedContextView);
 				// 0 秒占位条：输入区 dock（list slot，按 id 共存，不存在 priority 冲突面；
 				// 与官方 todo=0/queue=20 错开取 order 10）。旧版 DSH 未声明该 slot 时
-				// register 抛 "not declared"——inject/register 对未知 slot 的行为版本间
-				// 有差异，两层都兜住：失败仅跳过占位条（装饰性功能），绝不能拖垮插件加载。
-				try {
-					scope.slots.inject("conversation.input.dock", function () {
-						try {
-							return scope.slots.register({
-								name: "conversation.input.dock",
-								id: "turn-fold-running",
-								order: 10
-							}, RunningTurnDock);
-						} catch (e) {
-							noteSlotDegradation("conversation.input.dock", "turn-fold-running", e);
-							return undefined;
-						}
-					});
-				} catch (e) {
-					// inject 本身同步抛（声明等待 setup 失败等）：同样降级 + 提示，不外泄
-					noteSlotDegradation("conversation.input.dock", "turn-fold-running", e);
-				}
+				// register/inject 抛 "not declared"——失败仅跳过占位条（装饰性功能）。
+				safeRegisterSlot(scope.slots, {
+					name: "conversation.input.dock",
+					id: "turn-fold-running",
+					order: 10
+				}, RunningTurnDock);
 			});
 		};
 
