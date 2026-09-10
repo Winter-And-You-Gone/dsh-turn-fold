@@ -11,7 +11,7 @@ import { createRequire } from 'node:module'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { loadPlugin } from './helpers/loader.mjs'
-import { createSessionStore, makeUseSession, makeNode, userNode, asNode, toolNode, contextNode, buildSnapshot } from './helpers/store.mjs'
+import { createSessionStore, makeUseSession, makeNode, userNode, asNode, toolNode, contextNode, tailNode, buildSnapshot } from './helpers/store.mjs'
 import { TURN13, NO_TOOL, OUTSIDE_SCOPE } from './helpers/fixtures.mjs'
 
 const require = createRequire(import.meta.url)
@@ -401,5 +401,80 @@ describe('connection 三版本兼容（DSH 0.1.2-rc.1+ / 0.1.3：官方条目 in
     const hooks = toolEntry.options.inject().hooks // 抛错条目 + priority 非 0 条目都被跳过，不外泄
     assert.ok(hooks.connectionGeneration, '退回仅自备 connectionGeneration')
     assert.equal(hooks.hostInfo, undefined, 'priority 7 的条目（非官方 priority 0）不参与合并')
+  })
+})
+
+describe('回归：隐藏纯工具步骤的消耗token漏计（对齐官方统计）', () => {
+  // 真机案例（DSH WorkSpace「SVG鹈鹕骑自行车动画」，单回合 3 步）：step2 的 assistant
+  // 消息只有 tool-call（present）块、无可见 reasoning/text → 官方以 visibility:hidden
+  // 结算该 assistant-step（assistant.ts blockIsVisible：tool-call 块不可见），且
+  // orderedVisibleChatNodes 只把 visible 节点写进 order/locations → 旧版插件只遍历
+  // locations.getTurn 漏计 step2 的 58,543（官方统计 175,844 vs 插件 117,301）。
+  // usage 取自该会话持久化事件日志的 assistant/message 逐步原值。
+  const U1 = { inputTokens: 18396, outputTokens: 36020, cacheReadTokens: 4032 } // = 58,448
+  const U2 = { inputTokens: 54452, outputTokens: 59, cacheReadTokens: 4032 } // = 58,543（隐藏步骤）
+  const U3 = { inputTokens: 129, outputTokens: 292, cacheReadTokens: 58432 } // = 58,853
+  const OFFICIAL_TOTAL = 175844 // 58448 + 58543 + 58853，官方 tokenUsage projection 同值
+
+  function hiddenStepSnapshot({ withTokenUsage = false, officialTotal = OFFICIAL_TOTAL } = {}) {
+    const tail = withTokenUsage
+      ? [tailNode('tail-13', 500, {
+          tokensPerSecond: 144,
+          // 模拟官方 deriveTurnTokenUsage：多算一个只在事件日志里存在的被重试 attempt
+          // （+9000 input），节点上不可见——证明官方值优先于节点累加
+          tokenUsage: { uncachedInputTokens: 72977 + 9000, outputTokens: 36371, totalTokens: officialTotal + 9000, cacheReadTokens: 66496 },
+        })]
+      : []
+    const nodes = [
+      userNode('u-13', 100),
+      asNode('as-13-1', 200, { step: 1, usage: U1 }),
+      toolNode('tc-13-1', 250, { step: 1 }),
+      asNode('as-13-2', 300, { step: 2, usage: U2, hidden: true }), // 纯工具步骤 → hidden
+      toolNode('tc-13-2', 320, { step: 2 }),
+      asNode('as-13-3', 400, { step: 3, usage: U3 }),
+      ...tail,
+    ]
+    return buildSnapshot(nodes, {
+      turnEnds: new Map([[13, 500]]),
+      turnTimings: new Map([[13, { startTime: 1000, endTime: 9000 }]]),
+    })
+  }
+
+  it('无官方 tokenUsage（旧版/证据不全）：从 nodes.values() 补采隐藏 assistant-step → 总数对齐官方统计', () => {
+    const s = hiddenStepSnapshot()
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
+    assert.equal(m.tokens, OFFICIAL_TOTAL, '58448 + 58543(隐藏) + 58853 = 175844（修复前 117301）')
+    assert.equal(m.outputTokens, 36371)
+    // 缓存命中：66496 / (72977 + 66496 + 0) → 47.68
+    assert.equal(m.cacheHitPercent, '47.68')
+  })
+
+  it('官方 tokenUsage 优先于节点累加（被重试 attempt 只在事件日志里也计入）', () => {
+    const s = hiddenStepSnapshot({ withTokenUsage: true })
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
+    assert.equal(m.tokens, OFFICIAL_TOTAL + 9000, '官方 totalTokens（含重试 attempt）优先，不用节点累加值 175844')
+    assert.equal(m.outputTokens, 36371)
+    // 官方 TurnUsagePanel 同款分母：cacheRead / (totalTokens - outputTokens)
+    // = 66496 / (184844 - 36371) → 44.79
+    assert.equal(m.cacheHitPercent, '44.79')
+    // 其余指标不受影响：tok/s 与 ttft 仍读 turn-tail
+    assert.equal(m.tokensPerSecond, 144)
+    assert.equal(T.turnHeaderLabel(m), '耗时8秒 · 消耗184844token · 144tok/s · 缓存命中44.79%')
+  })
+
+  it('跨回合不串账：其他回合的隐藏 assistant-step 不计入本回合', () => {
+    const s = hiddenStepSnapshot()
+    // turn 99 的隐藏步骤（data.turn=99）已物化在同一个 nodes Map 里
+    const other = asNode('as-99-1', 600, { step: 1, usage: U2, hidden: true, turn: 99 })
+    s.chat.nodes.set(other.key, other)
+    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
+    assert.equal(m.tokens, OFFICIAL_TOTAL, 'turn 99 的 usage 不串进 turn 13')
+  })
+
+  it('旧版节点容器无 values() 方法（0.1.1 形状）→ 不崩溃，回退 getTurn 路径', () => {
+    const s = hiddenStepSnapshot()
+    const legacyNodes = { get: (k) => s.chat.nodes.get(k) } // 无 values()
+    const m = T.computeTurnMetrics(13, legacyNodes, s.chat.locations, s.turnTimings, undefined)
+    assert.equal(m.tokens, 117301, '只能看到 visible 节点（旧行为：58448 + 58853）')
   })
 })

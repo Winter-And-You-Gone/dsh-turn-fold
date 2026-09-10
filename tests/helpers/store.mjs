@@ -40,18 +40,20 @@ export function toolNode(key, anchorSeq, { isError = false, running = false, ste
   return makeNode(key, 'tool-call', anchorSeq, { data: { root }, step })
 }
 
-/** assistant-step 节点（含 reasoning 块；可选 usage / timing）。timing 传入后构造
+/** assistant-step 节点（含 reasoning 块；可选 usage / timing / hidden）。timing 传入后构造
  *  data.finalNode.timing（{ stepStartTime, firstTokenTime, completedTime }），
- *  模拟官方 step settle 后的节点结构，供 computeTurnMetrics 实时读取官方 TTFT。 */
-export function asNode(key, anchorSeq, { blocks = null, usage = null, step = 1, status = 'settled', timing = null } = {}) {
+ *  模拟官方 step settle 后的节点结构，供 computeTurnMetrics 实时读取官方 TTFT。
+ *  hidden=true 模拟官方对纯 tool-call 步骤的结算：assistant-step 以 visibility:hidden
+ *  发布（buildSnapshot 会把它从 order/locations 剔除，但 nodes Map 里仍在）。 */
+export function asNode(key, anchorSeq, { blocks = null, usage = null, step = 1, status = 'settled', timing = null, hidden = false, turn = 13 } = {}) {
   const b = blocks ?? [
     { kind: 'reasoning', text: '思考过程' },
     { kind: 'text', text: '正文' },
   ]
-  const data = { status, turn: 13, step, blocks: b }
+  const data = { status, turn, step, blocks: b }
   if (usage) data.usage = usage
-  if (timing) data.finalNode = { kind: 'assistant', turn: 13, step, blocks: b, timing }
-  return makeNode(key, 'assistant-step', anchorSeq, { data, step })
+  if (timing) data.finalNode = { kind: 'assistant', turn, step, blocks: b, timing }
+  return makeNode(key, 'assistant-step', anchorSeq, { data, step, turn, ...(hidden ? { visibility: 'hidden' } : {}) })
 }
 
 /** user 节点 */
@@ -64,10 +66,17 @@ export function contextNode(key, anchorSeq) {
   return makeNode(key, 'context', anchorSeq, { data: { seq: anchorSeq, source: { kind: 'plugin' } } })
 }
 
-/** turn-tail 节点 */
-export function tailNode(key, anchorSeq, { tokensPerSecond, ttftMs } = {}) {
+/** turn-tail 节点（可选 ttftMs / tokensPerSecond / tokenUsage——官方 deriveTurnTokenUsage
+ *  的每回合精确统计，随 turn-tail 下发，旧版 DSH 无此字段） */
+export function tailNode(key, anchorSeq, { tokensPerSecond, ttftMs, tokenUsage } = {}) {
   return makeNode(key, 'turn-tail', anchorSeq, {
-    data: { turn: 13, seq: anchorSeq, ...(ttftMs !== undefined ? { ttftMs } : {}), ...(tokensPerSecond !== undefined ? { tokensPerSecond } : {}) },
+    data: {
+      turn: 13,
+      seq: anchorSeq,
+      ...(ttftMs !== undefined ? { ttftMs } : {}),
+      ...(tokensPerSecond !== undefined ? { tokensPerSecond } : {}),
+      ...(tokenUsage !== undefined ? { tokenUsage } : {}),
+    },
   })
 }
 

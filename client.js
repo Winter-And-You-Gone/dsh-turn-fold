@@ -1904,7 +1904,41 @@ window.__ModuleLoader__.load({
 			if (denominator === 0) return null;
 			return (cacheReadTokens / denominator * 100).toFixed(2);
 		}
+		/** 累加一个 assistant-step 节点的 usage 与实时 TTFT 证据（acc 为可变累加器）。
+		 *  visible 与 hidden 节点共用同一入口：隐藏纯工具步骤的 usage 同样是真实计费。
+		 *  同一节点只累加一次（acc.counted 按对象引用去重——locations.getTurn 与
+		 *  nodes.values() 会交出同一批节点对象，漏去重会双倍计数）。 */
+		function accumulateAssistantStep(node, acc) {
+			if (acc.counted.has(node)) return;
+			acc.counted.add(node);
+			var d = node.data;
+			if (d.usage) {
+				var u = d.usage;
+				if (typeof u.inputTokens === "number" && isFinite(u.inputTokens)) acc.input += u.inputTokens;
+				if (typeof u.outputTokens === "number" && isFinite(u.outputTokens)) acc.output += u.outputTokens;
+				if (typeof u.cacheReadTokens === "number" && isFinite(u.cacheReadTokens)) acc.cacheRead += u.cacheReadTokens;
+				if (typeof u.cacheWriteTokens === "number" && isFinite(u.cacheWriteTokens)) acc.cacheWrite += u.cacheWriteTokens;
+			}
+			var fn = d.finalNode;
+			var stepTiming = fn && fn.timing;
+			if (stepTiming && typeof stepTiming.stepStartTime === "number" && typeof stepTiming.firstTokenTime === "number") {
+				var stepNum = typeof fn.step === "number" ? fn.step
+					: (typeof d.step === "number" ? d.step : (typeof node.step === "number" ? node.step : -1));
+				if (stepNum < acc.liveFirstStep) {
+					acc.liveFirstStep = stepNum;
+					acc.liveTtft = Math.max(0, stepTiming.firstTokenTime - stepTiming.stepStartTime);
+				}
+			}
+		}
 		/** 汇总本回合的耗时 / 消耗 token / tok/s / 缓存命中率。
+		 *
+		 *  消耗 token 的取值优先级（对齐官方统计口径）：
+		 *  ① 回合结束后 turn-tail 携带的官方 tokenUsage（deriveTurnTokenUsage 在持久化
+		 *     事件日志上折叠全部 attempt 的精确值——含被重试请求与隐藏纯工具步骤）；
+		 *  ② 节点累加值：locations.getTurn 的 visible 节点 + nodes.values() 补采的隐藏
+		 *     assistant-step（纯 tool-call 的中间步骤以 visibility:hidden 结算，官方
+		 *     orderedVisibleChatNodes 不把它们写进 order/locations，只遍历 getTurn 会漏计）。
+		 *
 		 *  @param {number|undefined} liveNow - 运行中回合传 Date.now() 用于实时耗时计算；
 		 *    回合结束后传 undefined，耗时从 turnTimings 的 endTime 精确计算。 */
 		function computeTurnMetrics(turn, nodes, locations, turnTimings, liveNow) {
@@ -1919,64 +1953,83 @@ window.__ModuleLoader__.load({
 					durationMs = Math.max(0, endTime - timing.startTime);
 				}
 			}
-			var input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
 			var tokensPerSecond, ttftMs;
 			// 官方 TTFT（deriveTurnMetrics 同款语义）：回合结束后的 turn-tail 聚合值优先；
 			// 回合未结束时，从已 settle 的 assistant-step 的 data.finalNode.timing 实时读取
 			// ——官方在 step settle（assistant/message）后把 timing 写入 finalNode
 			// （{ stepStartTime, firstTokenTime, completedTime }；中断的 step 无 timing），
 			// 取 step 号最小者（第一个请求）的 firstTokenTime - stepStartTime。
-			var liveTtft = null;
-			var liveFirstStep = Infinity;
+			var acc = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, liveTtft: null, liveFirstStep: Infinity, counted: new Set() };
+			var officialUsage = null;
 			for (var i = 0; i < keys.length; i++) {
 				var n = nodes.get(keys[i]);
 				if (!n) continue;
 				if (n.kind === "assistant-step" && n.data) {
-					if (n.data.usage) {
-						var u = n.data.usage;
-						if (typeof u.inputTokens === "number" && isFinite(u.inputTokens)) input += u.inputTokens;
-						if (typeof u.outputTokens === "number" && isFinite(u.outputTokens)) output += u.outputTokens;
-						if (typeof u.cacheReadTokens === "number" && isFinite(u.cacheReadTokens)) cacheRead += u.cacheReadTokens;
-						if (typeof u.cacheWriteTokens === "number" && isFinite(u.cacheWriteTokens)) cacheWrite += u.cacheWriteTokens;
-					}
-					var fn = n.data.finalNode;
-					var timing = fn && fn.timing;
-					if (timing && typeof timing.stepStartTime === "number" && typeof timing.firstTokenTime === "number") {
-						var stepNum = typeof fn.step === "number" ? fn.step
-							: (typeof n.data.step === "number" ? n.data.step : (typeof n.step === "number" ? n.step : -1));
-						if (stepNum < liveFirstStep) {
-							liveFirstStep = stepNum;
-							liveTtft = Math.max(0, timing.firstTokenTime - timing.stepStartTime);
-						}
-					}
+					accumulateAssistantStep(n, acc);
 				} else if (n.kind === "turn-tail" && n.data) {
 					// 官方 turn-tail 节点携带权威的 tok/s 与 ttftMs（该回合第一个 step 的
 					// firstTokenTime - stepStartTime，来自持久化事件日志，刷新页面不丢）。
 					if (typeof n.data.tokensPerSecond === "number") tokensPerSecond = n.data.tokensPerSecond;
 					if (typeof n.data.ttftMs === "number") ttftMs = n.data.ttftMs;
+					if (officialUsage === null && n.data.tokenUsage && typeof n.data.tokenUsage.totalTokens === "number") {
+						officialUsage = n.data.tokenUsage;
+					}
+				}
+			}
+			// 隐藏 assistant-step 补采：官方 orderedVisibleChatNodes 只把 visible 节点写进
+			// order/locations（chat-snapshot-builder），纯 tool-call 的中间步骤（无可见
+			// reasoning/text）以 visibility:hidden 结算，locations.getTurn 看不到 → 只遍历
+			// getTurn 会漏计（真机案例：官方统计 175,844 vs 插件 117,301，差值恰为一个
+			// 隐藏步骤的 58,543）。ChatNodeStore.values() 返回全部已物化节点
+			// （visible+hidden，旧版缺失该方法是 undefined → 自动跳过），按引用去重补采。
+			if (typeof nodes.values === "function") {
+				var materialized = nodes.values();
+				var list = typeof materialized.length === "number" ? materialized : Array.from(materialized);
+				for (var j = 0; j < list.length; j++) {
+					var v = list[j];
+					if (!v || v.kind !== "assistant-step" || !v.data) continue;
+					if (v.data.turn !== turn) continue;
+					accumulateAssistantStep(v, acc);
 				}
 			}
 			// 回合未结束（turn-tail 未出现）时用 finalNode.timing 实时值
-			if (ttftMs === undefined && liveTtft !== null) ttftMs = liveTtft;
-			var billedInput = input + cacheRead + cacheWrite;
-			var hasUsage = billedInput > 0 || output > 0;
+			if (ttftMs === undefined && acc.liveTtft !== null) ttftMs = acc.liveTtft;
+			var billedInput = acc.input + acc.cacheRead + acc.cacheWrite;
+			var hasUsage = billedInput > 0 || acc.output > 0;
 			// 运行中（liveNow 存在）且官方 turn-tail 未给出 tok/s 时：
 			// 按"已输出 token / 已耗时"实时估算（耗时 >=1s 且已有输出才显示，避免
 			// 开场瞬间的巨大瞬时速率；回合结束后由 turn-tail 的权威值覆盖）。
-			if (tokensPerSecond === undefined && typeof liveNow === "number" && durationMs !== undefined && durationMs >= 1000 && output > 0) {
-				tokensPerSecond = output / (durationMs / 1000);
+			if (tokensPerSecond === undefined && typeof liveNow === "number" && durationMs !== undefined && durationMs >= 1000 && acc.output > 0) {
+				tokensPerSecond = acc.output / (durationMs / 1000);
 			}
 			if (durationMs === undefined && !hasUsage && tokensPerSecond === undefined) return null;
-			var metricsResult = {
-				durationMs: durationMs,
-				// 消耗 = 计费输入（uncached + cacheRead + cacheWrite）+ 输出
-				tokens: hasUsage ? (billedInput + output) : undefined,
-				// 输出 token 累计（tok/s 实时估算用）
-				outputTokens: hasUsage ? output : undefined,
-				tokensPerSecond: tokensPerSecond,
-				// 缓存命中率：固定两位小数（如 "66.67"、"99.99"）
-				cacheHitPercent: hasUsage && billedInput > 0 ? cacheHitPercent(input, cacheRead, cacheWrite) : undefined
-			};
+			var metricsResult;
+			if (officialUsage !== null) {
+				// 官方 tokenUsage 优先（TurnUsagePanel 同款语义）：totalTokens = 全部
+				// attempt 的精确 prompt+output；缓存命中率分母 = prompt 侧总量
+				// （totalTokens - outputTokens）；cacheRead 缺报时回退节点累加值。
+				var officialPrompt = officialUsage.totalTokens - officialUsage.outputTokens;
+				metricsResult = {
+					durationMs: durationMs,
+					tokens: officialUsage.totalTokens,
+					outputTokens: officialUsage.outputTokens,
+					tokensPerSecond: tokensPerSecond,
+					cacheHitPercent: typeof officialUsage.cacheReadTokens === "number" && officialPrompt > 0
+						? (officialUsage.cacheReadTokens / officialPrompt * 100).toFixed(2)
+						: (hasUsage && billedInput > 0 ? cacheHitPercent(acc.input, acc.cacheRead, acc.cacheWrite) : undefined)
+				};
+			} else {
+				metricsResult = {
+					durationMs: durationMs,
+					// 消耗 = 计费输入（uncached + cacheRead + cacheWrite）+ 输出
+					tokens: hasUsage ? (billedInput + acc.output) : undefined,
+					// 输出 token 累计（tok/s 实时估算用）
+					outputTokens: hasUsage ? acc.output : undefined,
+					tokensPerSecond: tokensPerSecond,
+					// 缓存命中率：固定两位小数（如 "66.67"、"99.99"）
+					cacheHitPercent: hasUsage && billedInput > 0 ? cacheHitPercent(acc.input, acc.cacheRead, acc.cacheWrite) : undefined
+				};
+			}
 			// TTFT（官方 turn-tail 值，单回合第一个 step 的 firstTokenTime - stepStartTime）
 			if (ttftMs !== undefined) metricsResult.ttftMs = ttftMs;
 			return metricsResult;

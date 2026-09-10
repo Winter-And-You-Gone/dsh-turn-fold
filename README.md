@@ -85,6 +85,7 @@ text：……                                             ← 下一个 text 出
   （turn-tail 携带的 `ttftMs`，来自事件日志，刷新页面不丢）；仅当首个请求仍在流式时
   用渲染时刻近似（回合启动到首个 assistant-step 渲染）；
   回合结束后全部指标切换为官方权威值（turn-tail 的 tok/s、`turn/end` 的精确耗时）；
+  消耗token 亦切换为 turn-tail 携带的官方 `tokenUsage` 精确值（见下）；
 - **回合折叠栏最右侧右对齐显示"第x轮"**（如 `第13轮` / `Turn 13`，英文随 DSH 语言切换）；
 - **"消耗token"持续增长动画**：真实 usage 只在每个请求完成时到达，两次之间数字会
   停住——运行中在真实基线之上叠加纯展示用的动画偏移，偏移按实际 tick 次数推进
@@ -93,6 +94,13 @@ text：……                                             ← 下一个 text 出
   数字跳动节奏不规律，更像真实生成速率而不是节拍器；真实 usage 到达时只把基线校
   正为真实值，偏移继续累计、数字只增不减。基准间隔和抖动分别通过 `CONFIG.liveTickMs`
   和 `CONFIG.liveTickJitter` 调整；
+- **消耗token 与官方统计同口径**：回合结束后优先采用官方 turn-tail 携带的
+  `tokenUsage`（官方 `deriveTurnTokenUsage` 在持久化事件日志上折叠全部计费 attempt
+  的精确值，含被重试的请求；缓存命中率分母同为 prompt 侧总量 `totalTokens - outputTokens`）；
+  节点累加路径（运行中基线、无 `tokenUsage` 时的回退）通过 `nodes.values()` 补采
+  `visibility:hidden` 的 assistant-step——纯 tool-call 的中间步骤（无可见 reasoning/text）
+  官方以隐藏节点结算、不进 `locations.getTurn`，只遍历可见节点会漏计（实测案例：
+  官方统计 175,844 vs 修复前 117,301，差值恰为一个隐藏步骤的 58,543）；
 - **滚轮式数字动画**：运行中数值变化时，每一位数字独立"滚动"到新值（里程表/滚轮效果，
   回弹缓动；动画时长按变化频率自适应：token 个位这类快速变化用略短于刷新周期的短动画
   保证每拍完整走完，耗时秒数等慢速变化用 350ms 回弹滚动）——数字拆成逐位视窗、内部
@@ -324,6 +332,13 @@ git push --follow-tags
   回合折叠栏即出现：耗时用随机间隔时钟（每 `CONFIG.liveTickMs` × 0.5~1，默认 125~250ms）
   补 `Date.now()` 实时走动，"消耗token"在真实值之上叠加每 tick +1/+11 交替的动画
   偏移持续增长（真实 `usage` 到达时校正基线），全部指标在 `turn/end` 后切换为权威值。
+- **消耗token 口径（对齐官方统计）**：回合结束后优先取 turn-tail 携带的官方
+  `tokenUsage`（官方 `deriveTurnTokenUsage` 在持久化事件日志上折叠全部计费 attempt：
+  `totalTokens` = 精确 prompt+output、含被重试请求，缓存命中率分母 = prompt 侧总量）；
+  节点累加路径（运行中基线、无 `tokenUsage` 回退）在 `locations.getTurn()` 之外用
+  `nodes.values()`（返回 visible+hidden 全部已物化节点，旧版缺方法自动跳过）按节点
+  引用去重补采本回合隐藏的 assistant-step——纯 tool-call 步骤官方以 `visibility:hidden`
+  结算、不进 order/locations，只遍历 getTurn 会漏计其 usage。
 - **会话快照双版本读取层**：DSH 0.1.1 与 0.1.2 的快照契约不同——0.1.2 把快照拆分成
   `useSession`（会话级状态）与 `useChat`（chat 数据），`turnEnds`/`turnTimings` 收进
   `chat.legacy`。组件统一经 `useChatSnapshotData` 适配：有 `useChat`（0.1.2+）就读
@@ -370,7 +385,9 @@ git push --follow-tags
   - 节点数据结构：`tool-call` 的 `data.root`（`call.name / argsRaw`；diffs 按版本在
     `root.meta.diffs`（0.1.2）或 `resultView` / `callView` 视图（0.1.1））、
     `assistant-step` 的 `blocks`（reasoning / text）与 `usage`、`turn-tail` 的
-    `tokensPerSecond`（用于折叠栏文案、think 摘要、token/缓存命中指标）；
+    `tokensPerSecond` 与 `tokenUsage`（用于折叠栏文案、think 摘要、token/缓存命中指标；
+    `tokenUsage` 为 0.1.2+ 官方每回合精确统计，缺失时回退节点累加）、
+    `ChatNodeStore.values()`（隐藏 assistant-step 补采；缺失时自动跳过）；
   - CSS 选择器：`[data-chat-flow-kind]`、`[data-variant="think"]`（隐藏折叠成员 flowItem
     与最终总结的 Think 行）；
   - Slot 系统：`conversation.chat.node` 内置条目（`priority: 0`）、
