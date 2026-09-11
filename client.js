@@ -845,18 +845,18 @@ window.__ModuleLoader__.load({
 		// 注意：v0.4.0 起更新说明只保留最新一节（不叠历史节）——老用户每版各弹一次，
 		// 新用户只看当前版本的内容即可。
 		var NOTICE_KEY = "dsh-turn-fold:notice-version";
-		var NOTICE_VERSION = "0.5.1";
+		var NOTICE_VERSION = "0.5.2";
 		var NOTICE_CONTENT = {
 			zh: {
-				title: "v0.5.1 更新说明",
+				title: "v0.5.2 更新说明",
 				sections: [
 					{
-						version: "v0.5.1",
-						note: "v0.5.0 的加固修订",
+						version: "v0.5.2",
+						note: "消耗token 对齐官方统计口径",
 						items: [
-							{ title: "🛡️ 注册管道统一加固", detail: "五个 slot 注册全部走同一管道（inject 外层 + register 内层都兜异常），补上 v0.5.0 漏掉的 chat.node 外层守卫与设置行静默吞异常；降级提示措辞改为中性（不再误报“与其他插件冲突”——旧版宿主未声明 dock slot 的版本缺口也走同一条安全路径）。" },
-							{ title: "🔧 步骤折叠栏健壮性", detail: "renderToolview 补上 entry.component 守卫（与 renderToolImages 一致），第三方畸形注册不再让整个 shadow 格被 SlotErrorBoundary 永久 abdicate；“段已闭合”语义收敛为单一谓词 isSegmentClosed，标题/文件链接/图标四处不再各写各的、杜绝半不同步。" },
-							{ title: "🧹 占位条与缓存", detail: "RunningTurnDock 补回 trackSession，纯问答会话之间切换时缓存清理照常触发；技能资产项目树不再引用已 gitignore 的本地实验文件；extract-icons 在新克隆上给出明确指引而非 ENOENT 堆栈。" }
+							{ title: "🎯 消耗token 漏计修复", detail: "纯工具调用的中间步骤（assistant 消息只有 tool-call、没有可见的思考/正文）被 DSH 以隐藏节点结算，旧版回合折叠栏看不到它们、token 合计偏少——实测某会话官方统计 175,844、插件只显示 117,301，差值恰好是一个隐藏步骤的 58,543。现已对齐官方统计。" },
+							{ title: "📐 回合结束后取官方精确值", detail: "优先采用官方随 turn-tail 下发的 tokenUsage——官方在持久化事件日志上折叠全部计费请求（含被重试的请求）得到的精确值，缓存命中率分母也与官方 TurnUsagePanel 同源；旧版宿主没有该字段时自动回退原有算法。" },
+							{ title: "🔁 运行中基线同步补全", detail: "运行中的 token 基线同样补采隐藏步骤：其 usage 一到账就计入实时数值，回合结束切换官方精确值时不再跳变。" }
 						]
 					}
 				],
@@ -864,15 +864,15 @@ window.__ModuleLoader__.load({
 				dismiss: "知道了"
 			},
 			en: {
-				title: "What's new in v0.5.1",
+				title: "What's new in v0.5.2",
 				sections: [
 					{
-						version: "v0.5.1",
-						note: "Hardening revision to v0.5.0",
+						version: "v0.5.2",
+						note: "Token accounting aligned with the official statistics",
 						items: [
-							{ title: "🛡️ Unified registration pipeline", detail: "All five slot registrations now share one pipeline guarding both the inject declaration wait and the register call — closing the chat.node outer-guard gap and the settings-row silent swallow that v0.5.0 missed. Degradation toast wording is now neutral (no more false “conflict with another plugin” — a legacy host without the dock slot takes the same safe path)." },
-							{ title: "🔧 Step fold-bar robustness", detail: "renderToolview now guards entry.component like renderToolImages, so a malformed third-party registration no longer permanently abdicates the whole shadow cell via SlotErrorBoundary. Segment-closed semantics are single-sourced in one isSegmentClosed predicate — title / file links / icon no longer drift out of sync." },
-							{ title: "🧹 Placeholder & caches", detail: "RunningTurnDock restores trackSession, so cache cleanup fires on session switches between pure-Q&A chats too. The bundled skill's project tree no longer cites the gitignored local lab file, and extract-icons gives clear guidance instead of an ENOENT stack on a fresh clone." }
+							{ title: "🎯 Fixed token undercount", detail: "Pure tool-call intermediate steps (assistant messages with only a tool-call and no visible reasoning/text) are settled by DSH as hidden nodes, which the old turn fold bar never saw — one measured session showed 175,844 tokens in the official stats vs 117,301 in the plugin, the gap being exactly one hidden step's 58,543. Now aligned with the official statistics." },
+							{ title: "📐 Official exact value after turn end", detail: "The official tokenUsage carried by the turn-tail is preferred — the exact fold of every billed attempt on the persisted event log (retried requests included), with the cache-hit denominator matching the official TurnUsagePanel; older hosts without the field fall back to the previous node-sum automatically." },
+							{ title: "🔁 Live baseline filled in too", detail: "The running baseline also re-collects hidden steps: their usage counts as soon as it settles, so the number no longer jumps when the turn closes." }
 						]
 					}
 				],
