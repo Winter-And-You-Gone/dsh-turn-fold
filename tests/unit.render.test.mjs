@@ -568,7 +568,7 @@ describe('滚轮数字（RollDigit / AnimatedLabel / 回合折叠栏 live 文案
 describe('注册契约（Bug2 根因回归）', () => {
   it('所有 chat.node 条目都声明了 connectionGeneration inject', () => {
     const chatNodeEntries = slotRegistrations.filter((e) => e.options.name === 'conversation.chat.node')
-    assert.equal(chatNodeEntries.length, 3, '应有 3 个 chat.node 插件条目（tool-call + assistant-step + context；user 格已让位退出）')
+    assert.equal(chatNodeEntries.length, 4, '应有 4 个 chat.node 插件条目（tool-call + assistant-step + context + user）')
     for (const entry of chatNodeEntries) {
       const opts = entry.options
       assert.equal(typeof opts.inject, 'function', `条目 ${opts.key} 必须声明 inject`)
@@ -577,22 +577,21 @@ describe('注册契约（Bug2 根因回归）', () => {
       assert.ok(hookNames.includes('connectionGeneration'), `条目 ${opts.key} 的 inject 必须包含 connectionGeneration`)
     }
   })
-  it('user 格不再注册（让位 user 消息专用插件）· dock 占位条按 id 共存注册', () => {
+  it('user 格恢复注册（0 秒占位回 user 消息正下方）· 不再注册 dock 占位条', () => {
+    const userEntry = slotRegistrations.find((e) => e.options.name === 'conversation.chat.node' && e.options.key === 'user')
+    assert.ok(userEntry, '应恢复注册 conversation.chat.node 的 user key（占位条回 user 消息正下方）')
+    assert.equal(userEntry.options.priority, -1, '本测试环境无第三方 user 条目 → 官方 0 之下取 -1')
+    assert.equal(userEntry.component, T.GroupedUserView)
     assert.equal(
-      slotRegistrations.some((e) => e.options.name === 'conversation.chat.node' && e.options.key === 'user'),
+      slotRegistrations.some((e) => e.options.name === 'conversation.input.dock'),
       false,
-      '不得再注册 conversation.chat.node 的 user key（0 秒占位已迁往输入区 dock）',
+      '不再注册 conversation.input.dock 占位条（位置错误：跑到状态描述行下面）',
     )
-    const dock = slotRegistrations.find((e) => e.options.name === 'conversation.input.dock')
-    assert.ok(dock, '应注册 conversation.input.dock 占位条（list slot，按 id 共存）')
-    assert.equal(dock.options.id, 'turn-fold-running')
-    assert.equal(dock.options.order, 10)
-    assert.equal(dock.component, T.RunningTurnDock)
   })
 })
 
-// ── 回合折叠栏 0 秒占位（输入区 dock 条目 RunningTurnDock） ──
-describe('回合折叠栏 0 秒占位（RunningTurnDock · conversation.input.dock）', () => {
+// ── 回合折叠栏 0 秒占位（user 格条目 GroupedUserView） ──
+describe('回合折叠栏 0 秒占位（GroupedUserView · user 消息正下方）', () => {
   beforeEach(() => {
     T.liveTokenCache.clear()
     T.segmentLabelCache.clear()
@@ -604,22 +603,22 @@ describe('回合折叠栏 0 秒占位（RunningTurnDock · conversation.input.do
   afterEach(() => {
     if (root) { root.unmount(); root = null; container.remove(); container = null }
   })
-  function mountDock(snapshot, sessionId = 'sess-u') {
+  function mountUser(snapshot, node, sessionId = 'sess-u') {
     const store = createSessionStore(snapshot)
     const useSession = makeUseSession(store)
     act(() => {
-      root.render(React.createElement(T.RunningTurnDock, { useSession, sessionId, ...injectedHooks }))
+      root.render(React.createElement(T.GroupedUserView, { node, useSession, sessionId, ...injectedHooks }))
     })
     return { store }
   }
   /** 0.1.2+ 形状：useChat 快照本体（chat.legacy 携带 turnTimings）+ 无 chat 字段的
-   *  SessionSnapshot（`{ running }` 极简对象）——验证 dock 在拆分快照契约下同样工作，
-   *  此前只有 0.1.1 的 useSession 顶层路径被测试过。 */
-  function mountDockSplit(sessionSnapshot, chatSnapshot, sessionId = 'sess-u') {
+   *  SessionSnapshot（`{ running }` 极简对象）——验证 user 格在拆分快照契约下同样工作。 */
+  function mountUserSplit(sessionSnapshot, chatSnapshot, node, sessionId = 'sess-u') {
     const sessionStore = createSessionStore(sessionSnapshot)
     const chatStore = createSessionStore(chatSnapshot)
     act(() => {
-      root.render(React.createElement(T.RunningTurnDock, {
+      root.render(React.createElement(T.GroupedUserView, {
+        node,
         useSession: makeUseSession(sessionStore),
         useChat: makeUseSession(chatStore),
         sessionId,
@@ -628,50 +627,48 @@ describe('回合折叠栏 0 秒占位（RunningTurnDock · conversation.input.do
     })
     return { sessionStore, chatStore }
   }
-  it('运行中 + user 是最后一条消息：dock 渲染占位回合折叠栏（耗时计时 + 回合号）', () => {
+  it('运行中 + user 是最后一条消息：user 消息正下方渲染占位回合折叠栏（耗时 + 回合号），并委托官方 user 消息', () => {
     const nodes = [userNode('u', 100)]
     const snapshot = buildSnapshot(nodes, {
       turnTimings: new Map([[13, { startTime: 1000000, endTime: undefined }]]),
     })
     snapshot.running = true
-    mountDock(snapshot)
-    const placeholder = container.querySelector('.ccg-dock-run .ccg-group-root[data-ccg-turn]')
-    assert.ok(placeholder, '占位回合折叠栏存在')
+    mountUser(snapshot, nodes[0])
+    const placeholder = container.querySelector('.ccg-group-root[data-ccg-placeholder]')
+    assert.ok(placeholder, '占位回合折叠栏存在（user 消息正下方、TurnStatus 状态描述行之上）')
     assert.ok(placeholder.textContent.includes('耗时'), '占位显示耗时')
     assert.ok(placeholder.textContent.includes('第13轮'), '右对齐显示运行中回合号（turnTimings）')
-    // dock 条目独立渲染占位栏：不再委托内置 user 消息（user 格已让位）
-    assert.equal(container.querySelector('.mock-user'), null, 'dock 内不渲染 user 消息本体')
+    assert.ok(container.querySelector('.mock-user'), '仍委托渲染官方 user 消息本体（占位在其下方）')
   })
-  it('会话未运行：不渲染占位', () => {
+  it('会话未运行：不渲染占位，仅委托 user 消息', () => {
     const nodes = [userNode('u', 100)]
     const snapshot = buildSnapshot(nodes)
     snapshot.running = false
-    mountDock(snapshot)
-    assert.equal(container.querySelector('.ccg-dock-run'), null, '无占位')
+    mountUser(snapshot, nodes[0])
+    assert.equal(container.querySelector('.ccg-group-root[data-ccg-placeholder]'), null, '无占位')
+    assert.ok(container.querySelector('.mock-user'), 'user 消息照常渲染')
   })
   it('user 之后有中间节点：不渲染占位（转交正式回合折叠栏）', () => {
     const nodes = [userNode('u', 100), asNode('as', 200), toolNode('tc', 300)]
     const snapshot = buildSnapshot(nodes)
     snapshot.running = true
-    mountDock(snapshot)
-    assert.equal(container.querySelector('.ccg-dock-run'), null, '无占位')
+    mountUser(snapshot, nodes[0])
+    assert.equal(container.querySelector('.ccg-group-root[data-ccg-placeholder]'), null, '无占位')
   })
   it('steering 是最后一条消息：不渲染占位（与旧 user 格占位行为一致）', () => {
     const nodes = [userNode('u', 100), makeNode('st', 'steering', 150, { data: {} })]
     const snapshot = buildSnapshot(nodes)
     snapshot.running = true
-    mountDock(snapshot)
-    assert.equal(container.querySelector('.ccg-dock-run'), null, '无占位')
+    mountUser(snapshot, nodes[0])
+    assert.equal(container.querySelector('.ccg-group-root[data-ccg-placeholder]'), null, '无占位')
   })
-  it('0.1.2+ 拆分快照（useChat 读 order/nodes，legacy 携带 turnTimings）：dock 同样渲染占位', () => {
-    // 0.1.2 契约：SessionSnapshot 只剩 `{ running }`（无 chat/turnTimings 顶层字段），
-    // chat 数据经 props.useChat 提供、turnTimings 收在 ChatSnapshot.legacy。
+  it('0.1.2+ 拆分快照（useChat 读 order，legacy 携带 turnTimings）：同样渲染占位', () => {
     const nodes = [userNode('u', 100)]
     const chatSnapshot = buildChatSnapshot(nodes, {
       turnTimings: new Map([[13, { startTime: 1000000, endTime: undefined }]]),
     })
-    mountDockSplit({ running: true }, chatSnapshot)
-    const placeholder = container.querySelector('.ccg-dock-run .ccg-group-root[data-ccg-turn]')
+    mountUserSplit({ running: true }, chatSnapshot, nodes[0])
+    const placeholder = container.querySelector('.ccg-group-root[data-ccg-placeholder]')
     assert.ok(placeholder, '0.1.2 拆分快照下占位回合折叠栏同样存在')
     assert.ok(placeholder.textContent.includes('耗时'), '占位显示耗时')
     assert.ok(placeholder.textContent.includes('第13轮'), '回合号读自 chat.legacy.turnTimings')
@@ -679,18 +676,19 @@ describe('回合折叠栏 0 秒占位（RunningTurnDock · conversation.input.do
   it('0.1.2+ 拆分快照：user 之后有中间节点 → 不渲染占位', () => {
     const nodes = [userNode('u', 100), asNode('as', 200)]
     const chatSnapshot = buildChatSnapshot(nodes, {})
-    mountDockSplit({ running: true }, chatSnapshot)
-    assert.equal(container.querySelector('.ccg-dock-run'), null, '转交正式回合折叠栏')
+    mountUserSplit({ running: true }, chatSnapshot, nodes[0])
+    assert.equal(container.querySelector('.ccg-group-root[data-ccg-placeholder]'), null, '转交正式回合折叠栏')
   })
-  it('foldMode=auto：不渲染占位（插件不接管折叠）', () => {
+  it('foldMode=auto：不渲染占位（插件不接管折叠），仅委托 user 消息', () => {
     const nodes = [userNode('u', 100)]
     const snapshot = buildSnapshot(nodes, {
       turnTimings: new Map([[13, { startTime: 1000000, endTime: undefined }]]),
     })
     snapshot.running = true
     T.setFoldMode('auto')
-    mountDock(snapshot)
-    assert.equal(container.querySelector('.ccg-dock-run'), null, 'auto 模式无占位')
+    mountUser(snapshot, nodes[0])
+    assert.equal(container.querySelector('.ccg-group-root[data-ccg-placeholder]'), null, 'auto 模式无占位')
+    assert.ok(container.querySelector('.mock-user'), 'auto 模式仍委托官方 user 消息')
     T.setFoldMode('turn-fold')
   })
 })

@@ -75,7 +75,8 @@ text：……                                             ← 下一个 text 出
 ```
 
 - **发消息即出现回合折叠栏（0 秒占位）**：用户发送消息后立即出现回合折叠栏（耗时从 0 开始计时），
-  不等第一个 response——占位栏由输入区 dock 条目渲染在输入区上方，第一条中间节点到达后
+  不等第一个 response——占位栏渲染在 user 消息正下方（官方「状态描述」行
+  "Deep diving..." 之上，与正式回合折叠栏同位置、交接无位移），第一条中间节点到达后
   占位消失、正式回合折叠栏接替显示；
 - **指标实时更新**：回合折叠栏中的**耗时秒数每秒走动**（从回合 `turn/start` 起计时），
   **"消耗token"按随机间隔（默认 125~250ms）刷新且持续增长**，tok/s 按已输出 token / 已耗时实时估算，
@@ -308,17 +309,20 @@ git push --follow-tags
   `conversation.chat.node`（keyed slot）按类型分发渲染器。
 - Slot 注册器官方支持 **不同 priority 覆盖**（`register at a different priority to shadow it, lowest renders`）。
   本插件用 `priority: -1` 覆盖内置的 `tool-call` / `assistant-step` / `context` 渲染器；
-  `user` 格**不再注册**——0 秒占位迁往输入区 dock 条目，`user` 格让给 user 消息专用
-  插件（如 dsh-easyrewrite 的撤回/重编辑气泡），从根上消除同 key 同 priority 抢位
-  导致对方加载失败的一类冲突。
+  `user` 格（0 秒占位条）注册在**所有同 key 条目（官方 0 + 第三方）的最低占用位之下**，
+  并把第三方条目（如 dsh-easyrewrite 的撤回/重编辑气泡）的组件**链式委托渲染**（整包
+  props 转发、其 inject 面的扁平 props 并入注入面）——占位条与 user 消息专用插件共存、
+  功能互不丢失，也消除了同 key 同 priority 抢位导致对方加载失败的一类冲突。
 - **注册冲突自动让位**：注册前探测同 key/id 的 `priority: -1` 是否已被占用
   （`ctx.slots.entries`），被占则自动让位到第一个不冲突的值（官方 `0` 恒预留，绝不
   落回官方档）并打 `console.warn`——本插件后加载时不再与先占者冲突。
-  `conversation.chat.node` 三格与 `settings.general.item` 的 transcript-view 行都走该逻辑。
+  `conversation.chat.node` 三格（tool-call/assistant-step/context）与
+  `settings.general.item` 的 transcript-view 行都走该逻辑；`user` 格例外（占位条必须
+  渲染在 user 消息正下方，让位即弃权）——改取最低占用位之下并链式委托共存。
 - **注册异常软降级（绝不带崩 DSH）**：slots 注入回调若让异常外泄，延迟执行路径
   （目标 slot 声明晚于插件加载时，回调跑在官方声明者的调用栈里 / 声明订阅里
   uncaught re-throw）会打断官方 UI 激活、web 整页无法启动。因此本插件**所有** slot
-  注册（chat.node 三格、设置行、dock 占位条）统一走一个注册管道：inject 声明等待
+  注册（chat.node 四格、设置行）统一走一个注册管道：inject 声明等待
   与回调内 register 各自兜异常（`return undefined` 即"无可清理资源"，官方
   cachedSlotInject 对 falsy 返回无害），单个条目注册失败仅跳过该条目，`console.warn`
   留排查线索并弹一次中性措辞的降级 Toast 告知用户（不指涉冲突方——旧版宿主未声明
@@ -345,11 +349,15 @@ git push --follow-tags
   `useChat` 快照本体，否则从 `useSession(s).chat` 取；`turnEnds`/`turnTimings` 优先读
   `chat.legacy`、顶层兼容字段兜底。所有 hooks 无条件调用（数据计算与订阅和"是否接管
   折叠"解耦），折叠模式切换（接管 ↔ 委托内置）不改变 hook 数量，条目不会崩。
-- **0 秒占位**：`RunningTurnDock` 条目注册到输入区 `conversation.input.dock`（list slot，
-  按 `id` 共存——与官方 todo/queue dock 不存在 priority 冲突面），在「会话运行中且
-  最后一条消息是 user」时渲染占位回合折叠栏（耗时从运行中回合的 `startTime` 计时），
-  第一条中间节点到达后自动交接给正式回合折叠栏。旧版 DSH 未声明该 slot 时注册
-  try/catch 跳过（占位条缺失不影响其余功能）。
+- **0 秒占位（user 消息正下方）**：`GroupedUserView` 注册 `conversation.chat.node` 的
+  `user` key，优先级取"所有同 key 条目最低占用位 - 1"（lowest-renders 语义下由本插件
+  渲染），在「会话运行中且该 user 是最后一条消息」时于 user 消息正下方渲染占位回合
+  折叠栏（耗时从运行中回合的 `startTime` 计时），第一条中间节点到达后自动交接给正式
+  回合折叠栏（占位栏补 16px 上间距与官方 flow gap 对齐，交接无位移）。第三方 user
+  条目（dsh-easyrewrite）的组件链式委托渲染、整包 props 转发；`chat.node` 是核心 slot
+  恒声明，无需 try/catch 兜底。位置说明：占位栏在聊天流列内、官方 TurnStatus
+  （"Deep diving..." 状态描述行）之上——2026-08-30 至 0.5.x 曾挂输入区 dock，会跑到
+  状态描述行下面（输入框左上角），位置错误，故恢复 user 格方案。
 - **首字（TTFT）三来源（官方优先）**：① **step settle 后即实时读取官方值**——
   `assistant-step` 节点的 `data.finalNode.timing`（官方在 `assistant/message` 事件后写入
   `{ stepStartTime, firstTokenTime, completedTime }`），取回合内 step 号最小者（第一个

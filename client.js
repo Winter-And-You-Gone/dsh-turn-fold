@@ -983,21 +983,12 @@ window.__ModuleLoader__.load({
 				   用 > 直接子选择器则什么都匹配不上。fold-clip 天然锚定最近的 group-root；
 				   :not([data-ccg-turn]) 排除回合栏（其折叠栏-内容间距由分隔线 4px/8px 承担）。 */
 				".ccg-group-root[data-ccg-open]:not([data-ccg-turn]) > .ccg-fold-clip{margin-top:16px}",
-				/* 0 秒占位条（输入区 dock）：占位栏渲染在输入区 dock 条内，与 composer 卡片
-				   留 8px 间距；出现时 180ms 淡入（覆盖"刷新页面恰好落在回合空窗"的瞬间，
-				   避免占位条硬切闪现），respect prefers-reduced-motion。
-				   横向几何对齐官方 dock 卡片（QueueDock/TodoPanel 同款）：宽度扣掉两侧
-				   composer 清空（--dsh-composer-side-clearance）与 dock 内缩
-				   （--dsh-composer-dock-inset），上限为输入卡宽（--dsh-composer-card-max-width）
-				   减两次内缩，水平居中——否则在宽栏里占位条拉满整行、左缘贴侧边栏
-				   （官方 dock 条目自带这套收束，本插件此前漏了，回合空窗期占位条出现在
-				   靠近侧边栏的左下角，1-2 秒后第一条中间节点到达才回到正文流位置）。
-				   旧版 DSH 未定义这些变量时 var() 兜底：清空 16px、内缩 8px、上限 748px
-				   （官方 clamp 的中间值），与两版官方实测几何一致。 */
-				".ccg-dock-run{box-sizing:border-box;flex:none;margin:0 0 8px;width:calc(100% - var(--dsh-composer-side-clearance,16px) - var(--dsh-composer-side-clearance,16px) - var(--dsh-composer-dock-inset,8px) - var(--dsh-composer-dock-inset,8px));max-width:calc(var(--dsh-composer-card-max-width,748px) - var(--dsh-composer-dock-inset,8px) - var(--dsh-composer-dock-inset,8px));margin-inline:auto}",
-				".ccg-dock-run .ccg-group-root{animation:ccg-dock-run-in .18s ease-out}",
-				"@keyframes ccg-dock-run-in{from{opacity:0}to{opacity:1}}",
-				"@media (prefers-reduced-motion:reduce){.ccg-dock-run .ccg-group-root{animation:none}}",
+				/* 0 秒占位栏与正式回合栏的位置接续：占位栏渲染在 user 消息的 flowItem 内
+				   （正下方、无间距），正式回合栏在下一个 flowItem 顶部（官方 column 有
+				   16px flow gap）——不补这 16px，第一条中间节点到达、占位交接给正式栏的
+				   瞬间整栏会向下跳一下。补齐后交接前后栏位置逐像素一致（只剩文案/图标
+				   内容切换，无位移）。 */
+				".ccg-group-root[data-ccg-placeholder]{margin-top:16px}",
 				/* 分隔线颜色：--dsw-alias-line-secondary 在 DSH 0.1.1/0.1.2 均无定义（官方自身
 				   也有悬空引用），两版的线 token 是 --dsw-alias-border-l1，var() 链式兜底后
 				   仍回退字面量（老版本/未知主题） */
@@ -2736,6 +2727,33 @@ window.__ModuleLoader__.load({
 				return -1;
 			}
 		}
+		/** user 格优先级与其它三格相反：注册在"所有同 key 条目（官方 0 + 第三方）"的最低
+		 *  占用位之下。lowest-renders 语义下由本插件渲染，第三方条目（easyrewrite）经
+		 *  GroupedUserView 链式委托共存；若像 resolveChatNodePriority 那样让位（p>=1 即
+		 *  弃权），0 秒占位条就只能退回输入区 dock（跑到状态描述行下面，位置错误）。
+		 *  官方 0 位恒存在，所以最低位至少是 -1。 */
+		function resolveUserCellPriority(slots) {
+			try {
+				var entries = slots && typeof slots.entries === "function" ? slots.entries("conversation.chat.node") : null;
+				var lowest = 0;
+				for (var i = 0; entries && i < entries.length; i++) {
+					var o = entries[i] && entries[i].options;
+					if (o && o.key === "user") {
+						var p = o.priority || 0;
+						if (p < lowest) lowest = p;
+					}
+				}
+				var mine = lowest - 1;
+				if (lowest < 0) {
+					try {
+						if (typeof console !== "undefined" && console.warn) console.warn("[dsh-turn-fold] user 格已有其他插件（priority " + lowest + "），0 秒占位以 priority " + mine + " 链式委托共存");
+					} catch (e) { /* 忽略 */ }
+				}
+				return mine;
+			} catch (err) {
+				return -1;
+			}
+		}
 		/** 步骤折叠栏标题中的文件链接：点击复制绝对路径，悬停变 DeepSeek 主题蓝色。 */
 		function FileLink(props) {
 			var fullPath = props.path;
@@ -4373,48 +4391,74 @@ window.__ModuleLoader__.load({
 			return turnOpen ? react.createElement("div", { className: "ccg-member-in" }, renderBuiltinContext(props)) : hiddenMarker();
 		}
 
-		// ---- 回合折叠栏 0 秒占位（输入区 dock 条目） ----
+		// ---- 回合折叠栏 0 秒占位（user 消息正下方） ----
 		// 用户发送消息后、agent 输出第一条中间节点前，会话处于"运行中且最后一条消息是
 		// user"：此时没有任何节点承载回合折叠栏（官方回合折叠栏由回合第一条中间节点渲染），
-		// 模型响应前的等待期回合折叠栏迟迟不出现。占位回合折叠栏渲染在输入区上方的
-		// conversation.input.dock（list slot，按 id 共存——与官方 todo/queue dock 不存在
-		// priority 冲突面），耗时从回合开始计时、0 秒即出现；第一条中间节点到达后条件
-		// 失效、占位消失，回合折叠栏转交中间节点正式渲染。
-		// 历史注记（2026-08-30）：占位条原挂在 shadow user 格的 GroupedUserView 内、
-		// 渲染在 user 消息正下方。为与其它占用 user 格的插件（dsh-easyrewrite 撤回/
-		// 重编辑气泡）共存，占位条迁出 user 格——本插件不再注册 conversation.chat.node
-		// 的 user key，user 消息交由官方或专用插件渲染。
-		function RunningTurnDock(props) {
-			var useSession = props.useSession;
+		// 模型响应前的等待期回合折叠栏迟迟不出现。这里在 user 消息下方渲染回合折叠栏占位
+		// （耗时从回合开始计时，0 秒即出现）；第一条中间节点到达后条件失效，占位消失，
+		// 回合折叠栏转交中间节点正式渲染（位置连续：都在 user 消息下方，占位栏补 16px
+		// 上间距与正式栏的 flow gap 对齐，交接无位移）。
+		// 与其它占用 user 格的插件共存（2026-09-11 恢复）：2026-08-30 曾因 dsh-easyrewrite
+		// （撤回/重编辑气泡）同 key 同 priority 注册冲突，把占位条迁出 user 格、改挂输入区
+		// conversation.input.dock——但 dock 位于整个聊天流列（含官方 TurnStatus
+		// "Deep diving..." 状态描述行）之下，占位条会跑到状态描述行下面（输入框左上角），
+		// 位置错误。现恢复 user 格：注册在"所有同 key 条目"的更低 priority（lowest renders
+		// 语义下由本插件渲染），并把第三方条目（easyrewrite）的组件链式委托渲染（整包
+		// props 转发，其 inject 面的扁平 props 一并并入本插件注入面），两边共存、功能互不丢失。
+		/** 委托渲染 user 消息本体：优先链式委托"非官方 user 条目"（priority<0 的第三方
+		 *  影子，如 dsh-easyrewrite——本插件在更低 priority 接管后必须原样渲染它的组件
+		 *  才能保住撤回/重编辑功能）；无第三方时委托官方 UserMessageNodeView
+		 *  （priority 0，无 renderSlot，原样转发 + wrapLocaleT 兜底）。 */
+		function renderUserContent(props) {
+			var third = null;
+			try {
+				var entries = slotsService && typeof slotsService.entries === "function"
+					? slotsService.entries("conversation.chat.node") : null;
+				for (var i = 0; entries && i < entries.length; i++) {
+					var e = entries[i];
+					if (!e || !e.options || e.options.key !== "user") continue;
+					var pri = e.options.priority || 0;
+					// 官方 0 位走 builtinComponent；priority>0 在运行时本就是休眠条目
+					// （lowest renders），跳过；跳过本插件自己的 user 条目（防递归渲染）。
+					if (pri === 0 || pri > 0 || !e.component || e.component === GroupedUserView) continue;
+					if (third === null || pri < third.priority) third = { priority: pri, component: e.component };
+				}
+			} catch (err) { third = null; }
+			if (third) {
+				// 链式委托：整包 props 原样转发（含该条目 inject 的扁平 props——openSession/
+				// inputState 等——与标准 kit、owner；多余字段对其组件无害）。
+				return react.createElement(third.component, props);
+			}
+			var Builtin = builtinComponent("user");
+			if (!Builtin) return null;
+			return react.createElement(Builtin, Object.assign({}, props, { t: wrapLocaleT(props.t) }));
+		}
+
+		function GroupedUserView(props) {
+			var node = props.node;
 			var sessionId = props.sessionId;
-			// dock 条目整回合常驻挂载：会话切换缓存清理也由它兜底（旧 user 格占位条承担的
-			// 职责随迁移带过来——纯问答会话没有 GroupedToolCallView 触发清理时，切走后
-			// segmentLabelCache/overrides 等不再滞留上一个会话）。快照订阅必须无条件调用
-			// （hooks 顺序，见 GroupedToolCallView 说明）。session 域 slot 条目的标准 props
-			// 组含 useSession/useChat（官方 QueueDock 同源用法）：0.1.2 经 props.useChat 读
-			// 拆分后的 ChatSnapshot，旧版从 SessionSnapshot 顶层读。
+			// 快照订阅与缓存清理必须无条件调用（hooks 顺序，见 GroupedToolCallView 说明）。
+			// user 格在纯问答会话也常驻挂载，会话切换缓存清理由它兜底（同旧 user 格占位条
+			// 与 dock 条目曾承担的职责）。running 在两个版本都在 Session/Conversation 快照
+			// 顶层（0.1.2 未被拆分移走），继续从 useSession 读；order/turnTimings 走双版本适配层。
 			trackSession(sessionId);
 			var chatSnap = useChatSnapshotData(props);
-			var running = useSession ? useSession(function (s) { return s.running === true; }) : false;
+			var running = props.useSession ? props.useSession(function (s) { return s.running === true; }) : false;
 			// 订阅折叠模式（与快照订阅同为无条件调用，保持 hooks 顺序）
 			useFoldMode();
-			var order = chatSnap.order;
-			var nodes = chatSnap.nodes;
-			var turnTimings = chatSnap.turnTimings;
-			// 占位条件：接管折叠 + 会话运行中 + 最后一条消息是 user（其后尚无任何中间节点；
-			// steering 消息不算——与旧 user 格占位行为一致）。在 useLiveNow 之前计算（只依赖
+			// 占位条件：接管折叠 + 会话运行中 + 该 user 是最后一条消息（其后尚无任何中间节点；
+			// steering 消息不算——与旧 user 格占位行为一致）。在 hooks 之前计算（只依赖
 			// 订阅值），直播秒表只在占位真正显示时启动。
-			var lastNode = null;
-			if (Array.isArray(order) && order.length > 0 && nodes && typeof nodes.get === "function") {
-				lastNode = nodes.get(order[order.length - 1]) || null;
-			}
-			var isPending = foldActive() && running && !!lastNode && lastNode.kind === "user";
+			var order = chatSnap.order;
+			var isPending = foldActive() && running && Array.isArray(order) && order.length > 0 && order[order.length - 1] === node.key;
 			var liveNow = useLiveNow(isPending);
 			// 订阅字段显隐设置与折叠图标样式（无条件调用——hooks 顺序）
 			useFieldVisibility();
 			useFoldIconStyle();
-			if (!isPending) return null;
+			if (!foldActive()) return renderUserContent(props);
+			if (!isPending) return renderUserContent(props);
 			// 回合开始时间 / 回合号：turnTimings 中运行中（有 startTime、无 endTime）的回合
+			var turnTimings = chatSnap.turnTimings;
 			var startTime = null;
 			var runningTurn = null;
 			if (turnTimings && typeof turnTimings.forEach === "function") {
@@ -4433,11 +4477,13 @@ window.__ModuleLoader__.load({
 				: undefined;
 			return react.createElement(
 				"div",
-				{ className: "ccg-dock-run" },
+				{ style: { display: "contents" } },
+				renderUserContent(props),
 				react.createElement(
 					"div",
-					{ className: "ccg-group-root", "data-ccg-count": "0", "data-ccg-open": "true", "data-ccg-turn": "true" },
-					react.createElement(GroupHeader, { label: label, count: 0, open: true, onToggle: function () {}, isTurn: true, live: true, right: turnRoundLabel(runningTurn), gearIcon: react.createElement(GearIcon, null), pokerIcon: placeholderPokerIcon })
+					{ className: "ccg-group-root", "data-ccg-count": "0", "data-ccg-open": "true", "data-ccg-turn": "true", "data-ccg-placeholder": "true" },
+					react.createElement(GroupHeader, { label: label, count: 0, open: true, onToggle: function () {}, isTurn: true, live: true, right: turnRoundLabel(runningTurn), gearIcon: react.createElement(GearIcon, null), pokerIcon: placeholderPokerIcon }),
+					react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" })
 				)
 			);
 		}
@@ -4650,8 +4696,17 @@ window.__ModuleLoader__.load({
 				// 单条官方条目探测抛错只跳过该条（其余照常合并）；全部缺失/抛错时退回仅自备
 				// hook（各旧版行为不变）。三个 shadow 格共用这一个函数（闭包只捕获稳定的
 				// connection/slotsService，不存在每格差异）。
-				var chatNodeEntryInject = function (sessionId) {
+				// includeAll（仅 user 格）：第二轮再合并"非官方条目"的 inject 面——第三方
+				// user 条目（dsh-easyrewrite）返回扁平 props（openSession/inputActions 等，
+				// 无 hooks 键），这些键原样并入注入面的普通 props，链式委托渲染它的组件时
+				// 整包转发。自条目（本插件的四个 Grouped* 组件）跳过，防止递归探测。
+				var isOwnSlotEntry = function (e) {
+					return !!e && (e.component === GroupedToolCallView || e.component === GroupedAssistantView
+						|| e.component === GroupedContextView || e.component === GroupedUserView);
+				};
+				var chatNodeEntryInject = function (sessionId, includeAll) {
 					var hooks = {};
+					var plain = {};
 					if (connection && connection.generation) {
 						hooks.connectionGeneration = connection.generation;
 					} else if (connection && connection.hostDescription) {
@@ -4660,24 +4715,43 @@ window.__ModuleLoader__.load({
 					try {
 						var entries = slotsService && typeof slotsService.entries === "function"
 							? slotsService.entries("conversation.chat.node") : null;
-						for (var i = 0; entries && i < entries.length; i++) {
-							var e = entries[i];
-							if (!e || !e.options || (e.options.priority || 0) !== 0) continue;
-							var injectFn = e.inject;
-							if (typeof injectFn !== "function") continue;
-							try {
-								var face = injectFn.call(e, sessionId);
-								if (face && typeof face.hooks === "object" && face.hooks !== null) {
-									for (var name in face.hooks) {
-										if (!Object.prototype.hasOwnProperty.call(face.hooks, name)) continue;
-										if (face.hooks[name] === undefined || hooks[name] !== undefined) continue;
-										hooks[name] = face.hooks[name];
+						// 两轮合并：pass 0 = 官方 priority 0（名字冲突时官方赢）；pass 1 =
+						// 第三方条目（仅 includeAll，跳过官方 0 与本插件自条目）。
+						for (var pass = 0; pass < 2; pass++) {
+							for (var i = 0; entries && i < entries.length; i++) {
+								var e = entries[i];
+								if (!e || !e.options) continue;
+								var pri = e.options.priority || 0;
+								if (pass === 0 && pri !== 0) continue;
+								if (pass === 1 && (pri === 0 || !includeAll || isOwnSlotEntry(e))) continue;
+								var injectFn = e.inject;
+								if (typeof injectFn !== "function") continue;
+								try {
+									var face = injectFn.call(e, sessionId);
+									if (!face || typeof face !== "object") continue;
+									var faceHooks = face.hooks && typeof face.hooks === "object" ? face.hooks : null;
+									if (faceHooks) {
+										for (var name in faceHooks) {
+											if (!Object.prototype.hasOwnProperty.call(faceHooks, name)) continue;
+											if (faceHooks[name] === undefined || hooks[name] !== undefined) continue;
+											hooks[name] = faceHooks[name];
+										}
 									}
-								}
-							} catch (errOne) { /* 单条官方条目探测失败：跳过该条 */ }
+									if (pass === 1) {
+										for (var pk in face) {
+											if (!Object.prototype.hasOwnProperty.call(face, pk)) continue;
+											if (pk === "hooks" || pk === "keyedHooks") continue;
+											if (plain[pk] !== undefined) continue;
+											plain[pk] = face[pk];
+										}
+									}
+								} catch (errOne) { /* 单条条目探测失败：跳过该条 */ }
+							}
 						}
 					} catch (err) { /* entries 不可用：退回仅自备 hook */ }
-					return { hooks: hooks };
+					var result = { hooks: hooks };
+					for (var pk2 in plain) if (Object.prototype.hasOwnProperty.call(plain, pk2)) result[pk2] = plain[pk2];
+					return result;
 				};
 				// shadow 条目的 locale 命名空间按条目 key 对应跟随官方——新版同一个 slot 上
 				// 官方条目的 locale 不一致：tool-call 由 ui-tool 注册、声明 'conversation'
@@ -4713,8 +4787,8 @@ window.__ModuleLoader__.load({
 				var resolveChatNodePriority = function (slots, key) {
 					return resolveSlotPriority(slots, "conversation.chat.node", function (o) { return o.key === key; }, "conversation.chat.node key \"" + key + "\"");
 				};
-				// 三个 chat.node shadow 格 + dock 占位条统一走 safeRegisterSlot（外层
-				// inject / 内层 register 都兜住，异常不外泄）。
+				// 四个 chat.node shadow 格（tool-call / assistant-step / context / user）统一
+				// 走 safeRegisterSlot（外层 inject / 内层 register 都兜住，异常不外泄）。
 				safeRegisterSlot(scope.slots, {
 					name: "conversation.chat.node",
 					key: "tool-call",
@@ -4736,14 +4810,17 @@ window.__ModuleLoader__.load({
 					locale: detectChatLocale(scope.slots, "context"),
 					inject: chatNodeEntryInject
 				}, GroupedContextView);
-				// 0 秒占位条：输入区 dock（list slot，按 id 共存，不存在 priority 冲突面；
-				// 与官方 todo=0/queue=20 错开取 order 10）。旧版 DSH 未声明该 slot 时
-				// register/inject 抛 "not declared"——失败仅跳过占位条（装饰性功能）。
+				// 0 秒占位条：user 格（chat.node 是核心 slot，恒声明；占位条渲染在 user
+				// 消息正下方、官方 TurnStatus 状态描述行之上）。优先级取最低占用位之下，
+				// 第三方 user 条目（easyrewrite）经链式委托共存（GroupedUserView 内整包
+				// props 转发其组件，includeAll 把其 inject 的扁平 props 并入注入面）。
 				safeRegisterSlot(scope.slots, {
-					name: "conversation.input.dock",
-					id: "turn-fold-running",
-					order: 10
-				}, RunningTurnDock);
+					name: "conversation.chat.node",
+					key: "user",
+					priority: resolveUserCellPriority(scope.slots),
+					locale: detectChatLocale(scope.slots, "user"),
+					inject: function (sessionId) { return chatNodeEntryInject(sessionId, true); }
+				}, GroupedUserView);
 			});
 		};
 
