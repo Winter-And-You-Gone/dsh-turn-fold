@@ -284,11 +284,10 @@ describe('connection 双版本兼容（DSH 0.1.2+ generation / 旧版 hostDescri
         cb({ slots: svc, connection: { hostDescription: { getSnapshot: () => ({ home: 'C:/Users/Test' }), subscribe: () => () => {} } } })
       },
     })
-    assert.equal(regs.length, 4, '旧版也应注册 4 个条目（3 个 chat.node + 1 个 dock 占位条）')
-    // dock 占位条（conversation.input.dock）不消费 connection hook，只有 chat.node
-    // 三格声明 inject；双版本 hook 透传回归只针对这三个条目。
+    assert.equal(regs.length, 4, '旧版也应注册 4 个条目（4 个 chat.node shadow 格，无 dock 占位条）')
+    // 四个 chat.node 格都声明 inject（user 格同样走双版本 connection hook 透传）。
     const chatNodeEntries = regs.filter((e) => e.options.name === 'conversation.chat.node')
-    assert.equal(chatNodeEntries.length, 3, 'chat.node 三格（tool-call + assistant-step + context）')
+    assert.equal(chatNodeEntries.length, 4, 'chat.node 四格（tool-call + assistant-step + context + user）')
     for (const entry of chatNodeEntries) {
       const hooks = entry.options.inject().hooks
       assert.ok(hooks.hostDescription, `条目 ${entry.options.key} 应声明 hostDescription（旧版）`)
@@ -310,11 +309,10 @@ describe('connection 双版本兼容（DSH 0.1.2+ generation / 旧版 hostDescri
         cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
       },
     })
-    assert.equal(regs.length, 4, '新版也应注册 4 个条目（3 个 chat.node + 1 个 dock 占位条）')
-    // dock 占位条（conversation.input.dock）不消费 connection hook，只有 chat.node
-    // 三格声明 inject；双版本 hook 透传回归只针对这三个条目。
+    assert.equal(regs.length, 4, '新版也应注册 4 个条目（4 个 chat.node shadow 格，无 dock 占位条）')
+    // 四个 chat.node 格都声明 inject（user 格同样走双版本 connection hook 透传）。
     const chatNodeEntries = regs.filter((e) => e.options.name === 'conversation.chat.node')
-    assert.equal(chatNodeEntries.length, 3, 'chat.node 三格（tool-call + assistant-step + context）')
+    assert.equal(chatNodeEntries.length, 4, 'chat.node 四格（tool-call + assistant-step + context + user）')
     for (const entry of chatNodeEntries) {
       const hooks = entry.options.inject().hooks
       assert.ok(hooks.connectionGeneration, `条目 ${entry.options.key} 应声明 connectionGeneration（新版）`)
@@ -476,5 +474,109 @@ describe('回归：隐藏纯工具步骤的消耗token漏计（对齐官方统�
     const legacyNodes = { get: (k) => s.chat.nodes.get(k) } // 无 values()
     const m = T.computeTurnMetrics(13, legacyNodes, s.chat.locations, s.turnTimings, undefined)
     assert.equal(m.tokens, 117301, '只能看到 visible 节点（旧行为：58448 + 58853）')
+  })
+})
+
+describe('回归：0 秒占位回 user 格——与第三方 user 条目（dsh-easyrewrite 类）链式委托共存', () => {
+  // 背景：2026-08-30 曾因 dsh-easyrewrite（撤回/重编辑气泡）同 key 同 priority 注册冲突，
+  // 把 0 秒占位条迁出 user 格、改挂输入区 conversation.input.dock——但 dock 位于整个
+  // 聊天流列（含官方 TurnStatus "Deep diving..." 状态描述行）之下，占位条跑到状态描述行
+  // 下面（输入框左上角），位置错误（真机截图确认）。现恢复 user 格：注册在第三方条目
+  // 之下（lowest renders 语义下由本插件渲染），并把其组件链式委托渲染（整包 props 转发、
+  // 其 inject 的扁平 props 并入注入面），两边共存、easyrewrite 功能不丢。
+  function easyrewriteLikeSlots({ onThirdRender } = {}) {
+    const regs = []
+    const official = [
+      { component: function OfficialUser() {}, options: { key: 'user', priority: 0, locale: 'chat' } },
+      { component: function OfficialTool() {}, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
+      { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
+      { component: function OfficialContext() {}, options: { key: 'context', priority: 0, locale: 'conversation' } },
+    ]
+    const thirdParty = {
+      component: function EasyRewriteBubble(props) {
+        if (onThirdRender) onThirdRender(props)
+        return React.createElement('div', { className: 'mock-easyrewrite', 'data-node': props.node?.key }, 'BUBBLE')
+      },
+      options: { key: 'user', priority: -1, locale: 'chat' },
+      // easyrewrite 的 inject 返回扁平 props（无 hooks 键）：openSession/inputState 等
+      inject: () => ({ openSession: () => {}, inputState: { draft: '草稿' }, inputActions: { send: () => {} } }),
+    }
+    const svc = {
+      entries: () => [...official, thirdParty, ...regs],
+      entriesOfSlot: () => [],
+      inject: (name, factory) => { regs.push(factory()) },
+      register: (options, component) => ({ component, options }),
+    }
+    return { svc, regs }
+  }
+  it('user 格优先级注册在第三方占用位之下（lowest renders 语义下由本插件渲染）· 不再注册 dock', () => {
+    const { svc, regs } = easyrewriteLikeSlots()
+    pluginExports.apply({
+      inject(deps, cb) {
+        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
+      },
+    })
+    const userEntry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
+    assert.ok(userEntry, 'user 格恢复注册')
+    assert.equal(userEntry.options.priority, -2, '注册在第三方 -1 之下（-2）')
+    assert.equal(userEntry.component, T.GroupedUserView)
+    assert.equal(regs.some((r) => r.options.name === 'conversation.input.dock'), false, '不再注册 dock 占位条')
+    // 注入面：官方/自备 hook 保留，第三方扁平 props 并入（链式委托转发用）
+    const face = userEntry.options.inject('s1')
+    assert.ok(face.hooks.connectionGeneration, '官方/自备 hook 保留')
+    assert.equal(typeof face.openSession, 'function', '第三方扁平 props（openSession）并入注入面')
+    assert.ok(face.inputState, '第三方扁平 props（inputState）并入注入面')
+  })
+  it('渲染：GroupedUserView 链式委托第三方 user 组件 + 占位条（easyrewrite 功能不丢、位置在 user 消息下方）', () => {
+    let thirdProps = null
+    let thirdRendered = false
+    const { svc, regs } = easyrewriteLikeSlots({
+      onThirdRender: (props) => { thirdRendered = true; thirdProps = props },
+    })
+    pluginExports.apply({
+      inject(deps, cb) {
+        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
+      },
+    })
+    const userEntry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
+    const face = userEntry.options.inject('s1')
+    // 模拟 renderer 的 cachedSlotInject：face.hooks → use<Name>；扁平 props 原样透传
+    const bind = (s) => (selector) =>
+      React.useSyncExternalStore(
+        (fn) => s.subscribe(fn),
+        () => selector(s.getSnapshot()),
+      )
+    const nodes = [userNode('u', 100)]
+    const snapshot = buildSnapshot(nodes, {
+      turnTimings: new Map([[13, { startTime: 1000000, endTime: undefined }]]),
+    })
+    snapshot.running = true
+    const store = createSessionStore(snapshot)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      act(() => {
+        root.render(React.createElement(T.GroupedUserView, {
+          node: nodes[0],
+          useSession: makeUseSession(store),
+          sessionId: 's1',
+          useConnectionGeneration: bind(face.hooks.connectionGeneration),
+          openSession: face.openSession,
+          inputState: face.inputState,
+          inputActions: face.inputActions,
+        }))
+      })
+      assert.ok(thirdRendered, '第三方 user 组件（easyrewrite 气泡）被链式委托渲染')
+      assert.equal(thirdProps.inputState.draft, '草稿', '第三方扁平 props 整包转发')
+      assert.ok(container.querySelector('.mock-easyrewrite'), 'easyrewrite 气泡 DOM 存在')
+      const placeholder = container.querySelector('.ccg-group-root[data-ccg-placeholder]')
+      assert.ok(placeholder, '占位回合折叠栏渲染在 user 消息下方（TurnStatus 状态描述行之上）')
+      assert.ok(placeholder.textContent.includes('耗时'), '占位显示耗时')
+      assert.ok(placeholder.textContent.includes('第13轮'), '占位显示回合号')
+    } finally {
+      root.unmount()
+      container.remove()
+    }
   })
 })
