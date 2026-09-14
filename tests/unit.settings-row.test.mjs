@@ -239,10 +239,8 @@ describe('回合折叠方式设置行（shadow 官方 transcript-view）', () =>
 // 背景：其它插件（如 easyrewrite）也可能用 priority -1 注册 conversation.chat.node
 // 或 settings.general.item 的同一 key/id，若双方同 priority 同时注册，slots 系统抛
 // "already has an entry for key ... at priority" 导致启动失败（Failed to load
-// plugins）。本插件注册前探测，冲突时自动让位。user 格例外：占位条必须渲染在 user
-// 消息正下方，让位即退化为位置错误的 dock 方案——user 格注册在最低占用位之下并与
-// 第三方条目链式委托共存（见 regression「0 秒占位回 user 格」）。让位逻辑保护其余
-// 三格与设置行。
+// plugins）。本插件注册前探测，冲突时自动让位。user 格已整体让位退出（0 秒占位
+// 迁往 conversation.input.dock），让位逻辑保护剩余三格与设置行。
 describe('注册冲突自动让位（兼容适配）', () => {
   function applyWith(slotsSvc) {
     const regs = []
@@ -364,19 +362,19 @@ describe('注册异常软降级（异常不外泄，防启动崩溃）', () => {
     assert.ok(regs.some((r) => r.options.key === 'tool-call'), 'tool-call 照常注册')
     assert.ok(regs.some((r) => r.options.key === 'context'), 'context 照常注册')
     assert.ok(regs.some((r) => r.options.id === 'transcript-view'), '设置行照常注册')
-    assert.ok(regs.some((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user'), 'user 格占位条照常注册')
+    assert.ok(regs.some((r) => r.options.id === 'turn-fold-running'), 'dock 占位条照常注册')
     assert.ok(!regs.some((r) => r.options.key === 'assistant-step'), '肇事条目已跳过（单条目降级）')
     const toast = T.getToast()
     assert.ok(toast && typeof toast.text === 'string' && toast.text.includes('渲染位注册异常'), '用户可见的降级提示 Toast 已入队')
   })
 
-  it('user 格同位冲突 register 抛错 + 设置行 register 抛错 → 均不外泄，其余三格照常', () => {
-    const { svc, regs } = makeThrowingSlots({ throwKeys: ['user'], throwRegisterNames: ['settings.general.item'] })
+  it('dock inject 同步抛 + 设置行 register 抛错 → 均不外泄，chat.node 三格照常', () => {
+    const { svc, regs } = makeThrowingSlots({ throwInjectNames: ['conversation.input.dock'], throwRegisterNames: ['settings.general.item'] })
     assert.doesNotThrow(() => applyWith(svc))
     for (const key of ['tool-call', 'assistant-step', 'context']) {
       assert.ok(regs.some((r) => r.options.key === key), `${key} 照常注册`)
     }
     assert.ok(!regs.some((r) => r.options.id === 'transcript-view'), '设置行条目已降级跳过')
-    assert.ok(!regs.some((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user'), 'user 格条目已降级跳过（占位条缺失，但不影响其余功能）')
+    assert.ok(!regs.some((r) => r.options.id === 'turn-fold-running'), 'dock 条目已降级跳过')
   })
 })

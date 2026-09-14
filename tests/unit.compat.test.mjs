@@ -311,7 +311,7 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
     assert.equal(ours['tool-call'], 'conversation', '工具卡标题词（tool.title.read=读取）在 conversation 词典')
     assert.equal(ours['assistant-step'], 'chat', 'message.think=思考 在 chat 词典')
     assert.equal(ours['context'], 'conversation', '无同 key 官方条目且无 ctx.locale 探针 → 回退 conversation')
-    assert.equal(ours['user'], 'conversation', 'user 格恢复注册（0 秒占位回 user 消息正下方），无同 key 官方条目 → 回退 conversation')
+    assert.equal(ours['user'], undefined, 'user 格已让位退出，不再注册')
   })
 
   it('无官方条目且无 chat 词典时全部回退 conversation（0.1.1 行为不变）', () => {
