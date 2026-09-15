@@ -620,4 +620,34 @@ describe('回归：0 秒占位回 user 格——与第三方 user 条目（dsh-e
       'easyrewrite 后注册 -1 与我们的 -2 不冲突（页面不再启动失败）',
     )
   })
+  it('另一个插件先占 -2（我们后加载）→ 下探到 -3，绝不撞已注册者', () => {
+    // 若未来某插件硬编码 -2（与我们的下限同位）：它先注册时我们探测到 -2 → 取 -3，
+    // 与它及 easyrewrite（-1）都不冲突（lowest-renders 语义下 -3 仍渲染、链式委托不变）。
+    const regs = []
+    const official = [
+      { component: function OfficialUser() {}, options: { key: 'user', priority: 0, locale: 'chat' } },
+      { component: function OfficialTool() {}, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
+      { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
+      { component: function OfficialContext() {}, options: { key: 'context', priority: 0, locale: 'conversation' } },
+    ]
+    // 第三方占 -1（easyrewrite）与 -2（另一个插件，硬编码同下限位）
+    const thirdParty = [
+      { component: function OtherUserPlugin() {}, options: { key: 'user', priority: -2, locale: 'chat' } },
+      { component: function EasyRewriteBubble() {}, options: { key: 'user', priority: -1, locale: 'chat' } },
+    ]
+    const svc = {
+      entries: () => [...official, ...thirdParty, ...regs],
+      entriesOfSlot: () => [],
+      inject: (name, factory) => { regs.push(factory()) },
+      register: (options, component) => ({ component, options }),
+    }
+    pluginExports.apply({
+      inject(deps, cb) {
+        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
+      },
+    })
+    const userEntry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
+    assert.ok(userEntry, 'user 格注册')
+    assert.equal(userEntry.options.priority, -3, '探测到 -2 已被第三方占用 → 下探到 -3')
+  })
 })
