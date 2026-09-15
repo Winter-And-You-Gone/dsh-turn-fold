@@ -852,11 +852,13 @@ window.__ModuleLoader__.load({
 				sections: [
 					{
 						version: "v0.5.2",
-						note: "消耗token 对齐官方统计口径",
+						note: "消耗token 对齐官方统计 · 0 秒占位位置修复",
 						items: [
 							{ title: "🎯 消耗token 漏计修复", detail: "纯工具调用的中间步骤（assistant 消息只有 tool-call、没有可见的思考/正文）被 DSH 以隐藏节点结算，旧版回合折叠栏看不到它们、token 合计偏少——实测某会话官方统计 175,844、插件只显示 117,301，差值恰好是一个隐藏步骤的 58,543。现已对齐官方统计。" },
 							{ title: "📐 回合结束后取官方精确值", detail: "优先采用官方随 turn-tail 下发的 tokenUsage——官方在持久化事件日志上折叠全部计费请求（含被重试的请求）得到的精确值，缓存命中率分母也与官方 TurnUsagePanel 同源；旧版宿主没有该字段时自动回退原有算法。" },
-							{ title: "🔁 运行中基线同步补全", detail: "运行中的 token 基线同样补采隐藏步骤：其 usage 一到账就计入实时数值，回合结束切换官方精确值时不再跳变。" }
+							{ title: "🔁 运行中基线同步补全", detail: "运行中的 token 基线同样补采隐藏步骤：其 usage 一到账就计入实时数值，回合结束切换官方精确值时不再跳变。" },
+							{ title: "📍 0 秒占位回 user 消息正下方", detail: "回合刚开始时占位回合折叠栏曾出现在输入框左上角、官方状态描述行（Deep diving...）下面——输入区 dock 位于整个聊天流列之下，位置天然错。现改在 user 消息正下方渲染（与正式回合折叠栏同位置，交接无位移、不跳变）。" },
+							{ title: "🤝 与 dsh-easyrewrite 共存", detail: "占位条回归 user 格后，与撤回/重编辑气泡插件链式委托共存：本插件渲染其组件、整包转发 props，功能互不丢失；优先级固定 -2 下限（绝不占 -1），与插件加载顺序无关，不会再出现同格同优先级注册冲突。" }
 						]
 					}
 				],
@@ -868,11 +870,13 @@ window.__ModuleLoader__.load({
 				sections: [
 					{
 						version: "v0.5.2",
-						note: "Token accounting aligned with the official statistics",
+						note: "Token accounting aligned · 0-second placeholder position fixed",
 						items: [
 							{ title: "🎯 Fixed token undercount", detail: "Pure tool-call intermediate steps (assistant messages with only a tool-call and no visible reasoning/text) are settled by DSH as hidden nodes, which the old turn fold bar never saw — one measured session showed 175,844 tokens in the official stats vs 117,301 in the plugin, the gap being exactly one hidden step's 58,543. Now aligned with the official statistics." },
 							{ title: "📐 Official exact value after turn end", detail: "The official tokenUsage carried by the turn-tail is preferred — the exact fold of every billed attempt on the persisted event log (retried requests included), with the cache-hit denominator matching the official TurnUsagePanel; older hosts without the field fall back to the previous node-sum automatically." },
-							{ title: "🔁 Live baseline filled in too", detail: "The running baseline also re-collects hidden steps: their usage counts as soon as it settles, so the number no longer jumps when the turn closes." }
+							{ title: "🔁 Live baseline filled in too", detail: "The running baseline also re-collects hidden steps: their usage counts as soon as it settles, so the number no longer jumps when the turn closes." },
+							{ title: "📍 0-second placeholder back below the user message", detail: "When a turn just started, the placeholder turn fold bar used to appear at the top-left of the composer, below the official status line (\"Deep diving...\") — the input dock sits below the whole chat flow column, so the position was structurally wrong. It now renders directly below the user message (same spot as the real header; zero-movement handover)." },
+							{ title: "🤝 Coexists with dsh-easyrewrite", detail: "Back in the user cell, the placeholder chain-delegates the recall/re-edit bubble plugin: this plugin renders its component with full props forwarded, so neither loses features. The priority is a fixed -2 floor (never -1), independent of plugin load order — no same-cell same-priority registration clash can occur." }
 						]
 					}
 				],
