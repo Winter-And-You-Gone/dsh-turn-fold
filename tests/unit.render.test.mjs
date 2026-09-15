@@ -580,7 +580,7 @@ describe('注册契约（Bug2 根因回归）', () => {
   it('user 格恢复注册（0 秒占位回 user 消息正下方）· 不再注册 dock 占位条', () => {
     const userEntry = slotRegistrations.find((e) => e.options.name === 'conversation.chat.node' && e.options.key === 'user')
     assert.ok(userEntry, '应恢复注册 conversation.chat.node 的 user key（占位条回 user 消息正下方）')
-    assert.equal(userEntry.options.priority, -1, '本测试环境无第三方 user 条目 → 官方 0 之下取 -1')
+    assert.equal(userEntry.options.priority, -2, '本测试环境无第三方 user 条目 → 仍取 -2（顺序无关下限，绝不占 -1：easyrewrite 可能后注册硬编码 -1）')
     assert.equal(userEntry.component, T.GroupedUserView)
     assert.equal(
       slotRegistrations.some((e) => e.options.name === 'conversation.input.dock'),

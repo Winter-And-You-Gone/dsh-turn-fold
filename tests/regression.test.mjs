@@ -579,4 +579,45 @@ describe('回归：0 秒占位回 user 格——与第三方 user 条目（dsh-e
       container.remove()
     }
   })
+  it('顺序无关：turn-fold 先加载（entries 无第三方）→ 取 -2 而非 -1，easyrewrite 后注册 -1 不撞车', () => {
+    // 真机事故（2026-09-14）：profile bundle 顺序 turn-fold 在 easyrewrite 前——旧版
+    // resolveUserCellPriority 探测不到第三方就取 -1，easyrewrite 随后硬编码注册 -1，
+    // SlotCore（index.ts:848 同 key 同 priority 第二次注册）直接抛错、页面启动失败。
+    // 修复：下限锁死 -2（绝不占 -1），与加载顺序无关。
+    const regs = []
+    const byCell = new Map() // key → Set(priority)，模拟 SlotCore 的同格同位冲突检测
+    const official = [
+      { component: function OfficialUser() {}, options: { key: 'user', priority: 0, locale: 'chat' } },
+      { component: function OfficialTool() {}, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
+      { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
+      { component: function OfficialContext() {}, options: { key: 'context', priority: 0, locale: 'conversation' } },
+    ]
+    const svc = {
+      entries: () => [...official, ...regs], // 无第三方 user 条目（turn-fold 先加载）
+      entriesOfSlot: () => [],
+      inject: (name, factory) => { regs.push(factory()) },
+      register(options, component) {
+        const cellKey = options.key ?? options.id ?? 'list'
+        const pri = options.priority ?? 0
+        const cell = byCell.get(cellKey) ?? new Set()
+        if (cell.has(pri)) throw new Error(`keyed slot already has an entry for key "${cellKey}" at priority ${pri}`)
+        cell.add(pri)
+        byCell.set(cellKey, cell)
+        return { component, options }
+      },
+    }
+    pluginExports.apply({
+      inject(deps, cb) {
+        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
+      },
+    })
+    const userEntry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
+    assert.ok(userEntry, 'user 格注册')
+    assert.equal(userEntry.options.priority, -2, '探测不到第三方也不占 -1（顺序无关下限）')
+    // 随后 easyrewrite 以硬编码 -1 注册：SlotCore 同格同位冲突检测必须不抛
+    assert.doesNotThrow(
+      () => svc.register({ name: 'conversation.chat.node', key: 'user', priority: -1 }, function EasyRewriteBubble() {}),
+      'easyrewrite 后注册 -1 与我们的 -2 不冲突（页面不再启动失败）',
+    )
+  })
 })

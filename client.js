@@ -2727,11 +2727,16 @@ window.__ModuleLoader__.load({
 				return -1;
 			}
 		}
-		/** user 格优先级与其它三格相反：注册在"所有同 key 条目（官方 0 + 第三方）"的最低
-		 *  占用位之下。lowest-renders 语义下由本插件渲染，第三方条目（easyrewrite）经
-		 *  GroupedUserView 链式委托共存；若像 resolveChatNodePriority 那样让位（p>=1 即
-		 *  弃权），0 秒占位条就只能退回输入区 dock（跑到状态描述行下面，位置错误）。
-		 *  官方 0 位恒存在，所以最低位至少是 -1。 */
+		/** user 格优先级与其它三格相反：注册在"所有同 key 条目（官方 0 + 第三方）"之下，
+		 *  且**下限锁死 -2、绝不用 -1**——与插件加载顺序无关。dsh-easyrewrite 硬编码
+		 *  -1：若本插件先加载时占了 -1，easyrewrite 随后注册 -1 会撞车抛错（真机事故：
+		 *  profile bundle 顺序 turn-fold 排在 easyrewrite 前）。固定 -2 后无论谁先注册
+		 *  都不冲突——本插件先注册（探测不到第三方）取 -2，easyrewrite 后注册 -1 不撞车；
+		 *  easyrewrite 先注册则探测到 -1、同样取 -2。仅当 -2 也被第三方占用（极罕见）才
+		 *  继续下探到最低占用位 - 1。lowest-renders 语义下由本插件渲染，第三方条目
+		 *  （easyrewrite）经 GroupedUserView 链式委托共存；若像 resolveChatNodePriority
+		 *  那样让位（p>=1 即弃权），0 秒占位条就只能退回输入区 dock（跑到状态描述行
+		 *  下面，位置错误）。 */
 		function resolveUserCellPriority(slots) {
 			try {
 				var entries = slots && typeof slots.entries === "function" ? slots.entries("conversation.chat.node") : null;
@@ -2743,7 +2748,8 @@ window.__ModuleLoader__.load({
 						if (p < lowest) lowest = p;
 					}
 				}
-				var mine = lowest - 1;
+				var mine = -2;
+				if (lowest <= -2) mine = lowest - 1;
 				if (lowest < 0) {
 					try {
 						if (typeof console !== "undefined" && console.warn) console.warn("[dsh-turn-fold] user 格已有其他插件（priority " + lowest + "），0 秒占位以 priority " + mine + " 链式委托共存");
@@ -2751,7 +2757,7 @@ window.__ModuleLoader__.load({
 				}
 				return mine;
 			} catch (err) {
-				return -1;
+				return -2; // entries 不可用时同样不用 -1（保持顺序无关）
 			}
 		}
 		/** 步骤折叠栏标题中的文件链接：点击复制绝对路径，悬停变 DeepSeek 主题蓝色。 */

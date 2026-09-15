@@ -309,16 +309,20 @@ git push --follow-tags
   `conversation.chat.node`（keyed slot）按类型分发渲染器。
 - Slot 注册器官方支持 **不同 priority 覆盖**（`register at a different priority to shadow it, lowest renders`）。
   本插件用 `priority: -1` 覆盖内置的 `tool-call` / `assistant-step` / `context` 渲染器；
-  `user` 格（0 秒占位条）注册在**所有同 key 条目（官方 0 + 第三方）的最低占用位之下**，
-  并把第三方条目（如 dsh-easyrewrite 的撤回/重编辑气泡）的组件**链式委托渲染**（整包
-  props 转发、其 inject 面的扁平 props 并入注入面）——占位条与 user 消息专用插件共存、
-  功能互不丢失，也消除了同 key 同 priority 抢位导致对方加载失败的一类冲突。
+  `user` 格（0 秒占位条）注册在 **`-2`（顺序无关下限，绝不占 `-1`）**——dsh-easyrewrite
+  硬编码 `-1`，本插件若先加载占了 `-1`、它后注册就会撞车抛错（真机事故：bundle 顺序
+  turn-fold 在 easyrewrite 前）；固定 `-2` 后无论谁先加载都不冲突（easyrewrite 永远
+  `-1`、本插件永远 `-2` 或更低，注册表层面零碰撞）。仅当 `-2` 也被第三方占用（极罕见）
+  才继续下探到最低占用位 `-1`。并把第三方条目（如 dsh-easyrewrite 的撤回/重编辑气泡）
+  的组件**链式委托渲染**（整包 props 转发、其 inject 面的扁平 props 并入注入面）——
+  占位条与 user 消息专用插件共存、功能互不丢失。
 - **注册冲突自动让位**：注册前探测同 key/id 的 `priority: -1` 是否已被占用
   （`ctx.slots.entries`），被占则自动让位到第一个不冲突的值（官方 `0` 恒预留，绝不
   落回官方档）并打 `console.warn`——本插件后加载时不再与先占者冲突。
   `conversation.chat.node` 三格（tool-call/assistant-step/context）与
   `settings.general.item` 的 transcript-view 行都走该逻辑；`user` 格例外（占位条必须
-  渲染在 user 消息正下方，让位即弃权）——改取最低占用位之下并链式委托共存。
+  渲染在 user 消息正下方，让位即弃权，且不能用探测-1 方案）——固定 `-2` 下限并链式
+  委托共存。
 - **注册异常软降级（绝不带崩 DSH）**：slots 注入回调若让异常外泄，延迟执行路径
   （目标 slot 声明晚于插件加载时，回调跑在官方声明者的调用栈里 / 声明订阅里
   uncaught re-throw）会打断官方 UI 激活、web 整页无法启动。因此本插件**所有** slot
@@ -350,8 +354,9 @@ git push --follow-tags
   `chat.legacy`、顶层兼容字段兜底。所有 hooks 无条件调用（数据计算与订阅和"是否接管
   折叠"解耦），折叠模式切换（接管 ↔ 委托内置）不改变 hook 数量，条目不会崩。
 - **0 秒占位（user 消息正下方）**：`GroupedUserView` 注册 `conversation.chat.node` 的
-  `user` key，优先级取"所有同 key 条目最低占用位 - 1"（lowest-renders 语义下由本插件
-  渲染），在「会话运行中且该 user 是最后一条消息」时于 user 消息正下方渲染占位回合
+  `user` key，优先级**固定 `-2`（顺序无关下限，绝不占 `-1`——与 easyrewrite 硬编码
+  `-1` 零碰撞，本插件先加载也不会让它后注册撞车；`-2` 被第三方占用时才继续下探）**，
+  在「会话运行中且该 user 是最后一条消息」时于 user 消息正下方渲染占位回合
   折叠栏（耗时从运行中回合的 `startTime` 计时），第一条中间节点到达后自动交接给正式
   回合折叠栏（占位栏补 16px 上间距与官方 flow gap 对齐，交接无位移）。第三方 user
   条目（dsh-easyrewrite）的组件链式委托渲染、整包 props 转发；`chat.node` 是核心 slot

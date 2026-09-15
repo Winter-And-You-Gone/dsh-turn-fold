@@ -306,7 +306,8 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
     pluginExports.apply({ inject(deps, cb) { cb({ slots: officialSlots, connection: {} }) } })
     const ours = {}
     for (const r of regs) {
-      if (r.options.priority === -1 && r.options.name === 'conversation.chat.node') ours[r.options.key] = r.options.locale
+      // user 格优先级为 -2（顺序无关下限，与 easyrewrite 的 -1 错开），三格为 -1
+      if (r.options.priority < 0 && r.options.name === 'conversation.chat.node') ours[r.options.key] = r.options.locale
     }
     assert.equal(ours['tool-call'], 'conversation', '工具卡标题词（tool.title.read=读取）在 conversation 词典')
     assert.equal(ours['assistant-step'], 'chat', 'message.think=思考 在 chat 词典')
@@ -323,7 +324,7 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
       register: (options, component) => ({ component, options }),
     }
     pluginExports.apply({ inject(deps, cb) { cb({ slots: emptySlots, connection: {} }) } })
-    const oursFallback = regsFallback.filter((r) => r.options.priority === -1 && r.options.name === 'conversation.chat.node')
+    const oursFallback = regsFallback.filter((r) => r.options.priority < 0 && r.options.name === 'conversation.chat.node')
     assert.ok(oursFallback.length >= 3)
     for (const r of oursFallback) assert.equal(r.options.locale, 'conversation', '回退 conversation（0.1.1 行为不变）')
   })
