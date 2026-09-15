@@ -24,6 +24,7 @@ jobs:
         run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
       - run: npm install --no-audit --no-fund
       - run: npm run check
+      - run: npm run icons:check
       - run: npm test
       - run: npm pack --dry-run
       # 版本已在 npm 上（如维护者手动发布）时跳过对应 publish——重复推送同一

@@ -89,6 +89,9 @@ if (action === 'inject') {
   if (normalize(current) === normalize(wantJson)) {
     console.log('[sync-icons] ICON_DEFAULTS 与 icons/default.json 一致')
   } else {
-    console.log('[sync-icons] 不一致：icons/default.json 有更新（node scripts/sync-icons.mjs --inject 应用）')
+    // 非零退出：本脚本是 CI 的防漂移门禁（改了 icons/default.json 忘了 --inject 时
+    // 必须让流水线红掉），只打印提示会让门禁形同虚设。
+    console.error('[sync-icons] 不一致：icons/default.json 有更新（node scripts/sync-icons.mjs --inject 应用）')
+    process.exitCode = 1
   }
 }

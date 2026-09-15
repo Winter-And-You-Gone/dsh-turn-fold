@@ -21,5 +21,8 @@ jobs:
       - run: node --check index.js
       - run: node --check client.js
       - run: npm run check
+      # 图标数据唯一源是 icons/default.json，client.js 里是注入副本——改了 JSON 忘了
+      # `npm run sync:icons` 时这里必须红（脚本不一致时非零退出）。
+      - run: npm run icons:check
       - run: npm test
       - run: npm pack --dry-run
