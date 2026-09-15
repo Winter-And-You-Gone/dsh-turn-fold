@@ -1069,6 +1069,38 @@ describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）',
     assert.equal(T.projectLiveTokens(k(22), 450, 60, 100000, undefined), 450 + offset(10))
   })
 
+  it('动画偏移封顶：真实基线的 10% 与 500 取大者（长时间工具执行不再堆出万级虚构数字）', () => {
+    T.liveTokenCache.clear()
+    const base = T.liveTickState.index
+    // 小基线：上限取绝对下限 500（450 × 10% = 45 < 500）
+    T.projectLiveTokens(k(31), 450, 60, 100000, 30) // 初始化：animBaseTick = base
+    T.liveTickState.index = base + 2000              // 原始偏移 offset(2000) = 10000 ≫ 上限
+    assert.equal(T.projectLiveTokens(k(31), 450, 60, 100000, 30), 450 + 500, '小基线走 500 下限')
+    // 无 usage 兜底（基线 0）：同样 500 封顶（原始偏移 10000）
+    T.projectLiveTokens(k(32) + ':pending', 0, undefined, 100000, undefined) // 初始化于 base+2000
+    T.liveTickState.index = base + 4000
+    assert.equal(T.projectLiveTokens(k(32) + ':pending', 0, undefined, 100000, undefined), 500, 'pending 基线 0 走 500 下限')
+    // 大基线：上限 = 100000 × 10% = 10000（原始偏移 offset(4000) = 20000）
+    T.projectLiveTokens(k(33), 100000, 60, 100000, 30) // 初始化于 base+4000
+    T.liveTickState.index = base + 8000
+    assert.equal(T.projectLiveTokens(k(33), 100000, 60, 100000, 30), 100000 + 10000, '大基线按 10% 封顶')
+    // 上限可调：比例与下限都置 0 → 只显示真实值（关闭动画增长）
+    const ratio = T.CONFIG.liveTokenAnimMaxRatio
+    const floor = T.CONFIG.liveTokenAnimMaxFloor
+    try {
+      T.CONFIG.liveTokenAnimMaxRatio = 0
+      T.CONFIG.liveTokenAnimMaxFloor = 0
+      T.liveTokenCache.clear()
+      T.projectLiveTokens(k(34), 450, 60, 100000, 30) // 初始化于 base+8000
+      T.liveTickState.index = base + 12000
+      assert.equal(T.projectLiveTokens(k(34), 450, 60, 100000, 30), 450, '比例与下限为 0 时偏移为 0')
+    } finally {
+      T.CONFIG.liveTokenAnimMaxRatio = ratio
+      T.CONFIG.liveTokenAnimMaxFloor = floor
+      T.liveTokenCache.clear()
+    }
+  })
+
   it('新数据到达：校正基线为真实值 · 动画偏移继续累计不回退', () => {
     T.liveTokenCache.clear()
     const base = T.liveTickState.index

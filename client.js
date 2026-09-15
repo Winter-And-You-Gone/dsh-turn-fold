@@ -58,6 +58,13 @@ window.__ModuleLoader__.load({
 			// 刷新间隔抖动比例：实际间隔 = liveTickMs × 随机数（liveTickJitter ~ 1），
 			// 让数字跳动节奏不规律（时快时慢），更像真实的生成速率而不是节拍器。
 			liveTickJitter: 0.5,
+			// "消耗token"纯展示动画偏移的上限：上限 = max(下限, 真实基线 × 比例)。
+			// 偏移按 tick 线性累积（约 +29/秒），长时间工具执行会让虚构数字越堆越大
+			// （5 分钟 ≈ 一万+），远超真实用量、失真到不可信；封顶后偏移最多把数字
+			// 抬高到"真实值的 10%"或 500（取大者），真实 usage 到达时上限随基线一起
+			// 抬高，数字仍只增不减。设为 0 比例即关闭动画增长（只剩真实值）。
+			liveTokenAnimMaxRatio: 0.1,
+			liveTokenAnimMaxFloor: 500,
 			// 排除在步骤折叠栏之外的工具（按工具名精确匹配，小写）：这类调用不套步骤
 			// 折叠栏、也不并入任何段，始终以官方工具卡片原样渲染（如"更新任务清单"的
 			// todo_write）；但仍参与整回合折叠——回合结束收进回合折叠栏。
@@ -858,7 +865,8 @@ window.__ModuleLoader__.load({
 							{ title: "📐 回合结束后取官方精确值", detail: "优先采用官方随 turn-tail 下发的 tokenUsage——官方在持久化事件日志上折叠全部计费请求（含被重试的请求）得到的精确值，缓存命中率分母也与官方 TurnUsagePanel 同源；旧版宿主没有该字段时自动回退原有算法。" },
 							{ title: "🔁 运行中基线同步补全", detail: "运行中的 token 基线同样补采隐藏步骤：其 usage 一到账就计入实时数值，回合结束切换官方精确值时不再跳变。" },
 							{ title: "📍 0 秒占位回 user 消息正下方", detail: "回合刚开始时占位回合折叠栏曾出现在输入框左上角、官方状态描述行（Deep diving...）下面——输入区 dock 位于整个聊天流列之下，位置天然错。现改在 user 消息正下方渲染（与正式回合折叠栏同位置，交接无位移、不跳变）。" },
-							{ title: "🤝 与 dsh-easyrewrite 共存", detail: "占位条回归 user 格后，与撤回/重编辑气泡插件链式委托共存：本插件渲染其组件、整包转发 props，功能互不丢失；优先级固定 -2 下限（绝不占 -1），与插件加载顺序无关，不会再出现同格同优先级注册冲突。" }
+							{ title: "🤝 与 dsh-easyrewrite 共存", detail: "占位条回归 user 格后，与撤回/重编辑气泡插件链式委托共存：本插件渲染其组件、整包转发 props，功能互不丢失；优先级固定 -2 下限（绝不占 -1），与插件加载顺序无关，不会再出现同格同优先级注册冲突。" },
+							{ title: "🧹 细节加固", detail: "回合运行中的直播时钟在极端时序下不再留下空转定时器；折叠栏渲染不再产生 React 控制台告警（子元素 key / SVG 属性名）；「消耗token」动画偏移加上限——最多把数字抬高到真实值的 10% 或 500（取大者），长时间工具执行不再堆出失真的量级。" }
 						]
 					}
 				],
@@ -876,7 +884,8 @@ window.__ModuleLoader__.load({
 							{ title: "📐 Official exact value after turn end", detail: "The official tokenUsage carried by the turn-tail is preferred — the exact fold of every billed attempt on the persisted event log (retried requests included), with the cache-hit denominator matching the official TurnUsagePanel; older hosts without the field fall back to the previous node-sum automatically." },
 							{ title: "🔁 Live baseline filled in too", detail: "The running baseline also re-collects hidden steps: their usage counts as soon as it settles, so the number no longer jumps when the turn closes." },
 							{ title: "📍 0-second placeholder back below the user message", detail: "When a turn just started, the placeholder turn fold bar used to appear at the top-left of the composer, below the official status line (\"Deep diving...\") — the input dock sits below the whole chat flow column, so the position was structurally wrong. It now renders directly below the user message (same spot as the real header; zero-movement handover)." },
-							{ title: "🤝 Coexists with dsh-easyrewrite", detail: "Back in the user cell, the placeholder chain-delegates the recall/re-edit bubble plugin: this plugin renders its component with full props forwarded, so neither loses features. The priority is a fixed -2 floor (never -1), independent of plugin load order — no same-cell same-priority registration clash can occur." }
+							{ title: "🤝 Coexists with dsh-easyrewrite", detail: "Back in the user cell, the placeholder chain-delegates the recall/re-edit bubble plugin: this plugin renders its component with full props forwarded, so neither loses features. The priority is a fixed -2 floor (never -1), independent of plugin load order — no same-cell same-priority registration clash can occur." },
+							{ title: "🧹 Hardening", detail: "The live clock no longer leaves an idle timer behind under an unlucky timing edge; fold-bar rendering no longer emits React console warnings (child keys / SVG attribute names); the \"tokens consumed\" animation offset is now capped — it can lift the number by at most max(10% of the real value, 500), so a long tool run can no longer pile up a distorted magnitude." }
 						]
 					}
 				],
@@ -1487,20 +1496,48 @@ window.__ModuleLoader__.load({
 		var tickVersion = 0;
 		var tickTimer = null;
 		var liveTickState = { index: 0 };
+		// 定时器回调正在执行中（回调期间 tickTimer 为 null，续订由回调末尾统一决定）。
+		// 没有这个标志会有两个方向的竞态：
+		//   ① 回调里若无条件 scheduleTick()——最后一个订阅者在回调栈内退订（React 对
+		//      uSES 通知做同步重渲染时，组件切到 subscribeNothing 的清理就跑在这里）时，
+		//      退订分支看到 tickTimer===null 什么也不做，回调末尾又续上一只表 →
+		//      留下一只永远空转、没人停的定时器（每 ~250ms 一次，直到页面关闭）。
+		//   ② 回调期间若有新订阅者进来，subscribeTicks 看到 tickTimer===null 会再起
+		//      一条链 → 两条链并行，tick 速率翻倍且其中一条无人持有。回调期间不新起
+		//      链，由末尾按订阅者数量统一续订即可。
+		var tickRunning = false;
 		function scheduleTick() {
 			var delay = CONFIG.liveTickMs * (CONFIG.liveTickJitter + (1 - CONFIG.liveTickJitter) * Math.random());
 			tickTimer = setTimeout(function () {
+				tickTimer = null;
+				tickRunning = true;
 				liveTickState.index++;
 				tickVersion++;
-				var fns = [];
-				tickListeners.forEach(function (fn) { fns.push(fn); });
-				for (var i = 0; i < fns.length; i++) fns[i]();
-				scheduleTick();
+				// 逐个监听者兜异常：单个订阅者抛错（React 的 uSES 通知链路异常）不能
+				// 带走时钟本身——否则耗时秒表与 token 动画静默停死到刷新页面为止。
+				// 用 try/finally 保证 tickRunning 一定复位，状态机不会卡在"回调中"。
+				try {
+					var fns = [];
+					tickListeners.forEach(function (fn) { fns.push(fn); });
+					for (var i = 0; i < fns.length; i++) {
+						try { fns[i](); } catch (errOne) {
+							try {
+								if (typeof console !== "undefined" && console.warn) {
+									console.warn("[dsh-turn-fold] 直播时钟监听者抛错（已跳过该监听者）：", errOne);
+								}
+							} catch (e) { /* 忽略 */ }
+						}
+					}
+				} finally {
+					tickRunning = false;
+					// 回调期间无人持有新链，这里按"是否还有订阅者"决定续订——无订阅者即停表。
+					if (tickListeners.size > 0 && tickTimer === null) scheduleTick();
+				}
 			}, delay);
 		}
 		function subscribeTicks(fn) {
 			tickListeners.add(fn);
-			if (tickTimer === null) scheduleTick();
+			if (tickTimer === null && !tickRunning) scheduleTick();
 			return function () {
 				tickListeners.delete(fn);
 				if (tickListeners.size === 0 && tickTimer !== null) {
@@ -2092,9 +2129,19 @@ window.__ModuleLoader__.load({
 			}
 			if (realTokens !== c.lastTokens) c.lastTokens = realTokens;
 			// 真实基线 + 动画偏移（+1/+11 交替：个位每 tick +1、十位每 2 tick +1；
-			// tick 间隔随机，节奏不规律）
+			// tick 间隔随机，节奏不规律）。偏移封顶（见 CONFIG.liveTokenAnimMax*）：
+			// 上限随真实基线抬高，因此数字只增不减，但不会在长时间工具执行里堆到
+			// 远超真实的量级；该值为 undefined/NaN 时视为不限（旧调用签名兼容）。
 			var tickCount = liveTickState.index - c.animBaseTick;
-			var animOffset = (tickCount % 10) + Math.floor(tickCount / 2) * 10;
+			var rawOffset = (tickCount % 10) + Math.floor(tickCount / 2) * 10;
+			var animOffset = rawOffset;
+			var ratio = CONFIG.liveTokenAnimMaxRatio;
+			if (typeof ratio === "number" && isFinite(ratio) && ratio >= 0) {
+				var floorCap = typeof CONFIG.liveTokenAnimMaxFloor === "number" && isFinite(CONFIG.liveTokenAnimMaxFloor)
+					? CONFIG.liveTokenAnimMaxFloor : 0;
+				var cap = Math.max(floorCap, Math.floor(Math.max(0, c.lastTokens) * ratio));
+				if (rawOffset > cap) animOffset = cap;
+			}
 			return Math.floor(c.lastTokens) + animOffset;
 		}
 		/** 回合折叠栏展示指标：运行中把"消耗token"按动画节奏持续增长（真实 usage 到达时校正基线）。
@@ -2602,15 +2649,18 @@ window.__ModuleLoader__.load({
 		/** 默认图标预览：官方 outline chevron（描边折线，非实心三角形）。
 		 *  用 points 区分方向：右箭头 "5.5 3 9.5 7 5.5 11" / 下箭头 "3 5.5 7 9.5 11 5.5"。 */
 		function DefaultChevronIcon(props) {
+			// SVG 属性必须用 React 的驼峰命名（strokeWidth/strokeLinecap/strokeLinejoin）：
+			// 写成连字符形式 React 会逐条报 "Invalid DOM property"，且渲染结果依赖
+			// React 对未知属性的透传策略（版本差异），不可靠。
 			return react.createElement("svg", {
 				viewBox: "0 0 14 14",
 				width: "14",
 				height: "14",
 				fill: "none",
 				stroke: "currentColor",
-				"stroke-width": "1.6",
-				"stroke-linecap": "round",
-				"stroke-linejoin": "round"
+				strokeWidth: "1.6",
+				strokeLinecap: "round",
+				strokeLinejoin: "round"
 			},
 				react.createElement("polyline", { points: props.points })
 			);
@@ -3031,9 +3081,12 @@ window.__ModuleLoader__.load({
 			} else if (typeof label === "string") {
 				var parts = splitLabelParts(label);
 				if (parts.diff !== null || parts.failure !== null) {
-					var kids = [renderTitleFileLinks(parts.base, filePaths)];
-					if (parts.diff !== null) kids.push(renderDiff(parts.diff));
-					kids.push(parts.after);
+					// 数组子元素必须逐个带 key（React 会对无 key 的数组子项报警并按“按位复用”
+					// 协调）：base/after 可能是字符串、单个元素或 Fragment，用带 key 的
+					// Fragment 包一层统一处理（Fragment 不产生 DOM，不影响布局与选择器）。
+					var kids = [react.createElement(react.Fragment, { key: "base" }, renderTitleFileLinks(parts.base, filePaths))];
+					if (parts.diff !== null) kids.push(react.createElement(react.Fragment, { key: "diff" }, renderDiff(parts.diff)));
+					kids.push(react.createElement(react.Fragment, { key: "after" }, parts.after));
 					if (parts.failure !== null) kids.push(react.createElement("span", { key: "fail", className: "ccg-header-failure" }, parts.failure));
 					titleContent = react.createElement.apply(react, [react.Fragment, null].concat(kids));
 				} else {
@@ -3045,9 +3098,11 @@ window.__ModuleLoader__.load({
 			// right：右对齐的尾部元素（回合折叠栏的"第x轮"）——flex 容器两端对齐，指标在左、轮次在右。
 			// gearIcon：字段设置齿轮（回合折叠栏专属）——紧跟指标文案之后、轮次之前。
 			if (props.right !== undefined && props.right !== null && props.right !== "") {
-				var flexMetricsKids = [titleContent];
+				// 同上：这两个子元素进的是数组，必须带 key（titleContent 可能是字符串、
+				// 元素或 Fragment，故用带 key 的 Fragment 统一包裹，不引入额外 DOM）。
+				var flexMetricsKids = [react.createElement(react.Fragment, { key: "metrics" }, titleContent)];
 				if (props.gearIcon !== undefined) {
-					flexMetricsKids.push(props.gearIcon);
+					flexMetricsKids.push(react.createElement(react.Fragment, { key: "gear" }, props.gearIcon));
 				}
 				titleContent = react.createElement(
 					"span",
@@ -4197,7 +4252,8 @@ window.__ModuleLoader__.load({
 		function GroupedAssistantView(props) {
 			var node = props.node;
 			var sessionId = props.sessionId;
-			// 快照订阅必须无条件调用（见 GroupedToolCallView 的 hooks 顺序说明）
+			// 快照订阅与缓存清理必须无条件调用（见 GroupedToolCallView 的 hooks 顺序说明）
+			trackSession(sessionId);
 			var chatSnap = useChatSnapshotData(props);
 			var order = chatSnap.order;
 			var nodes = chatSnap.nodes;
@@ -4333,7 +4389,8 @@ window.__ModuleLoader__.load({
 		function GroupedContextView(props) {
 			var node = props.node;
 			var sessionId = props.sessionId;
-			// 快照订阅必须无条件调用（见 GroupedToolCallView 的 hooks 顺序说明）
+			// 快照订阅与缓存清理必须无条件调用（见 GroupedToolCallView 的 hooks 顺序说明）
+			trackSession(sessionId);
 			var chatSnap = useChatSnapshotData(props);
 			var order = chatSnap.order;
 			var nodes = chatSnap.nodes;
@@ -4625,7 +4682,15 @@ window.__ModuleLoader__.load({
 					var settingsRowInject = function () {
 						return {
 							hooks: { transcriptView: transcriptScope },
-							setTranscriptView: function (mode) { transcriptScope.set("transcriptView", mode); }
+							// settingsScope.set 返回 Promise（官方契约）：写入被宿主拒绝
+							// （字段未知/只读/旧版 strip）时不能放任 rejection 外泄成
+							// unhandledrejection——静默吞掉，界面状态仍由订阅值驱动。
+							setTranscriptView: function (mode) {
+								try {
+									var written = transcriptScope.set("transcriptView", mode);
+									if (written && typeof written.catch === "function") written.catch(function () { /* 忽略写入失败 */ });
+								} catch (e) { /* 旧版/只读 scope：忽略 */ }
+							}
 						};
 					};
 					// 兼容适配（同 chat.node 的 resolveChatNodePriority）：设置行也 shadow 官方
@@ -4643,7 +4708,6 @@ window.__ModuleLoader__.load({
 					}, SettingsTranscriptViewRow);
 				}
 			} catch (e) { /* settingsScope 或 slots 不可用：跳过设置行注册 */ }
-			// 一次性"新版本更新说明"通知：独立 React 根挂在 <body> 上，与折叠渲染无关。
 			// 一次性"新版本更新说明"通知：独立 React 根挂在 <body> 上，与折叠渲染无关。
 			// 特性检测（document / react-dom createRoot / ctx.effect）让极简宿主与
 			// 测试环境（mock ctx 无 effect、loader 不提供 react-dom）静默跳过。

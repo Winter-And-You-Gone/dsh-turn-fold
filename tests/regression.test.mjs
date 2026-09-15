@@ -651,3 +651,157 @@ describe('回归：0 秒占位回 user 格——与第三方 user 条目（dsh-e
     assert.equal(userEntry.options.priority, -3, '探测到 -2 已被第三方占用 → 下探到 -3')
   })
 })
+
+// ─────────────── 回归：直播时钟定时器生命周期（孤儿定时器） ───────────────
+// scheduleTick 是模块级递归 setTimeout：有订阅者才走表、全部退订即停。旧实现在
+// tick 回调末尾**无条件**续订——若最后一个退订发生在回调栈内（React 对 uSES 通知
+// 做同步重渲染时会跑到 subscribeNothing 的清理），退订分支看到 tickTimer 已被
+// 回调开头置 null 而什么也不做，回调末尾又续上一只新表 → 留下一只永远空转、
+// 没人能停的定时器（每 ~250ms 一次直到页面关闭），并让 liveTickState.index 无限增长。
+describe('回归：直播时钟定时器生命周期（不留下空转的孤儿定时器）', () => {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  // 清空可能由先前用例留下的订阅者，并等一拍让在途的链自行收敛（无订阅者即停）
+  const settle = async () => {
+    T.tickListeners.clear()
+    await wait(400)
+  }
+
+  it('最后一个订阅者在 tick 回调内退订 → 表彻底停（不再自续）', async () => {
+    await settle()
+    const before = T.getTickVersion()
+    let ticks = 0
+    const unsubscribe = T.subscribeTicks(() => {
+      ticks += 1
+      unsubscribe() // 模拟 uSES 在通知栈内同步退订
+    })
+    await wait(700)
+    const afterRun = T.getTickVersion()
+    assert.ok(afterRun > before, '至少应走过一拍')
+    assert.equal(ticks, 1, '回调内退订后不应再收到第二拍')
+    assert.equal(T.tickListeners.size, 0)
+    await wait(600)
+    assert.equal(T.getTickVersion(), afterRun, '退订后表必须停：版本号不再增长')
+  })
+
+  it('回调期间新增订阅者不会留下第二条链（全部退订后表停）', async () => {
+    await settle()
+    let second = null
+    const first = T.subscribeTicks(() => {
+      if (second === null) second = T.subscribeTicks(() => {})
+    })
+    await wait(700)
+    assert.ok(second, '回调期间应能新增订阅者')
+    first()
+    second()
+    await wait(300) // 让在途的一拍落地
+    const settled = T.getTickVersion()
+    await wait(600)
+    assert.equal(T.getTickVersion(), settled, '全部退订后不应残留第二条链')
+    assert.equal(T.tickListeners.size, 0)
+  })
+
+  it('仍有订阅者时正常续订（修复不能把表提前停掉）', async () => {
+    await settle()
+    let ticks = 0
+    const unsubscribe = T.subscribeTicks(() => { ticks += 1 })
+    await wait(800)
+    unsubscribe()
+    assert.ok(ticks >= 2, `连续走表（收到 ${ticks} 拍）`)
+    const stopped = T.getTickVersion()
+    await wait(600)
+    assert.equal(T.getTickVersion(), stopped, '退订后停表')
+  })
+
+  it('监听者抛错不卡死状态机：单个订阅者异常被隔离，时钟继续走表', async () => {
+    await settle()
+    let bad = 0
+    let good = 0
+    let boom = true
+    // 第一个订阅者第一次回调抛错（模拟 uSES 通知链路异常）——必须被逐个隔离
+    const unBad = T.subscribeTicks(() => {
+      bad += 1
+      if (boom) { boom = false; throw new Error('listener boom') }
+    })
+    const unGood = T.subscribeTicks(() => { good += 1 })
+    await wait(900)
+    unBad()
+    unGood()
+    assert.ok(bad >= 1, '抛错的监听者已被调用')
+    assert.ok(good >= 2, `另一个监听者不受影响、时钟继续走表（收到 ${good} 拍）`)
+    const stopped = T.getTickVersion()
+    await wait(500)
+    assert.equal(T.getTickVersion(), stopped, '全部退订后停表')
+  })
+})
+
+// ─────────────── 回归：GroupHeader 子元素 key / SVG 属性（React 零告警） ───────────────
+// 数组子元素缺 key 时 React 会告警并按"按位复用"协调（文件链接/齿轮增删时可能错位
+// 复用 DOM）；SVG 属性写成连字符形式（stroke-width）会逐条报 Invalid DOM property。
+// 两者都在折叠栏标题这条热路径上，用真实渲染 + 捕获 console.error 守住。
+describe('回归：GroupHeader 子元素 key 与 SVG 属性（React 控制台零告警）', () => {
+  const captureWarnings = (fn) => {
+    const captured = []
+    const original = console.error
+    console.error = function () {
+      captured.push(Array.prototype.map.call(arguments, String).join(' '))
+    }
+    try { fn() } finally { console.error = original }
+    return captured
+  }
+  const renderOnce = (element) => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const r = createRoot(host)
+    const captured = captureWarnings(() => { act(() => { r.render(element) }) })
+    act(() => r.unmount())
+    document.body.innerHTML = ''
+    return captured
+  }
+  const offenders = (captured, pattern) => captured.filter((line) => line.indexOf(pattern) !== -1)
+
+  it('闭合回合折叠栏（指标 + 齿轮 + 轮次）零 key 告警', () => {
+    const captured = renderOnce(React.createElement(T.GroupHeader, {
+      label: '耗时10秒 · 消耗1200token · 已折叠5步',
+      count: 5,
+      open: false,
+      onToggle: () => {},
+      isTurn: true,
+      live: false,
+      right: '第3轮',
+      gearIcon: React.createElement(T.GearIcon, null),
+    }))
+    assert.deepEqual(offenders(captured, 'unique "key"'), [], captured.join('\n'))
+  })
+
+  it('步骤折叠栏标题（文件名 + diff + 失败）零 key 告警，文件链接照常渲染', () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const r = createRoot(host)
+    const captured = captureWarnings(() => {
+      act(() => {
+        r.render(React.createElement(T.GroupHeader, {
+          label: '编辑了client.js [ +12 -3 ] 运行了pwsh —— 1条执行失败',
+          count: 2,
+          open: false,
+          onToggle: () => {},
+          isTurn: false,
+          filePaths: new Map([['client.js', 'C:/repo/client.js']]),
+        }))
+      })
+    })
+    const links = host.querySelectorAll('.ccg-file-link')
+    const diffAdd = host.querySelector('.ccg-diff-add')
+    const failure = host.querySelector('.ccg-header-failure')
+    act(() => r.unmount())
+    document.body.innerHTML = ''
+    assert.deepEqual(offenders(captured, 'unique "key"'), [], captured.join('\n'))
+    assert.equal(links.length, 1, '文件名链接仍渲染')
+    assert.ok(diffAdd, 'diff 高亮仍渲染')
+    assert.ok(failure, '失败提示仍渲染')
+  })
+
+  it('默认 chevron（折叠图标选择器里的官方样式预览）零 Invalid DOM property 告警', () => {
+    const captured = renderOnce(React.createElement(T.FoldIconSelector, null))
+    assert.deepEqual(offenders(captured, 'Invalid DOM property'), [], captured.join('\n'))
+  })
+})
