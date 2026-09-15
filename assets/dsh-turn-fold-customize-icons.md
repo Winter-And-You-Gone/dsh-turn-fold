@@ -20,9 +20,9 @@ dsh-turn-fold/
 
 ### Path A — edit the data source (recommended, versioned)
 1. Edit `icons/default.json`.
-2. Run `npm run sync:icons` to inject, then `npm run icons:check` to confirm.
-3. Restart DSH Desktop (or refresh the web GUI) so the bundle reloads `client.js`.
-Remind the user: desktop loads a snapshot bundle at startup — **a restart is required** or the fold bars appear "gone" with no code error.
+2. Run `npm run sync:icons` to inject, then `npm run icons:check` to confirm (the check exits non-zero when the JSON and the inlined block differ, so CI catches a forgotten inject).
+3. Refresh the DSH web page so the client bundle reloads `client.js`.
+Remind the user: this project is **web-only** — a browser refresh is what applies the change (there is no desktop build to restart). If the fold bars look "gone" and there is no error, first confirm the page was actually refreshed.
 
 ### Path B — runtime localStorage override (no code change, session-local)
 Write a complete icon package (same shape as `icons/default.json`, including `meta.compat`) to `localStorage['dsh-turn-fold:icons']`. It wins over the built-in defaults until removed. To reset: `localStorage.removeItem('dsh-turn-fold:icons')`.
@@ -51,7 +51,7 @@ Write a complete icon package (same shape as `icons/default.json`, including `me
 
 ## Critical SVG pitfalls (this user's browser / DSH environment)
 
-Recorded in `MEMORY.md`; respect them or icons render transparent/blank:
+Recorded in the project memory file (`MEMORY.md` in the plugin repo — workspace-only, not shipped in the npm package); respect them or icons render transparent/blank:
 - **`fill="var(--xxx)"` as an SVG presentation attribute does NOT work** → transparent cards. Use CSS classes or literal values.
 - **CSS cannot override an explicit `fill` on `<defs>` content referenced by `<use>`** → never write `fill` in defs; inherit from the `<use>` element and control via CSS.
 - **`clip-rule="evenodd"` clip-path does not work** → drop clip-path entirely.
@@ -64,4 +64,4 @@ Recorded in `MEMORY.md`; respect them or icons render transparent/blank:
 1. Ask the user what to change: card look, suit design, geometry (corner radius / fan angle / stack offset), running animation, or switching to the official chevron.
 2. Prefer **Path A** (versioned, reproducible). If the user only wants a quick local preview, offer **Path B**.
 3. After edits, always: `npm run sync:icons`, `npm run icons:check`, `node --check client.js`, and `npm test` (the suite asserts icon-related rendering).
-4. Remind the user to **restart DSH Desktop / refresh the web GUI** before judging the result.
+4. Remind the user to **refresh the DSH web page** (web-only project) before judging the result.

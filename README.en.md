@@ -53,7 +53,7 @@ solid underline:
 [User message]
 [▸ 5m12s · TTFT 1.2s · 12345 tokens · 34 tok/s · 80.00% cache hit · 6 steps pending        Turn 13]  ← turn fold bar, appears at reply start
 ─────────────────────────────────────────────      ← divider line
-[Think / tool calls loading one by one…]            ← expanded by default while running
+[Think / tool calls loading one by one…]            ← collapsed by default while running
 [Final summary body]                                ← no Think lines, only body
 [duration · token footer]                           ← official turn-tail
 ```
@@ -61,10 +61,10 @@ solid underline:
 - **the turn fold bar appears the moment you send a message (0-second placeholder)**: the placeholder turn fold bar renders directly below the user message (above the official "Deep diving..." status line — the same spot the real header will occupy, so the handover has zero movement; a 16px top margin matches the official flow gap) while the session is running and the last message is the user message; once the first intermediate node arrives, the placeholder disappears and the real header takes over;
 - **Metrics update in real time**: **the duration seconds tick every second** (timed from the turn's `turn/start`), **"tokens consumed" refreshes at a randomized interval (125–250ms by default) and keeps growing**, tok/s is estimated live from output tokens / elapsed time, **the cache-hit rate shows two decimal places** (e.g. `80.00%`), and **TTFT** shows the official value as soon as the first request settles (`assistant-step` `finalNode.timing`: `firstTokenTime - stepStartTime`), switching to the official persisted aggregate once the turn ends (the `ttftMs` carried by the turn-tail node, derived from the event log, survives page reloads); only while the first request is still streaming does it fall back to a render-time approximation (turn start → render of the first assistant-step); once the turn ends, everything switches to the official authoritative values (turn-tail tok/s, exact `turn/end` duration); "tokens consumed" also switches to the official `tokenUsage` exact value carried by the turn-tail (see below);
 - **"Turn N" right-aligned on the header row** (e.g. `Turn 13`, following the DSH UI language);
-- **"Tokens consumed" grows with a continuous animation**: real `usage` only arrives when a request completes, so between two arrivals the number would stall — while running, a purely cosmetic animation offset is added on top of the real baseline, advancing per actual tick in an alternating **+1 / +11** loop (ones digit +1 per tick, tens digit +1 every 2 ticks, higher digits follow via carry); each tick interval is `liveTickMs` × a random factor (`liveTickJitter`…1, 125–250ms by default), so the digits jump at an irregular pace, more like a real generation rate than a metronome; when new usage arrives only the baseline snaps to the real value — the offset keeps accumulating, so the number never steps back. The base interval and the jitter are tunable via `CONFIG.liveTickMs` and `CONFIG.liveTickJitter`;
+- **"Tokens consumed" grows with a continuous animation**: real `usage` only arrives when a request completes, so between two arrivals the number would stall — while running, a purely cosmetic animation offset is added on top of the real baseline, advancing per actual tick in an alternating **+1 / +11** loop (ones digit +1 per tick, tens digit +1 every 2 ticks, higher digits follow via carry); each tick interval is `liveTickMs` × a random factor (`liveTickJitter`…1, 125–250ms by default), so the digits jump at an irregular pace, more like a real generation rate than a metronome; when new usage arrives only the baseline snaps to the real value — the offset keeps accumulating, so the number never steps back. The offset is **capped** at max(500, 10% of the real baseline) (`CONFIG.liveTokenAnimMaxRatio` / `liveTokenAnimMaxFloor`; set both to 0 to disable the growth), so a long tool run can no longer pile up a five-digit fictional number — and as the real baseline rises, the cap rises with it. The base interval and the jitter are tunable via `CONFIG.liveTickMs` and `CONFIG.liveTickJitter`;
 - **"Tokens consumed" matches the official statistics**: once the turn ends, the official `tokenUsage` carried by the turn-tail is preferred (official `deriveTurnTokenUsage` folds every billed attempt on the persisted event log: `totalTokens` = exact prompt+output including retried requests; the cache-hit denominator is the same prompt-side total `totalTokens - outputTokens`); the node-sum path (the live baseline, and the fallback when `tokenUsage` is absent) additionally scans `nodes.values()` for `visibility:hidden` assistant-steps — pure tool-call intermediate steps (no visible reasoning/text) are settled by DSH as hidden nodes and never enter `locations.getTurn`, so iterating visible nodes only undercounts them (measured case: official stats 175,844 vs 117,301 before the fix — the difference was exactly one hidden step's 58,543);
 - **Odometer-style digit animation**: while the turn is running, each digit of the changing numbers rolls to its new value independently (odometer/slot-wheel effect with springy easing; the roll duration adapts to change frequency — fast-changing digits like the token ones digit use a short roll slightly shorter than the refresh interval so every tick completes cleanly, slow ones like the duration seconds keep the 350ms springy roll) — every digit is its own 1ch-wide window with a vertical 0-9 strip, like a counting drum; a visually hidden sr-only copy keeps the full label readable for screen readers, and the animation degrades to static digits when the system prefers reduced motion;
-- **Divider always below the header**: a 1px horizontal line always sits below the turn fold bar text (`.ccg-turn-divider`, colored via the fallback chain `var(--dsw-alias-line-secondary, var(--dsw-alias-border-l1, #d1d5db))` — neither DSH 0.1.1 nor 0.1.2 defines `--dsw-alias-line-secondary`, so the effective token is `--dsw-alias-border-l1`, adapting to light/dark themes) — **visible in both collapsed and expanded states**, acting as the visual boundary between the header and the content when expanded;
+- **Divider always below the header**: a 1px horizontal line always sits below the turn fold bar text (`.ccg-turn-divider`, colored via the fallback chain `var(--dsw-alias-line-secondary, var(--dsw-alias-border-l1, #d1d5db))` — as of DSH 0.1.1 … 0.1.5-rc.1 none of them defines `--dsw-alias-line-secondary`, so the effective token is `--dsw-alias-border-l1`, adapting to light/dark themes) — **visible in both collapsed and expanded states**, acting as the visual boundary between the header and the content when expanded;
 - After a turn **finishes** (final summary output, turn end), the turn fold bar auto-collapses: all Think blocks, tool calls and context injections of that turn
   collapse into **a turn fold bar**, keeping only the final summary message and the official duration/token footer visible (turns the user expanded manually stay expanded);
 - **the turn fold bar shows this turn's metrics**: `duration (xh xm xs, or just m s under 1 hour, or just s under 1 minute), TTFT x.xs, N tokens, N tok/s, cache hit NN.NN%, N steps pending / folded N steps (shown when > 0; "pending N steps" while running, "folded N steps" once the turn ends)`; missing items are omitted automatically, and only when all are missing does it fall back to "Ran N commands"; fields are joined with ` · `, with "Turn N" on the right;
@@ -165,15 +165,16 @@ npm run check      # syntax check client.js / index.js
 ```
 
 The test suite (`tests/`) loads the real `client.js` directly (via `__ModuleLoader__`
-injection + `__test` export, no copy-paste drift) and is layered in four parts:
+injection + `__test` export, no copy-paste drift) and is layered in six parts (seven
+files):
 
 | File | Coverage |
 | --- | --- |
 | `unit.logic.test.mjs` | Pure functions: `computeGroup` segment grouping, `computeTurnFold` whole-turn fold, `computeTurnMetrics` / `turnHeaderLabel` metrics label, `turnNumber`; includes every historical verify-fix scenario plus real session data (TURN13) |
-| `unit.render.test.mjs` | React rendering: initial collapse → click turn fold bar to expand → collapse again; `useHostDescription` kit-hook passthrough during builtin delegated rendering; slot registration contract (inject declaration) |
+| `unit.render.test.mjs` | React rendering: initial collapse → click turn fold bar to expand → collapse again; per-name passthrough of the official inject-face hooks (`useConnectionGeneration` / `useHostInfo`, merged by `chatNodeEntryInject`) during builtin delegated rendering; slot registration contract (inject declaration) |
 | `unit.css.test.mjs` | CSS `:has()` hiding rules take effect on a real DOM (including the expand → collapse round trip) |
 | `regression.test.mjs` | Historical bug regressions: node-object replacement (Bug1), missing inject crash/abdicate (Bug2), no-tool-call turns also fold (v0.2.3), fold scope never crosses the user message (v0.2.2), manual segment expand/collapse |
-| `unit.gear.test.mjs` / `unit.settings-row.test.mjs` | Gear field popup and the "transcript view mode" settings row (shadowing the official transcript-view row) |
+| `unit.gear.test.mjs` / `unit.settings-row.test.mjs` | Gear field popup and the settings row shadowing the official transcript-view row (title stays the official "Conversation display"; options Normal / Compact / Turn-Fold) |
 | `unit.compat.test.mjs` | DSH dual-version compatibility: the 0.1.1 `useSession` (.chat + top-level turnEnds/turnTimings) and 0.1.2 `useChat + chat.legacy` snapshot paths, fold-mode toggle hooks-order regression, official diffs read chain (`meta.diffs` / `resultView` / `callView`) |
 
 > In sandboxed environments that cannot spawn child processes (e.g. Windows
@@ -182,8 +183,9 @@ injection + `__test` export, no copy-paste drift) and is layered in four parts:
 
 ## Fold icons (poker cards)
 
-Step/turn fold bars default to **animated poker cards** (Settings → Conversation →
-fold icons switches back to the official chevron):
+Step/turn fold bars default to **animated poker cards** (the gear ⚙ at the right of
+the turn fold bar opens a popup whose "fold icon" selector switches back to the
+official chevron):
 
 - **Settled**: collapses into a deck (≤3 tools in the segment → 3 cards, >3 → 5);
   expanding fans them out;
@@ -273,7 +275,7 @@ git push --follow-tags
 
 ## Notes
 
-- Compatible with DSH 0.1.1-rc.2 through 0.1.3-alpha.1 (the session snapshot contract difference is absorbed by an in-plugin adapter, and official renderer hook faces are followed automatically — see "How it works"); if a DSH upgrade changes the above slot contracts or built-in component props, this plugin may need small adjustments per version (that is plugin maintenance, not source modification).
+- Compatible with DSH 0.1.1-rc.2 through 0.1.5-rc.1 (the session snapshot contract difference is absorbed by an in-plugin adapter, and official renderer hook faces are followed automatically — see "How it works"; the slot/snapshot/settings-row contracts were verified one by one on 0.1.5-rc.1). If a DSH upgrade changes the above slot contracts or built-in component props, this plugin may need small adjustments per version (that is plugin maintenance, not source modification).
 - The fold bar text is tunable in `CONFIG` at the top of `client.js`.
 - **Coupling points checklist** (check these when upgrading DSH; any failure degrades gracefully — falls back to built-in rendering / label fallbacks plus a `console.warn`, never a blank screen):
   - Session snapshot fields: on 0.1.1 the `useSession` snapshot's `s.chat.order / nodes / locations`, `locations.getTurn()`, top-level `turnEnds` / `turnTimings`, `chat.timeline.turns`; on 0.1.2 the snapshot is split, so the framework-injected `useChat` (flat ChatSnapshot) is used instead, with `turnEnds` / `turnTimings` in `chat.legacy` (the adapter picks automatically, see "How it works") — for segment/turn grouping, completion detection, duration and status labels;

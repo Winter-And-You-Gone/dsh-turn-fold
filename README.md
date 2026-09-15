@@ -93,7 +93,10 @@ text：……                                             ← 下一个 text 出
   （**+1/+11 交替**：个位每 tick +1、十位每 2 tick +1、更高位随进位自然走动），
   tick 间隔 = `liveTickMs` × 随机数（`liveTickJitter` ~ 1，默认 125~250ms），
   数字跳动节奏不规律，更像真实生成速率而不是节拍器；真实 usage 到达时只把基线校
-  正为真实值，偏移继续累计、数字只增不减。基准间隔和抖动分别通过 `CONFIG.liveTickMs`
+  正为真实值，偏移继续累计、数字只增不减。**偏移封顶**：上限 = max(500, 真实基线
+  × 10%)（`CONFIG.liveTokenAnimMaxRatio` / `liveTokenAnimMaxFloor`，比例与下限都置 0
+  即关闭增长）——长时间工具执行不会把虚构数字堆到万级、失真不可信，真实值到达时
+  上限随基线一起抬高。基准间隔和抖动分别通过 `CONFIG.liveTickMs`
   和 `CONFIG.liveTickJitter` 调整；
 - **消耗token 与官方统计同口径**：回合结束后优先采用官方 turn-tail 携带的
   `tokenUsage`（官方 `deriveTurnTokenUsage` 在持久化事件日志上折叠全部计费 attempt
@@ -149,8 +152,9 @@ text：……                                             ← 下一个 text 出
   与 Think / 工具卡片的折叠行逐像素一致；
 - **回合折叠栏分隔线**：折叠栏下方常驻一条 1px 水平细线（`.ccg-turn-divider`，颜色按
   `var(--dsw-alias-line-secondary, var(--dsw-alias-border-l1, #d1d5db))` 链式回退——
-  两版 DSH 均未定义 `--dsw-alias-line-secondary`，实际生效的是 0.1.1/0.1.2 共有的
-  `--dsw-alias-border-l1`，随主题明暗自动适配），收起/展开都显示，上下留白 4px / 8px；
+  截至目前（0.1.1 ~ 0.1.5-rc.1）DSH 均未定义 `--dsw-alias-line-secondary`，实际生效的
+  是两版共有的 `--dsw-alias-border-l1`，随主题明暗自动适配），收起/展开都显示，
+  上下留白 4px / 8px；
 - **紧凑行距**：折叠组只占一行（24px）；被折叠的成员节点整行 `display:none`，不会残留空行，
   行距与官方消息完全一致（column 的 16px 节奏），折叠再多也不会越空越大；
 - **过渡动画**：展开时内容从 0 高度平滑展开到真实高度（grid 轨道 `0fr→1fr` 过渡 + 淡入，280ms，
@@ -228,15 +232,15 @@ npm run check      # 语法检查 client.js / index.js
 ```
 
 测试套件（`tests/`）直接加载真实 `client.js`（经 `__ModuleLoader__` 注入 + `__test`
-导出，无复制粘贴漂移），分四层：
+导出，无复制粘贴漂移），分六层（7 个文件）：
 
 | 文件 | 覆盖 |
 | --- | --- |
 | `unit.logic.test.mjs` | 纯函数：`computeGroup` 步骤分组、`computeTurnFold` 整回合折叠、`computeTurnMetrics` / `turnHeaderLabel` 指标文案、`turnNumber` 定位；含历史 verify-fix 的全部场景与真实会话数据（TURN13） |
-| `unit.render.test.mjs` | React 渲染：初始折叠 → 点击回合折叠栏展开 → 再收起 的完整交互；内置组件委托渲染时 `useHostDescription` 等 kit hook 的透传；条目注册契约（inject 声明） |
+| `unit.render.test.mjs` | React 渲染：初始折叠 → 点击回合折叠栏展开 → 再收起 的完整交互；委托渲染内置组件时官方 inject 面 hook 的逐名透传（`useConnectionGeneration` / `useHostInfo`，由 `chatNodeEntryInject` 探测合并）；条目注册契约（inject 声明） |
 | `unit.css.test.mjs` | CSS `:has()` 隐藏规则在真实 DOM 上的生效（含"展开→收起"往返） |
 | `regression.test.mjs` | 历史 bug 回归：节点对象替换（Bug1）、inject 缺失崩溃/abdicate（Bug2）、无工具调用回合折叠（v0.2.3）、折叠作用域不越过用户消息（v0.2.2）、步骤分组手动展开/收起 |
-| `unit.gear.test.mjs` / `unit.settings-row.test.mjs` | 齿轮字段弹窗与「回合折叠方式」设置行（shadow 官方 transcript-view） |
+| `unit.gear.test.mjs` / `unit.settings-row.test.mjs` | 齿轮字段弹窗与 shadow 官方 transcript-view 的设置行（界面标题为官方原文「对话显示」，选项 Normal / Compact / Turn-Fold） |
 | `unit.compat.test.mjs` | DSH 双版本兼容：0.1.1 `useSession(.chat + 顶层 turnEnds/turnTimings)` 与 0.1.2 `useChat + chat.legacy` 两条快照路径、折叠模式切换 hooks 顺序回归、官方 diffs 读取链（`meta.diffs` / `resultView` / `callView`） |
 
 > 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
@@ -244,8 +248,8 @@ npm run check      # 语法检查 client.js / index.js
 
 ## 折叠图标（扑克牌）
 
-步骤/回合折叠栏的前导图标默认为**动态扑克牌**（设置 → 对话 → 折叠图标 可切回官方
-chevron）：
+步骤/回合折叠栏的前导图标默认为**动态扑克牌**（回合折叠栏右侧 ⚙ 齿轮 → 弹窗里的
+「折叠图标」选择器可切回官方 chevron）：
 
 - **完成态**：收起为牌堆（段内工具 ≤3 用 3 张、>3 用 5 张），点击展开变扇形；
 - **牌面池**：♠ ♥ ♦ ♣ + DeepSeek 鲸鱼 Logo **五选一**，每个折叠栏按 leaderKey
@@ -386,9 +390,10 @@ git push --follow-tags
 
 ## 注意事项
 
-- 兼容 DSH 0.1.1-rc.2 ~ 0.1.3-alpha.1（会话快照契约差异由插件内适配层消化、官方
-  渲染 hook 面自动跟随，见工作原理）；DSH 升级若改变上述槽位契约或内置组件 props，
-  本插件可能需要随版本小改（属插件维护，非改源码）。
+- 兼容 DSH 0.1.1-rc.2 ~ 0.1.5-rc.1（会话快照契约差异由插件内适配层消化、官方
+  渲染 hook 面自动跟随，见工作原理；0.1.5-rc.1 上已逐条核对槽位/快照/设置行契约）。
+  DSH 升级若改变上述槽位契约或内置组件 props，本插件可能需要随版本小改（属插件维护，
+  非改源码）。
 - 折叠栏文案在 `client.js` 顶部 `CONFIG` 可调。
 - **耦合点清单**（DSH 升级时对照排查；任一失效均优雅降级——回退内置渲染 / 文案兜底 +
   `console.warn` 提示，不会白屏）：
