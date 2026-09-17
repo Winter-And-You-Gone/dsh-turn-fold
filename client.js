@@ -1674,7 +1674,12 @@ window.__ModuleLoader__.load({
 		function runningToolDiffs(root) {
 			return viewDiffs(root.callView) || validDiffHunks(root.diffs);
 		}
-		/** 工具调用信息：名称 / 原始参数 JSON / 官方 diff 数据 / 是否仍在运行。 */
+		/** 工具调用信息：名称 / 原始参数 JSON / 官方 diff 数据 / 是否仍在运行。
+		 *  **name 一律归一为字符串**（缺失时空串，绝不 undefined）：已结算的 tool-result
+		 *  在窗口截断时 `call` 会是 null（官方契约："null when window truncation left the
+		 *  call outside"），此时官方 ToolCallTree 的 callName 也回退成空串。不归一的话
+		 *  `String(undefined)` 会得到字面量 "undefined"，运行态标题就会显示
+		 *  "正在运行 Undefined"（且工具分类会落到 others）。 */
 		function toolCallInfo(node) {
 			var root = node && node.data && node.data.root;
 			if (!root) return null;
@@ -1682,10 +1687,20 @@ window.__ModuleLoader__.load({
 				// 已结算：root.kind === "tool-result"，call 字段携带 name/argsRaw
 				//（diffs 不在 call 上，按版本从 meta/resultView/callView 读取，见 settledToolDiffs）
 				var call = root.call || root;
-				return { name: call.name, argsRaw: call.argsRaw, diffs: settledToolDiffs(root), running: false };
+				return {
+					name: typeof call.name === "string" ? call.name : "",
+					argsRaw: typeof call.argsRaw === "string" ? call.argsRaw : undefined,
+					diffs: settledToolDiffs(root),
+					running: false
+				};
 			}
 			// 运行中（in-flight）：root 就是调用本身
-			return { name: root.name, argsRaw: root.argsRaw, diffs: runningToolDiffs(root), running: true };
+			return {
+				name: typeof root.name === "string" ? root.name : "",
+				argsRaw: typeof root.argsRaw === "string" ? root.argsRaw : undefined,
+				diffs: runningToolDiffs(root),
+				running: true
+			};
 		}
 		/** 参数摘要：取 argsRaw 中最长的字符串值（-m 的正文 / 路径等最有信息量的内容），截断。 */
 		function summarizeArgs(argsRaw, maxLen) {
@@ -3693,7 +3708,9 @@ window.__ModuleLoader__.load({
 				var n = nodes.get(group.keys[i]);
 				if (!n || n.kind !== "tool-call") continue;
 				var info = toolCallInfo(n);
-				var name = info ? String(info.name) : "";
+				// 名称一律当字符串用（toolCallInfo 已归一；这里再兜一层，防止别处构造的
+				// 形状绕过归一后 `String(undefined)` 变成字面量 "undefined"）
+				var name = info && typeof info.name === "string" ? info.name : "";
 				var kind = TOOL_KINDS[name.toLowerCase()] || "others";
 				// 性能：官方 diffs 存在时（路径 + oldText/newText 行数）完全不解析 argsRaw；
 				// 否则解析一次 argsRaw 同时提取路径与行数（避免多次 JSON.parse）

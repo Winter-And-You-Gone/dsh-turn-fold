@@ -805,3 +805,69 @@ describe('回归：GroupHeader 子元素 key 与 SVG 属性（React 控制台零
     assert.deepEqual(offenders(captured, 'Invalid DOM property'), [], captured.join('\n'))
   })
 })
+
+// ─────────── 回归：tool-result 的 call 头缺失（窗口截断）时名称必须是字符串 ───────────
+// 官方契约：`ToolResultNode.call` 在"窗口截断把 tool/call 留在窗口外"时为 null（官方
+// ToolCallTree 的 callName 同样回退成空串）。旧实现 toolCallInfo 直接透传 undefined，
+// 下游 classifySegmentTools 的 `String(info.name)` 会得到字面量 "undefined"——显示分支
+// 恰好都对空值做了真值判断，所以当时没暴露到界面上，但内部多了一个"名为 undefined 的
+// 工具"这一陷阱。现在在唯一入口归一为空串，并用本用例锁住这个不变量。
+describe('回归：tool-result 的 call 头缺失时名称归一为空串', () => {
+  const truncatedNode = (key, seq) => makeNode(key, 'tool-call', seq, {
+    data: {
+      root: {
+        kind: 'tool-result',
+        callId: key,
+        call: null,
+        content: [],
+        isError: false,
+        callTime: null,
+        subCalls: [],
+      },
+    },
+  })
+  const segOf = (list) => {
+    const nodes = new Map(list.map((n) => [n.key, n]))
+    const group = T.computeGroup(list.map((n) => n.key), nodes, list[0])
+    assert.ok(group, '分组应能计算')
+    return { nodes, group }
+  }
+
+  it('toolCallInfo：name 恒为字符串（空串），argsRaw 为 undefined', () => {
+    const info = T.toolCallInfo(truncatedNode('tc-trunc', 10))
+    assert.equal(typeof info.name, 'string', 'name 必须是字符串，不能是 undefined')
+    assert.equal(info.name, '')
+    assert.equal(info.argsRaw, undefined)
+    assert.equal(info.running, false)
+  })
+
+  it('单条截断调用：运行中标题与闭合标题都不含字面量 "undefined"', () => {
+    const { nodes, group } = segOf([truncatedNode('tc-trunc', 10)])
+    const runningTitle = T.segmentTitle(group, nodes, false)
+    assert.equal(typeof runningTitle, 'string', 'name 为空串 → 运行态分支不命中，走纯文本兜底')
+    assert.ok(!/undefined/i.test(runningTitle), `运行中标题不应含 undefined：${runningTitle}`)
+    assert.ok(!/undefined/i.test(T.segmentLabel(group, nodes, true)), '闭合标题不应含 undefined')
+    assert.equal(T.segmentLabel(group, nodes, true), '执行了1项操作', '按"其它操作"计数，不臆造工具名')
+  })
+
+  it('混合段：截断调用不污染其它工具的分类', () => {
+    const readNode = makeNode('tc-read', 'tool-call', 11, {
+      data: {
+        root: {
+          kind: 'tool-result',
+          callId: 'tc-read',
+          call: { name: 'read', argsRaw: '{"file_path":"C:/x/a.js"}' },
+          content: [],
+          isError: false,
+          callTime: null,
+          subCalls: [],
+        },
+      },
+    })
+    const { nodes, group } = segOf([readNode, truncatedNode('tc-trunc2', 12)])
+    const label = T.segmentLabel(group, nodes, true)
+    assert.ok(!/undefined/i.test(label), `混合段标题不应含 undefined：${label}`)
+    assert.ok(label.includes('a.js'), `read 的文件名照常显示：${label}`)
+    assert.ok(label.includes('执行了1项操作'), `截断调用计为其它操作：${label}`)
+  })
+})
