@@ -839,109 +839,19 @@ window.__ModuleLoader__.load({
 		var useMemo = react.useMemo;
 		var useSyncExternalStore = react.useSyncExternalStore;
 
-		// ---- react-dom（一次性更新说明通知用） ----
-		// 仅用于把 UpdateNotice 挂到 <body> 上的独立 React 根；极简宿主 / 测试
-		// loader（mockRequire 不提供 react-dom）下静默跳过，不影响插件主体。
+		// ---- react-dom（独立 React 根用） ----
+		// 用于把字段设置弹窗 / Toast / 悬浮提示挂到 <body> 上的独立 React 根；极简宿主
+		// / 测试 loader（mockRequire 不提供 react-dom）下静默跳过，不影响插件主体。
 		var ReactDOM = null;
 		try { ReactDOM = require("react-dom"); } catch (e) { /* 无 react-dom 的宿主 */ }
 
-		// ---- 一次性"新版本更新说明"通知 ----
-		// 机制与 dsh-wallpaper-engine 同款：localStorage 记录"已通知过的版本号"，
-		// 每次发布新版本时把 NOTICE_VERSION 改成新版本号并更新 NOTICE_CONTENT 正文，
-		// 加载时存值与当前版本不符就弹一次，点「知道了」后写入当前版本、下次不再弹。
-		// 注意：v0.4.0 起更新说明只保留最新一节（不叠历史节）——老用户每版各弹一次，
-		// 新用户只看当前版本的内容即可。
-		var NOTICE_KEY = "dsh-turn-fold:notice-version";
+		// ---- 插件版本号 ----
+		// 仅用于图标包兼容校验：loadIconConfig 读取 localStorage 图标包时，其 meta.compat
+		// 若声明 ">=x.y.z" 就与这个版本号逐段比较，决定图标包是否仍适用。发版时随
+		// package.json 的 version 同步更新。
+		// （历史上的"新版本更新说明"弹窗已于 2026-09-18 移除：其"已读"标记存于
+		// localStorage，而 web 端 origin 随端口变化会失效，导致每次重启重复弹出。）
 		var NOTICE_VERSION = "0.5.2";
-		var NOTICE_CONTENT = {
-			zh: {
-				title: "v0.5.2 更新说明",
-				sections: [
-					{
-						version: "v0.5.2",
-						note: "消耗token 对齐官方统计 · 0 秒占位位置修复 · 适配 DSH 0.1.6-alpha.1",
-						items: [
-							{ title: "🎯 消耗token 漏计修复", detail: "纯工具调用的中间步骤（assistant 消息只有 tool-call、没有可见的思考/正文）被 DSH 以隐藏节点结算，旧版回合折叠栏看不到它们、token 合计偏少——实测某会话官方统计 175,844、插件只显示 117,301，差值恰好是一个隐藏步骤的 58,543。现已对齐官方统计。" },
-							{ title: "📐 回合结束后取官方精确值", detail: "优先采用官方随 turn-tail 下发的 tokenUsage——官方在持久化事件日志上折叠全部计费请求（含被重试的请求）得到的精确值，缓存命中率分母也与官方 TurnUsagePanel 同源；旧版宿主没有该字段时自动回退原有算法。" },
-							{ title: "🔁 运行中基线同步补全", detail: "运行中的 token 基线同样补采隐藏步骤：其 usage 一到账就计入实时数值，回合结束切换官方精确值时不再跳变。" },
-							{ title: "📍 0 秒占位回 user 消息正下方", detail: "回合刚开始时占位回合折叠栏曾出现在输入框左上角、官方状态描述行（Deep diving...）下面——输入区 dock 位于整个聊天流列之下，位置天然错。现改在 user 消息正下方渲染（与正式回合折叠栏同位置，交接无位移、不跳变）。" },
-							{ title: "🤝 与 dsh-easyrewrite 共存", detail: "占位条回归 user 格后，与撤回/重编辑气泡插件链式委托共存：本插件渲染其组件、整包转发 props，功能互不丢失；优先级固定 -2 下限（绝不占 -1），与插件加载顺序无关，不会再出现同格同优先级注册冲突。" },
-							{ title: "🧹 细节加固", detail: "回合运行中的直播时钟在极端时序下不再留下空转定时器；折叠栏渲染不再产生 React 控制台告警（子元素 key / SVG 属性名）；「消耗token」动画偏移加上限——最多把数字抬高到真实值的 10% 或 500（取大者），长时间工具执行不再堆出失真的量级；图标数据校验（icons:check）不一致时现在会直接失败并在 CI 里拦住，改了 icons/default.json 忘了同步不再可能发出去；工具结果缺失调用头时内部名称归一为空串，不再产生 undefined 字样。" },
-							{ title: "🧩 适配 DSH 0.1.6-alpha.1", detail: "按新宿主源码逐条重核契约并全部通过：keyed slot 语义、conversation.chat.node 各 key、官方 tool-call 的 inject 面、快照字段与 nodes.values()（隐藏节点补采）、设置行 transcript-view、节点数据结构——渲染逻辑无需改动。同时把 package.json 的 engines.dsh 声明为 >=0.1.1-rc.2 <=0.1.6-alpha.1：插件市场会在卡片上显示宿主要求，并在更新前拦下确定不满足的版本；上限始终是「已核验过的最新宿主」，每次 DSH 升级后重核再抬高。" }
-						]
-					}
-				],
-				hint: "本提示每个新版本只出现一次，点下方按钮即可关闭。",
-				dismiss: "知道了"
-			},
-			en: {
-				title: "What's new in v0.5.2",
-				sections: [
-					{
-						version: "v0.5.2",
-						note: "Token accounting aligned · 0-second placeholder position fixed · DSH 0.1.6-alpha.1 support",
-						items: [
-							{ title: "🎯 Fixed token undercount", detail: "Pure tool-call intermediate steps (assistant messages with only a tool-call and no visible reasoning/text) are settled by DSH as hidden nodes, which the old turn fold bar never saw — one measured session showed 175,844 tokens in the official stats vs 117,301 in the plugin, the gap being exactly one hidden step's 58,543. Now aligned with the official statistics." },
-							{ title: "📐 Official exact value after turn end", detail: "The official tokenUsage carried by the turn-tail is preferred — the exact fold of every billed attempt on the persisted event log (retried requests included), with the cache-hit denominator matching the official TurnUsagePanel; older hosts without the field fall back to the previous node-sum automatically." },
-							{ title: "🔁 Live baseline filled in too", detail: "The running baseline also re-collects hidden steps: their usage counts as soon as it settles, so the number no longer jumps when the turn closes." },
-							{ title: "📍 0-second placeholder back below the user message", detail: "When a turn just started, the placeholder turn fold bar used to appear at the top-left of the composer, below the official status line (\"Deep diving...\") — the input dock sits below the whole chat flow column, so the position was structurally wrong. It now renders directly below the user message (same spot as the real header; zero-movement handover)." },
-							{ title: "🤝 Coexists with dsh-easyrewrite", detail: "Back in the user cell, the placeholder chain-delegates the recall/re-edit bubble plugin: this plugin renders its component with full props forwarded, so neither loses features. The priority is a fixed -2 floor (never -1), independent of plugin load order — no same-cell same-priority registration clash can occur." },
-							{ title: "🧹 Hardening", detail: "The live clock no longer leaves an idle timer behind under an unlucky timing edge; fold-bar rendering no longer emits React console warnings (child keys / SVG attribute names); the \"tokens consumed\" animation offset is now capped — it can lift the number by at most max(10% of the real value, 500), so a long tool run can no longer pile up a distorted magnitude; the icon-data check (icons:check) now fails loudly on drift and CI blocks it, so editing icons/default.json without re-syncing can no longer ship; a tool result missing its call head normalizes to an empty name instead of the literal undefined." },
-							{ title: "🧩 DSH 0.1.6-alpha.1 support", detail: "Host contracts were re-verified one by one against the new host source and all pass — keyed-slot semantics, every conversation.chat.node key, the official tool-call inject face, snapshot fields and nodes.values() (the hidden-step token recovery), the transcript-view settings row, and the node data shapes — so no rendering change was needed. package.json now declares engines.dsh = >=0.1.1-rc.2 <=0.1.6-alpha.1: the plugin market shows that host requirement on the card and refuses an update whose requirement is confirmed unsatisfied; the ceiling is always the newest verified host, raised after each DSH upgrade." }
-						]
-					}
-				],
-				hint: "This notice appears once per version — dismiss to close.",
-				dismiss: "Got it"
-			}
-		};
-		function UpdateNotice() {
-			var visibleState = react.useState(function () {
-				try {
-					if (typeof localStorage === "undefined") return true;
-					return (localStorage.getItem(NOTICE_KEY) || "") !== NOTICE_VERSION;
-				} catch (e) { return true; }
-			});
-			var visible = visibleState[0];
-			var setVisible = visibleState[1];
-			function dismiss() {
-				try { localStorage.setItem(NOTICE_KEY, NOTICE_VERSION); } catch (e) { /* ignore */ }
-				setVisible(false);
-			}
-			if (!visible) return null;
-			var content = NOTICE_CONTENT[currentLocale()] || NOTICE_CONTENT.en;
-			// 标题与描述的间隔符号：中文用全角冒号，英文用半角冒号加空格
-			var sep = currentLocale() === "zh" ? "：" : ": ";
-			var secs = [];
-			for (var si = 0; si < content.sections.length; si++) {
-				var sec = content.sections[si];
-				var lis = [];
-				for (var ii = 0; ii < sec.items.length; ii++) {
-					// 每个条目：加粗功能名 + 间隔符 + 正式描述，一眼可扫
-					lis.push(react.createElement("li", { key: "i" + ii },
-						react.createElement("strong", null, sec.items[ii].title),
-						sep + sec.items[ii].detail
-					));
-				}
-				// 小节头：版本号胶囊 + 可选说明（如"大版本更新 · 此前未展示"）
-				var head = [react.createElement("span", { key: "v", className: "ccg-notice-ver" }, sec.version)];
-				if (sec.note) {
-					head.push(react.createElement("span", { key: "n", className: "ccg-notice-ver-note" }, sec.note));
-				}
-				secs.push(react.createElement("div", { key: "s" + si, className: "ccg-notice-sec" },
-					react.createElement("div", { className: "ccg-notice-sec-head" }, head),
-					react.createElement("ul", { className: "ccg-notice-list" }, lis)
-				));
-			}
-			return react.createElement("div", { className: "ccg-notice", role: "alert" },
-				react.createElement("div", { className: "ccg-notice-title" }, content.title),
-				react.createElement("div", { className: "ccg-notice-body" }, secs),
-				react.createElement("p", { className: "ccg-notice-hint" }, content.hint),
-				Button !== null
-					? react.createElement(Button, { variant: "primary", size: "sm", className: "ccg-notice-btn-plat", onClick: dismiss }, content.dismiss)
-					: react.createElement("button", { className: "ccg-notice-btn", type: "button", onClick: dismiss }, content.dismiss)
-			);
-		}
 
 		// ---- 官方 UI 原语（可选依赖） ----
 		// 折叠栏优先用官方 DisclosureRow 渲染（24px 行高、16px 前导、14px 官方 chevron、
@@ -949,7 +859,6 @@ window.__ModuleLoader__.load({
 		// @deepseek-ai/dsh-client-ui-primitives 是平台 seed 模块，插件工厂可直接 require；
 		// 若某版本缺失则回退到自带兜底样式，保证插件仍可用。
 		var DisclosureRow = null;
-		var Button = null;
 		var Menu = null;
 		var IconChevronDownOutline14 = null;
 		var IconChevronRightOutline14 = null;
@@ -964,7 +873,6 @@ window.__ModuleLoader__.load({
 		try {
 			var uiPrimitives = require("@deepseek-ai/dsh-client-ui-primitives");
 			DisclosureRow = uiPrimitives.DisclosureRow;
-			Button = uiPrimitives.Button;
 			Menu = uiPrimitives.Menu;
 			IconChevronDownOutline14 = uiPrimitives.IconChevronDownOutline14;
 			IconChevronRightOutline14 = uiPrimitives.IconChevronRightOutline14;
@@ -1139,29 +1047,6 @@ window.__ModuleLoader__.load({
 				   （分隔线→正文应为本插件设计的 8px；展开回合内 上一成员→正文 = 官方 16px gap） */
 				"[data-ccg-turn-folded]>*>*>*>:first-child{margin-top:0!important}",
 				"[data-ccg-turn-folded]>*>*>*>:last-child{margin-bottom:0!important}",
-				/* 一次性更新说明通知：右下角浮动卡片（独立于折叠样式，自成一类 ccg-notice） */
-				".ccg-notice{position:fixed;right:16px;bottom:16px;z-index:9999;max-width:360px;max-height:70vh;overflow-y:auto;background:var(--dsw-alias-bg-layer-2,#ffffff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:12px 14px;font-size:13px;line-height:1.6;color:var(--dsw-alias-label-primary,#1f2328);animation:ccg-notice-in .24s ease-out}",
-				".ccg-notice-title{font-weight:600;margin-bottom:8px}",
-				".ccg-notice-body{display:flex;flex-direction:column;opacity:.92}",
-				/* 版本小节：版本号胶囊标签 + 说明文字并排，区块之间用间距分隔 */
-				".ccg-notice-sec + .ccg-notice-sec{margin-top:12px}",
-				".ccg-notice-sec-head{display:flex;align-items:center;gap:6px;margin-bottom:6px;min-width:0}",
-				".ccg-notice-ver{flex:none;background:var(--dsw-alias-bg-layer-3,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:999px;padding:1px 9px;font-size:11px;font-weight:600;line-height:1.7;color:var(--dsw-alias-label-secondary,#6b7280)}",
-				".ccg-notice-ver-note{font-size:11px;color:var(--dsw-alias-label-tertiary,#9ca3af);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-				/* 条目列表：自定义圆点 + 悬挂缩进（换行对齐），拉开条目间距 */
-				".ccg-notice-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}",
-				".ccg-notice-list li{position:relative;margin:0;padding:0 0 0 14px;color:var(--dsw-alias-label-secondary,#6b7280)}",
-				".ccg-notice-list li strong{font-weight:600;color:var(--dsw-alias-label-primary,#1f2328)}",
-				".ccg-notice-list li::before{content:\"\";position:absolute;left:1px;top:8px;width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-label-tertiary,#9ca3af)}",
-				".ccg-notice-hint{font-size:12px;opacity:.6;margin:6px 0 0}",
-				/* 兜底按钮（平台 Button 缺失时）：用官方 button-primary token 对，暗色主题下
-				   自动变浅底深字，而不是写死的品牌色+白字 */
-				".ccg-notice-btn{display:block;margin:8px 0 0 auto;background:var(--dsw-alias-button-primary-fill,var(--dsw-alias-brand-primary,#4f6ef7));color:var(--dsw-alias-label-primary-foreground,#fff);border:none;border-radius:14px;padding:4px 12px;font-size:12px;line-height:18px;cursor:pointer}",
-				".ccg-notice-btn:hover{background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-brand-primary,#4f6ef7))}",
-				/* 平台 Button 路径：只补右对齐与上间距，颜色/圆角由官方 primary/sm 类负责 */
-				".ccg-notice-btn-plat{display:block;margin:8px 0 0 auto}",
-				"@keyframes ccg-notice-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}",
-				"@media (prefers-reduced-motion:reduce){.ccg-notice{animation:none!important}}",
 				/* 回合折叠栏字段设置齿轮图标：悬停向右旋转（90° 半圈，再松开回位） */
 				".ccg-gear-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:16px;margin-left:2px;cursor:pointer;color:var(--dsw-alias-label-tertiary,#9ca3af);border-radius:4px;transition:color .15s ease}",
 				".ccg-gear-icon:hover{color:var(--dsw-alias-label-primary,#1f2328)}",
@@ -4727,26 +4612,10 @@ window.__ModuleLoader__.load({
 					}, SettingsTranscriptViewRow);
 				}
 			} catch (e) { /* settingsScope 或 slots 不可用：跳过设置行注册 */ }
-			// 一次性"新版本更新说明"通知：独立 React 根挂在 <body> 上，与折叠渲染无关。
+			// 字段设置弹窗 + 全局 Toast + 悬浮提示：独立 React 根挂在 <body> 上，与折叠渲染无关。
 			// 特性检测（document / react-dom createRoot / ctx.effect）让极简宿主与
 			// 测试环境（mock ctx 无 effect、loader 不提供 react-dom）静默跳过。
 			if (typeof document !== "undefined" && ReactDOM !== null && typeof ReactDOM.createRoot === "function" && typeof ctx.effect === "function") {
-				ctx.effect(function () {
-					var host = document.getElementById("__dsh-turn-fold-notice");
-					if (!host && document.body && typeof document.createElement === "function") {
-						host = document.createElement("div");
-						host.id = "__dsh-turn-fold-notice";
-						document.body.appendChild(host);
-					}
-					if (!host) return undefined;
-					var root = ReactDOM.createRoot(host);
-					root.render(react.createElement(UpdateNotice));
-					return function () {
-						try { root.unmount(); } catch (e) { /* already gone */ }
-						if (host.parentNode) host.parentNode.removeChild(host);
-					};
-				});
-				// 字段设置弹窗 + 全局 Toast：同一独立 React 根（Toast 常驻，不随弹窗显隐）。
 				ctx.effect(function () {
 					var host = document.getElementById("__dsh-turn-fold-gear");
 					if (!host && document.body && typeof document.createElement === "function") {

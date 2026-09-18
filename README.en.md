@@ -11,7 +11,6 @@ A **pure plugin** for DeepSeek Harness (DSH) that only handles **collapsing**:
 2. **Live turn fold bar**: appears **immediately when you send a message** (0-second placeholder, no waiting for the first response); the header shows duration / TTFT / tokens / tok/s / cache-hit rate in real time, with "Turn N" right-aligned on the far right, separated from the content by a divider line.
 3. **Whole-turn collapse**: after a reply finishes, all Think blocks + tool calls + context injections of that turn collapse into **a turn fold bar** (collapsed by default); only the final summary text stays visible.
 4. **Manual expand/collapse**: click a fold bar to toggle.
-5. **Per-version "What's new" notice**: shows the release notes once, right after each new version is first loaded (read-version is stored locally, so it never nags again).
 
 **Does not modify any `@deepseek-ai/dsh-*` source code.**
 

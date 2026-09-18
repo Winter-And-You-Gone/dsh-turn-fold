@@ -105,8 +105,6 @@ const TEST_EXPORTS = [
   'wrapLocaleT',
   'CHAT_T_FALLBACK',
   'NOTICE_VERSION',
-  'NOTICE_CONTENT',
-  'UpdateNotice',
 ]
 
 /**
