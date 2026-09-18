@@ -12,7 +12,7 @@ import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { loadPlugin } from './helpers/loader.mjs'
 import { createSessionStore, makeUseSession, makeNode, userNode, asNode, toolNode, contextNode, tailNode, buildSnapshot } from './helpers/store.mjs'
-import { TURN13, NO_TOOL, OUTSIDE_SCOPE } from './helpers/fixtures.mjs'
+import { TURN13, NO_TOOL, OUTSIDE_SCOPE, MID_STEER, MID_STEER_FOLLOWED } from './helpers/fixtures.mjs'
 
 const require = createRequire(import.meta.url)
 const { JSDOM } = require('jsdom')
@@ -167,6 +167,54 @@ describe('回归 v0.2.2：折叠作用域不越过用户消息', () => {
     document.body.innerHTML = ''
     T.turnOverrides.clear()
     T.overrides.clear()
+  })
+})
+
+describe('回归 issue #2：中途 steering 被宿主归类为 user 时回合栏仍渲染', () => {
+  it('运行中：误判 user 是回合内最后一个节点（anchorSeq 越过全部中间节点）→ 回合栏照常出现', () => {
+    T.turnOverrides.clear()
+    T.overrides.clear()
+    mount(MID_STEER)
+    try {
+      // 这是报告人给的症状签名：段栏在、回合栏没了（.ccg-group-root[data-ccg-turn] 为 0）
+      const turnHeader = container.querySelector('.ccg-group-root[data-ccg-turn] > .ccg-header')
+      assert.ok(turnHeader, '回合折叠栏必须渲染（旧算法此处 foldable=false → 消失）')
+      const title = turnHeader.querySelector('.ccg-title')
+      assert.ok(title && title.textContent.length > 0, '回合折叠栏标题非空')
+      // 折叠栏锚定在首条中间节点（as-ms-1），不是误判的 user（u-mis-400）
+      assert.ok(
+        container.querySelector('.mock-assistant[data-node="as-ms-1"]') !== null
+          || container.querySelector('.mock-tool-card') !== null,
+        '本回合中间节点仍参与折叠',
+      )
+    } finally {
+      act(() => root.unmount())
+      document.body.innerHTML = ''
+      T.turnOverrides.clear()
+      T.overrides.clear()
+    }
+  })
+
+  it('插话之后又有中间节点：折叠栏仍锚定首条中间节点（不靠"退回兜底"掩盖）', () => {
+    T.turnOverrides.clear()
+    T.overrides.clear()
+    mount(MID_STEER_FOLLOWED)
+    try {
+      assert.ok(
+        container.querySelector('.ccg-group-root[data-ccg-turn] > .ccg-header'),
+        '回合折叠栏必须渲染',
+      )
+      assert.equal(
+        container.querySelectorAll('.ccg-group-root[data-ccg-turn]').length,
+        1,
+        '恰好一个回合折叠栏',
+      )
+    } finally {
+      act(() => root.unmount())
+      document.body.innerHTML = ''
+      T.turnOverrides.clear()
+      T.overrides.clear()
+    }
   })
 })
 

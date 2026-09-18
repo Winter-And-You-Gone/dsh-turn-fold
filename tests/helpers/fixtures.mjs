@@ -99,3 +99,39 @@ export const TWO_USERS = buildSnapshot(TWO_USERS_NODES, {
   turnEnds: new Map([[13, 300]]),
   turnTimings: new Map([[13, { startTime: 0, endTime: 5000 }]]),
 })
+
+// ──────────────── issue #2：中途 steering 被宿主归类为 user ────────────────
+// 运行中用户插话（steering）时，宿主可能把它归类为 user 而非 steering：窗口截断
+// 导致 inbox 认领批次重建不全（session-controller 只在 user/message 处切页，认领
+// splice 在窗口内、入队 splice 在窗口外）就会发生，且此后不再重算。这类节点的
+// anchorSeq 比本回合所有中间节点都大 —— 旧算法取"回合内全部 user 的最大 anchorSeq"
+// 当右边界，边界越过全部中间节点 → headerKey 恒为 null → 回合折叠栏消失（段栏仍在）。
+//
+// 关键形状：该 user 必须是**回合内最后一个节点**（插话后尚无后续中间节点，即回合
+// 正在等待下一步）。此时 headerKey 与 finalAssistantKey 双 null → foldable=false
+// → 该回合的回合栏消失。若它之后还有中间节点，旧算法会退回用那个节点当折叠栏、
+// 掩盖问题（因此下面的 fixture 刻意让误判 user 收尾）。
+const MID_STEER_NODES = [
+  userNode('u-100', 100),
+  asNode('as-ms-1', 200, { step: 1 }),
+  toolNode('tc-ms-1', 300, { step: 1 }),
+  userNode('u-mis-400', 400),
+]
+export const MID_STEER = buildSnapshot(MID_STEER_NODES, {
+  turnEnds: new Map(),
+  turnTimings: new Map([[13, { startTime: 0 }]]),
+})
+
+// 同结构但插话之后又有中间节点：旧算法会退回该节点当折叠栏（掩盖问题），
+// 用于确认修复后折叠栏锚定在首条中间节点而非"退回兜底"。
+const MID_STEER_FOLLOWED_NODES = [
+  userNode('u-100f', 100),
+  asNode('as-msf-1', 200, { step: 1 }),
+  toolNode('tc-msf-1', 300, { step: 1 }),
+  userNode('u-mis-400f', 400),
+  toolNode('tc-msf-2', 500, { step: 2 }),
+]
+export const MID_STEER_FOLLOWED = buildSnapshot(MID_STEER_FOLLOWED_NODES, {
+  turnEnds: new Map(),
+  turnTimings: new Map([[13, { startTime: 0 }]]),
+})

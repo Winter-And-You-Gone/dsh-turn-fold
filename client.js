@@ -1737,10 +1737,29 @@ window.__ModuleLoader__.load({
 			// 之前（含）的节点（如审批策略变更通知）不属于本回合的输出区间，
 			// 绝不参与折叠、也绝不作折叠栏候选，否则回合折叠栏会"跨过"用户消息去折叠
 			// 其上方的内容，破坏"折叠 = 收起用户消息与 agent 回复之间内容"的语义。
+			//
+			// 但 user 节点的 anchorSeq 未必都排在中间节点之前：运行中用户中途插话
+			// （steering）时，宿主可能把它归类为 user 而非 steering——窗口截断导致
+			// inbox 认领批次重建不全时（session-controller 只在 user/message 处切页，
+			// 认领 splice 在窗口内、入队 splice 在窗口外）就会发生，且此后不再重算。
+			// 这类节点的 anchorSeq 比本回合所有中间节点都大：若直接取"回合内全部
+			// user 的最大 anchorSeq"当右边界，边界会越过全部中间节点 → headerKey 恒
+			// 为 null → 本回合及此后每个回合都不再渲染回合折叠栏，且不自愈（issue #2）。
+			// 因此只把"位于本回合首条 assistant-step / tool-call 之前"的 user 节点
+			// 当作作用域锚点——那才是开启本回合的用户消息；中途插入的 user 不参与
+			// 边界计算（context 注入不参与定界：它既可能被排在用户消息之前，也可能是
+			// 回合内的合法中间节点，无法用它区分先后）。
+			var firstEvidenceSeq = Infinity;
+			for (var e = 0; e < keys.length; e++) {
+				var en = nodes.get(keys[e]);
+				if (!en || !(en.kind === "tool-call" || en.kind === "assistant-step")) continue;
+				if (typeof en.anchorSeq === "number" && en.anchorSeq < firstEvidenceSeq) firstEvidenceSeq = en.anchorSeq;
+			}
 			var lastUserSeq = -1;
 			for (var u = 0; u < keys.length; u++) {
 				var un = nodes.get(keys[u]);
-				if (un && un.kind === "user" && typeof un.anchorSeq === "number" && un.anchorSeq > lastUserSeq) lastUserSeq = un.anchorSeq;
+				if (!un || un.kind !== "user" || typeof un.anchorSeq !== "number") continue;
+				if (un.anchorSeq > lastUserSeq && un.anchorSeq < firstEvidenceSeq) lastUserSeq = un.anchorSeq;
 			}
 			// 已折叠行数：回合折叠栏收纳的内容行数 = 折叠作用域内（最后一个 user 节点之后）
 			// 的中间节点数（tool-call / assistant-step / context），不含最终总结消息——
