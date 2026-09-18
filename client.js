@@ -851,7 +851,7 @@ window.__ModuleLoader__.load({
 		// package.json 的 version 同步更新。
 		// （历史上的"新版本更新说明"弹窗已于 2026-09-18 移除：其"已读"标记存于
 		// localStorage，而 web 端 origin 随端口变化会失效，导致每次重启重复弹出。）
-		var NOTICE_VERSION = "0.5.2";
+		var NOTICE_VERSION = "0.5.3";
 
 		// ---- 官方 UI 原语（可选依赖） ----
 		// 折叠栏优先用官方 DisclosureRow 渲染（24px 行高、16px 前导、14px 官方 chevron、
