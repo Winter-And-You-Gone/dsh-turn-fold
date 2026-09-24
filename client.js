@@ -884,19 +884,24 @@ window.__ModuleLoader__.load({
 		var Toast = null;
 		try {
 			var uiPrimitives = require("@deepseek-ai/dsh-client-ui-primitives");
-			DisclosureRow = uiPrimitives.DisclosureRow;
-			Menu = uiPrimitives.Menu;
-			IconChevronDownOutline14 = uiPrimitives.IconChevronDownOutline14;
-			IconChevronRightOutline14 = uiPrimitives.IconChevronRightOutline14;
-			IconThinkOutline14 = uiPrimitives.IconThinkOutline14;
-			IconSearchOutline16 = uiPrimitives.IconSearchOutline16;
-			IconEditOutline16 = uiPrimitives.IconEditOutline16;
-			IconBrowseOutline16 = uiPrimitives.IconBrowseOutline16;
-			IconCodeOutline16 = uiPrimitives.IconCodeOutline16;
-			IconApiOutline14 = uiPrimitives.IconApiOutline14;
-			IconSparkle16 = uiPrimitives.IconSparkle16;
+			// DSH 0.1.7-rc.1 图标 API 改名：尺寸后缀（IconXxxOutline16/14）→ 粗细后缀
+			// （IconXxxOutlineRegular/Medium，尺寸改走 size prop）。新旧命名都探测：
+			// 旧宿主命中前者，新宿主命中后者；缺失时必须归一为 null —— 直接赋值会得到
+			// undefined，绕过 `!== null`/真值守卫渲染 createElement(undefined)，
+			// 即 React #130（composer 识图选择器/设置行同类崩溃的根源）。
+			DisclosureRow = uiPrimitives.DisclosureRow || null;
+			Menu = uiPrimitives.Menu || null;
+			IconChevronDownOutline14 = uiPrimitives.IconChevronDownOutline14 || uiPrimitives.IconChevronDownOutlineRegular || null;
+			IconChevronRightOutline14 = uiPrimitives.IconChevronRightOutline14 || uiPrimitives.IconChevronRightOutlineRegular || null;
+			IconThinkOutline14 = uiPrimitives.IconThinkOutline14 || uiPrimitives.IconThinkOutlineRegular || null;
+			IconSearchOutline16 = uiPrimitives.IconSearchOutline16 || uiPrimitives.IconSearchOutlineRegular || null;
+			IconEditOutline16 = uiPrimitives.IconEditOutline16 || uiPrimitives.IconEditOutlineRegular || null;
+			IconBrowseOutline16 = uiPrimitives.IconBrowseOutline16 || uiPrimitives.IconBrowseOutlineRegular || null;
+			IconCodeOutline16 = uiPrimitives.IconCodeOutline16 || uiPrimitives.IconCodeOutlineRegular || null;
+			IconApiOutline14 = uiPrimitives.IconApiOutline14 || uiPrimitives.IconApiOutlineRegular || null;
+			IconSparkle16 = uiPrimitives.IconSparkle16 || uiPrimitives.IconSparkleRegular || null;
 			// 官方 Toast（消息通知原语）：短提示自动消失；平台缺失时静默跳过。
-			Toast = uiPrimitives.Toast;
+			Toast = uiPrimitives.Toast || null;
 		} catch (e) {
 			/* 平台模块缺失：走自带兜底样式 */
 		}
@@ -4704,7 +4709,7 @@ window.__ModuleLoader__.load({
 					onClick: function () { if (open) { closeMenu(); } else { setOpen(true); } }
 				},
 				selectedLabel,
-				Menu ? react.createElement(IconChevronDownOutline14, { size: 14, className: "ccg-settings-selector-chevron" }) : null
+				Menu && IconChevronDownOutline14 ? react.createElement(IconChevronDownOutline14, { size: 14, className: "ccg-settings-selector-chevron" }) : null
 			);
 			var items = [];
 			for (var mi = 0; mi < OPTIONS.length; mi++) {
@@ -4764,26 +4769,43 @@ window.__ModuleLoader__.load({
 		// PENDING —— 不只是插件不生效，0.1.7 的 assertEntriesActive 把 pending 条目
 		// 当启动失败，web 直接打不开。设置行改用运行时探测（见 resolveTranscriptScope）。
 		exports.inject = ["slots", "connection"];
+		/**
+		 * 读未声明 inject 的服务：0.1.7 起的 cordis 对属性直读直接抛
+		 * "cannot get property ... without inject"（0.1.7 真机上属性直读必然
+		 * 失败），ctx.reflect.get 是官方留的无声明读取通道（提供方 fiber 未
+		 * 激活时返回 undefined，需配合重试）。旧 cordis 无守卫，属性直读兜底
+		 * 保持 ≤0.1.6 行为不变。
+		 */
+		function readCtxService(ctx, name) {
+			try {
+				if (ctx.reflect && typeof ctx.reflect.get === "function") {
+					var viaReflect = ctx.reflect.get(name);
+					if (viaReflect !== undefined && viaReflect !== null) return viaReflect;
+				}
+			} catch (e) { /* reflect 缺失或被守卫 */ }
+			try { return ctx[name]; } catch (e) { return undefined; }
+		}
 		/** 解析官方 ui-chat 设置 scope：新版 ctx.configForms.get(ns)，旧版
 		 *  ctx.settingsScope.bind({namespace})。两者快照同形（value/set/subscribe），
-		 *  探测失败（极简宿主/测试环境）返回 null → 不注册设置行，其余功能照常。
-		 *  ctx.get 读服务不需要 inject 声明，因此这里不会把条目拖成 pending。 */
+		 *  探测失败（极简宿主/测试环境）返回 null → 不注册设置行，其余功能照常。 */
 		function resolveTranscriptScope(ctx) {
 			try {
-				if (ctx.configForms && typeof ctx.configForms.get === "function") {
-					var form = ctx.configForms.get("ui-chat");
+				var configForms = readCtxService(ctx, "configForms");
+				if (configForms && typeof configForms.get === "function") {
+					var form = configForms.get("ui-chat");
 					if (form && typeof form.getSnapshot === "function") {
 						// describe 挂在 configForms 服务上（ConfigForm 实例没有），单独留引用。
-						transcriptDescribeRef = ctx.configForms;
+						transcriptDescribeRef = configForms;
 						return form;
 					}
 				}
 			} catch (e) { /* 新版服务不可用：继续试旧版 */ }
 			try {
-				if (ctx.settingsScope && typeof ctx.settingsScope.bind === "function") {
-					var scope = ctx.settingsScope.bind({ namespace: "ui-chat" });
+				var settingsScope = readCtxService(ctx, "settingsScope");
+				if (settingsScope && typeof settingsScope.bind === "function") {
+					var scope = settingsScope.bind({ namespace: "ui-chat" });
 					// 旧版 describe 就在 scope 自身；仍记服务引用（readNamespaceView 会两个都试）。
-					transcriptDescribeRef = ctx.settingsScope;
+					transcriptDescribeRef = settingsScope;
 					return scope;
 				}
 			} catch (e) { /* 旧版服务不可用 */ }
@@ -4793,10 +4815,17 @@ window.__ModuleLoader__.load({
 			// 设置 → 对话 → 「回合折叠方式」行：shadow 官方 transcript-view 行（priority:-1）。
 			// 经官方 ui-chat 设置 scope 读写 transcriptView（旧版 settingsScope / 新版 configForms）。
 			// 无该服务（旧版更早版本/测试环境）时静默跳过，只不注册设置行。
+			// 0.1.7 的 configForms 由设置提供方 fiber 提供，可能晚于本插件 apply 激活
+			// （reflect.get 届时返回 undefined）——真机（有 reflect 层）时做有界重试，
+			// 旧宿主/测试环境维持同步放弃，不留定时器。
 			try {
 				var slotsService2 = ctx.slots;
-				var transcriptScope = slotsService2 ? resolveTranscriptScope(ctx) : null;
-				if (transcriptScope) {
+				var tryRegisterSettingsRow = function () {
+					var transcriptScope = null;
+					try {
+						transcriptScope = slotsService2 ? resolveTranscriptScope(ctx) : null;
+					} catch (e) { return false; }
+					if (!transcriptScope) return false;
 					transcriptScopeRef = transcriptScope;
 					var settingsRowInject = function () {
 						return {
@@ -4825,6 +4854,16 @@ window.__ModuleLoader__.load({
 						priority: resolveSettingsRowPriority(slotsService2),
 						inject: settingsRowInject
 					}, SettingsTranscriptViewRow);
+					return true;
+				};
+				if (!tryRegisterSettingsRow() && ctx.reflect && typeof ctx.reflect.get === "function") {
+					var settingsRowWaited = 0;
+					var pollSettingsRow = function () {
+						settingsRowWaited += 250;
+						if (settingsRowWaited > 15000) return; // 放弃：宿主始终未提供设置面
+						if (!tryRegisterSettingsRow()) setTimeout(pollSettingsRow, 250);
+					};
+					setTimeout(pollSettingsRow, 250);
 				}
 			} catch (e) { /* 设置服务或 slots 不可用：跳过设置行注册 */ }
 			// 字段设置弹窗 + 全局 Toast + 悬浮提示：独立 React 根挂在 <body> 上，与折叠渲染无关。

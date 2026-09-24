@@ -622,6 +622,61 @@ describe('DSH 0.1.7 设置链路适配（configForms + transcriptView 四值枚�
     dom.window.document.body.removeChild(container)
   })
 
+  it('0.1.7 cordis 属性守卫：属性直读抛错 → 经 ctx.reflect.get 仍注册设置行（regression：真机行消失）', () => {
+    // 忠实复刻 0.1.7 真机：未声明 inject 的服务属性直接抛
+    // "cannot get property ... without inject"，ctx.reflect.get 是官方无声明读取通道。
+    // regression 背景：2d75cf2 的 resolveTranscriptScope 属性直读 ctx.configForms
+    // 在真机上必然抛错（被 catch 吞掉）→ 设置行静默消失，mock 测试测不出。
+    const { svc, regs } = makeSlotsSvc()
+    const form = makeConfigForm({})
+    const mirror = {
+      status: 'ready',
+      view: { namespaces: [{ ns: 'ui-chat', schema: v2Schema(), value: { ...form.getSnapshot().value }, revision: 1 }], writable: true, hasDocument: true },
+      error: null,
+    }
+    const configForms = makeConfigFormsService({ 'ui-chat': form }, mirror)
+    const ctx = {
+      slots: svc,
+      inject(deps, cb) { cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } }) },
+      reflect: { get(name) { return name === 'configForms' ? configForms : undefined } },
+    }
+    for (const guarded of ['configForms', 'settingsScope']) {
+      Object.defineProperty(ctx, guarded, { get() { throw new Error('cannot get property "' + guarded + '" without inject') } })
+    }
+    pluginExports.apply(ctx)
+    const row = regs.find((r) => r.options.name === 'settings.general.item' && r.options.id === 'transcript-view')
+    assert.ok(row, '属性直读被守卫拦死时，经 reflect.get 仍注册设置行')
+    assert.equal(row.options.priority, -1, 'priority=-1 shadow 官方行')
+  })
+
+  it('0.1.7 configForms 晚于 apply 激活 → 有界重试后注册设置行（无 reflect 的宿主不留定时器）', async () => {
+    const { svc, regs } = makeSlotsSvc()
+    const form = makeConfigForm({})
+    const mirror = {
+      status: 'ready',
+      view: { namespaces: [{ ns: 'ui-chat', schema: v2Schema(), value: { ...form.getSnapshot().value }, revision: 1 }], writable: true, hasDocument: true },
+      error: null,
+    }
+    const configForms = makeConfigFormsService({ 'ui-chat': form }, mirror)
+    let ready = false
+    const ctx = {
+      slots: svc,
+      inject(deps, cb) { cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } }) },
+      reflect: { get(name) { return name === 'configForms' && ready ? configForms : undefined } },
+    }
+    for (const guarded of ['configForms', 'settingsScope']) {
+      Object.defineProperty(ctx, guarded, { get() { throw new Error('cannot get property "' + guarded + '" without inject') } })
+    }
+    pluginExports.apply(ctx)
+    const rowAtApply = regs.find((r) => r.options.name === 'settings.general.item' && r.options.id === 'transcript-view')
+    assert.ok(!rowAtApply, '提供方未激活时（reflect.get 为 undefined）apply 同步路径不注册')
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    ready = true // 设置提供方 fiber 晚于本插件 apply 激活
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const row = regs.find((r) => r.options.name === 'settings.general.item' && r.options.id === 'transcript-view')
+    assert.ok(row, 'configForms 激活后重试注册成功')
+  })
+
   it('无任何设置服务（极简宿主）→ apply 不抛错、不注册设置行，其余功能照常', () => {
     const { svc, regs } = makeSlotsSvc()
     assert.doesNotThrow(() => {
