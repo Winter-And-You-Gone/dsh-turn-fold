@@ -239,7 +239,7 @@ npm run check      # 语法检查 client.js / index.js
 | `unit.render.test.mjs` | React 渲染：初始折叠 → 点击回合折叠栏展开 → 再收起 的完整交互；委托渲染内置组件时官方 inject 面 hook 的逐名透传（`useConnectionGeneration` / `useHostInfo`，由 `chatNodeEntryInject` 探测合并）；条目注册契约（inject 声明） |
 | `unit.css.test.mjs` | CSS `:has()` 隐藏规则在真实 DOM 上的生效（含"展开→收起"往返） |
 | `regression.test.mjs` | 历史 bug 回归：节点对象替换（Bug1）、inject 缺失崩溃/abdicate（Bug2）、无工具调用回合折叠（v0.2.3）、折叠作用域不越过用户消息（v0.2.2）、步骤分组手动展开/收起 |
-| `unit.gear.test.mjs` / `unit.settings-row.test.mjs` | 齿轮字段弹窗与 shadow 官方 transcript-view 的设置行（界面标题为官方原文「对话显示」，选项 Normal / Compact / Turn-Fold） |
+| `unit.gear.test.mjs` / `unit.settings-row.test.mjs` | 齿轮字段弹窗与 shadow 官方 transcript-view 的设置行（界面标题为官方原文「对话显示」；选项按宿主词表：旧版 Normal / Compact / Turn-Fold，0.1.7+ Compact / Standard / Detailed / Verbose / Turn-Fold，含词表探测与 foldOff 写入断言） |
 | `unit.compat.test.mjs` | DSH 双版本兼容：0.1.1 `useSession(.chat + 顶层 turnEnds/turnTimings)` 与 0.1.2 `useChat + chat.legacy` 两条快照路径、折叠模式切换 hooks 顺序回归、官方 diffs 读取链（`meta.diffs` / `resultView` / `callView`） |
 
 > 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
@@ -389,13 +389,22 @@ git push --follow-tags
 
 ## 注意事项
 
-- 兼容 DSH 0.1.1-rc.2 ~ 0.1.6-alpha.1（会话快照契约差异由插件内适配层消化、官方
-  渲染 hook 面自动跟随，见工作原理；0.1.5-rc.1 与 0.1.6-alpha.1 上均已逐条核对槽位/
-  快照/设置行/节点数据契约）。DSH 升级若改变上述槽位契约或内置组件 props，本插件可能
-  需要随版本小改（属插件维护，非改源码）。
-- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.1-rc.2 <=0.1.6-alpha.1`
+- 兼容 DSH 0.1.1-rc.2 ~ 0.1.7-rc.1（会话快照契约差异由插件内适配层消化、官方
+  渲染 hook 面自动跟随，见工作原理；0.1.5-rc.1、0.1.6-alpha.1 与 0.1.7-rc.1 上均已
+  逐条核对槽位/快照/设置行/节点数据契约）。DSH 升级若改变上述槽位契约或内置组件
+  props，本插件可能需要随版本小改（属插件维护，非改源码）。
+  - **0.1.7 起设置服务改名**：`ctx.settingsScope` → `ctx.configForms`（快照形状不变）。
+    插件改为运行时探测（先试 `configForms.get('ui-chat')`，再回退 `settingsScope.bind`），
+    **不再把设置服务写进 `exports.inject`** —— 声明一个已删除的服务会让整个客户端条目
+    永久停在 `pending`，而 0.1.7 的启动审计把 pending 条目当**启动失败**（web 直接打不开），
+    不只是插件不生效。
+  - **0.1.7 起 transcriptView 枚举四值化**：`normal/compact` →
+    `compact/standard/detailed/verbose`，官方折叠改由 presentation-policy 的
+    `foldCompletedTurns` 开关（只有 `verbose` 为 false）。插件按宿主实际词表渲染选项，
+    接管时写 `verbose`（旧版写 `normal`），避免与官方双重折叠。
+- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.1-rc.2 <=0.1.7-rc.1`
   —— 插件市场（dshmarket）读 npm `latest` manifest 的这个字段，在插件卡片上显示
-  `DSH >=0.1.1-rc.2 <=0.1.6-alpha.1`，并在**更新**前拦下确定不满足的版本（undeclared/未知
+  `DSH >=0.1.1-rc.2 <=0.1.7-rc.1`，并在**更新**前拦下确定不满足的版本（undeclared/未知
   一律放行；DSH 本体不读该字段，不影响加载）。区间是**闭区间**、锁到已核验的宿主版本：
   每次 DSH 升级后重新核对契约，再抬上限并随新版本发布。
 - 折叠栏文案在 `client.js` 顶部 `CONFIG` 可调。

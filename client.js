@@ -158,6 +158,12 @@ window.__ModuleLoader__.load({
 				settingsTranscriptNormalTip: "不折叠：回合过程完整展示",
 				settingsTranscriptCompact: "Compact",
 				settingsTranscriptCompactTip: "官方紧凑折叠：只显示最终回复",
+				settingsTranscriptStandard: "Standard",
+				settingsTranscriptStandardTip: "官方标准折叠：显示过程摘要",
+				settingsTranscriptDetailed: "Detailed",
+				settingsTranscriptDetailedTip: "官方详细折叠：历史回合保留分组",
+				settingsTranscriptVerbose: "Verbose",
+				settingsTranscriptVerboseTip: "官方完全展开：过程不折叠",
 				settingsTranscriptTurnFold: "Turn-Fold",
 				settingsTranscriptTurnFoldTip: "插件折叠：接管全部折叠并显示指标"
 			},
@@ -223,6 +229,12 @@ window.__ModuleLoader__.load({
 				settingsTranscriptNormalTip: "No folding: show the complete turn process",
 				settingsTranscriptCompact: "Compact",
 				settingsTranscriptCompactTip: "Official compact folding: final reply only",
+				settingsTranscriptStandard: "Standard",
+				settingsTranscriptStandardTip: "Official standard folding: process summaries",
+				settingsTranscriptDetailed: "Detailed",
+				settingsTranscriptDetailedTip: "Official detailed folding: history keeps groups",
+				settingsTranscriptVerbose: "Verbose",
+				settingsTranscriptVerboseTip: "Official verbose: process never folds",
 				settingsTranscriptTurnFold: "Turn-Fold",
 				settingsTranscriptTurnFoldTip: "Plugin folding: take over all folds and show metrics"
 			}
@@ -2193,7 +2205,40 @@ window.__ModuleLoader__.load({
 			for (var k in owner) if (Object.prototype.hasOwnProperty.call(owner, k)) props[k] = owner[k];
 			return props;
 		}
-		function renderToolview(kit, owner, entryKey, fallback) {
+		// 子槽 inject 面的 hook 绑定：0.1.7 给 tool.call.toolview 声明了
+		//   inject: { hooks: { toolCallArgumentsPartial: bindToolCallArgumentsPartial } }
+		// 官方 renderEntry 会把这些 factory 用 (standard, hookContext) 绑成 use* props。
+		// 我们的手写分发必须照做：file-mutation-row（edit/write）在 preparing 阶段无条件
+		// 调用 useToolCallArgumentsPartial()，缺了会抛错 → 该 shadow 格 abdicate →
+		// 工具卡/步骤折叠栏全消失。按 inject 面泛化绑定（不枚举名字），官方未来增删
+		// hook 时这条链自动跟随；旧版无该声明时 factories 为空，行为不变。
+		// 绑定结果按 (inject 面, hookContext) 缓存：hookContext 由官方 useMemo 给出稳定
+		// 引用，缓存后 props 身份稳定，不破坏 ToolCall 的 memo。
+		var childHookCache = new WeakMap();
+		function bindChildSlotHooks(injectFace, hookContext) {
+			try {
+				var hooksDef = injectFace && injectFace.hooks;
+				if (!hooksDef || typeof hooksDef !== "object") return null;
+				var byContext = childHookCache.get(hooksDef);
+				if (!byContext) { byContext = new WeakMap(); childHookCache.set(hooksDef, byContext); }
+				var cached = byContext.get(hookContext);
+				if (cached) return cached;
+				var bound = {};
+				var any = false;
+				for (var name in hooksDef) {
+					if (!Object.prototype.hasOwnProperty.call(hooksDef, name)) continue;
+					var def = hooksDef[name];
+					if (typeof def !== "function") continue;
+					// 官方 standardHookPropName：'toolCallArgumentsPartial' → 'useToolCallArgumentsPartial'
+					bound["use" + name.charAt(0).toUpperCase() + name.slice(1)] = def({}, hookContext);
+					any = true;
+				}
+				if (!any) return null;
+				byContext.set(hookContext, bound);
+				return bound;
+			} catch (e) { return null; }
+		}
+		function renderToolview(kit, owner, entryKey, fallback, hookContext) {
 			var entries = slotsService ? slotsService.entriesOfSlot("tool.call.toolview") : null;
 			var entry = null;
 			if (entries) {
@@ -2202,6 +2247,13 @@ window.__ModuleLoader__.load({
 				}
 			}
 			if (!entry || !entry.component) return fallback;
+			// 子槽声明的 inject 面（0.1.7+）：specDynamic 读当前声明，无该 API/未声明 → null。
+			var childInject = null;
+			try {
+				var spec = slotsService && typeof slotsService.specDynamic === "function"
+					? slotsService.specDynamic("tool.call.toolview") : null;
+				childInject = spec && spec.inject ? spec.inject : null;
+			} catch (e) { /* 旧版无 specDynamic：无子槽 hook */ }
 			var props = buildEntryProps(kit, owner, {
 				// 0.1.2-rc.1+：read_image 等条目声明 children（tool.call.images 单槽），
 				// 官方机制会给这类条目发 renderSlot；我们的手写分发同样补一个——
@@ -2214,6 +2266,12 @@ window.__ModuleLoader__.load({
 					return renderToolImages(kit, imgOwner);
 				}
 			});
+			var childHooks = bindChildSlotHooks(childInject, hookContext);
+			if (childHooks) {
+				for (var chk in childHooks) {
+					if (Object.prototype.hasOwnProperty.call(childHooks, chk)) props[chk] = childHooks[chk];
+				}
+			}
 			return react.createElement(entry.component, props);
 		}
 
@@ -2250,7 +2308,9 @@ window.__ModuleLoader__.load({
 			}
 			var customRenderSlot = function (key, owner, options) {
 				if (key !== "tool.call.toolview") return options && options.fallback ? options.fallback : null;
-				return renderToolview(kit, owner, options.entryKey, options.fallback);
+				// hookContext 由官方 ToolCall 用 useMemo 给出（稳定引用），透传给子槽
+				// inject 面绑定（0.1.7 的 toolCallArgumentsPartial 需要它）。
+				return renderToolview(kit, owner, options.entryKey, options.fallback, options && options.hookContext);
 			};
 			return react.createElement(Builtin, Object.assign({}, props, { renderSlot: customRenderSlot, t: wrapLocaleT(props.t) }));
 		}
@@ -4479,17 +4539,111 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 设置 → 对话 → 「回合折叠方式」行（shadow 官方 transcript-view 行）----
-		// DSH 0.1.2+ 官方注册了 settings.general.item 的 "transcript-view" 行（normal/compact
-		// 两选项）。本插件以 priority:-1 + 同 id shadow 覆盖该行，提供三个选项：
-		//   normal    → 官方 normal（不折叠）
-		//   compact   → 官方 compact（官方折叠）
-		//   turn-fold → 官方 normal + 插件接管（foldMode=turn-fold）
-		// 选项状态 = 官方 transcriptView 值；turn-fold 额外用插件的 foldMode 标记。
-		// 依赖 settingsScope 服务（DSH 0.1.2+）；旧版无该服务时静默跳过（不注册行）。
+		// 官方 ui-chat 设置 scope（apply 时绑定）：供设置行组件探测宿主词表。
+		// 旧版是 ctx.settingsScope.bind({namespace:'ui-chat'})，新版是
+		// ctx.configForms.get('ui-chat')——两者的 getSnapshot/subscribe/set 同形，
+		// 只有服务名与获取方式不同（见 apply 里的 resolveTranscriptScope）。
+		var transcriptScopeRef = null;
+		// describe 面（读 schema 词表用）：旧版在 scope 自身，新版在 configForms 服务上
+		// （ConfigForm 实例没有 describe）。存服务引用，readNamespaceView 两处都试。
+		var transcriptDescribeRef = null;
+		// 官方 transcriptView 枚举跨版本变过，本插件按宿主实际词表渲染选项：
+		//   旧版（≤0.1.6）：normal / compact。normal = 官方折叠关闭（官方折叠以
+		//                   mode==='compact' 为开关）→ 插件接管写 normal。
+		//   新版（0.1.7+） ：compact / standard / detailed / verbose。官方折叠改由
+		//                   presentation-policy 的 foldCompletedTurns 开关，只有
+		//                   verbose 为 false（=官方折叠关闭）→ 插件接管写 verbose。
+		//                   standard/detailed 都仍折叠，写它们会与插件双重折叠。
+		// 词表探测：官方 schema（settings.describe 镜像里的 union 常量）→ 回退 v1。
+		// modes = 选项集与显示顺序（每项 id 对应下面的 LABEL 表）；foldOff = 该代里
+		// 「官方折叠关闭」的那个值（插件接管时写它，否则与官方双重折叠）。
+		var TRANSCRIPT_MODE_VOCAB = {
+			v1: { modes: ["normal", "compact"], foldOff: "normal" },
+			v2: { modes: ["compact", "standard", "detailed", "verbose"], foldOff: "verbose" }
+		};
+		// 每个官方模式 id → [选项文字, 悬浮提示] 的 i18n key。
+		var TRANSCRIPT_MODE_LABELS = {
+			normal: ["settingsTranscriptNormal", "settingsTranscriptNormalTip"],
+			compact: ["settingsTranscriptCompact", "settingsTranscriptCompactTip"],
+			standard: ["settingsTranscriptStandard", "settingsTranscriptStandardTip"],
+			detailed: ["settingsTranscriptDetailed", "settingsTranscriptDetailedTip"],
+			verbose: ["settingsTranscriptVerbose", "settingsTranscriptVerboseTip"]
+		};
+		/** 从官方 schema 的序列化 union 里读出模式词表；读不到返回 null。
+		 *  schemastery union 形如 {type:'union', list:[{type:'const',value:'compact'},…]}，
+		 *  兼容 list 直接是字符串数组的形态。value 里的 transcriptView 是「当前值」
+		 *  （单个字符串），不是词表，所以词表只能来自 schema。 */
+		function readTranscriptModes(scope) {
+			try {
+				var nsView = readNamespaceView(scope);
+				if (!nsView) return null;
+				var modes = extractUnionConsts(nsView.schema, "transcriptView");
+				return modes && modes.length >= 2 ? modes : null;
+			} catch (e) { return null; }
+		}
+		/** 在序列化 schema 里按字段名找 union 常量列表。 */
+		function extractUnionConsts(schema, field) {
+			try {
+				if (!schema || typeof schema !== "object") return null;
+				var refs = schema.refs || {};
+				var resolveNode = function (node) {
+					if (typeof node === "number" || typeof node === "string") return refs[node];
+					return node;
+				};
+				var root = resolveNode(schema.uid !== undefined ? schema.uid : schema);
+				if (!root || typeof root !== "object") return null;
+				var dict = root.dict;
+				if (!dict || typeof dict !== "object") return null;
+				var fieldNode = resolveNode(dict[field]);
+				if (!fieldNode || typeof fieldNode !== "object") return null;
+				var list = fieldNode.list;
+				if (!Array.isArray(list)) return null;
+				var out = [];
+				for (var i = 0; i < list.length; i++) {
+					var item = resolveNode(list[i]);
+					if (typeof item === "string") { out.push(item); continue; }
+					if (item && item.type === "const" && typeof item.value === "string") out.push(item.value);
+				}
+				return out;
+			} catch (e) { return null; }
+		}
+		/** 官方 describe 面的 ui-chat 命名空间视图（schema/value）；不可用返回 null。
+		 *  describe 在旧版挂 scope 自身（settingsScope.describe()），新版挂在 configForms
+		 *  服务上（ConfigForm 实例本身没有 describe）——所以两个来源都试。 */
+		function readNamespaceView(scope) {
+			try {
+				var faces = [];
+				if (scope && typeof scope.describe === "function") faces.push(scope);
+				if (transcriptDescribeRef && typeof transcriptDescribeRef.describe === "function") faces.push(transcriptDescribeRef);
+				for (var f = 0; f < faces.length; f++) {
+					var face = faces[f].describe();
+					if (!face || typeof face.getSnapshot !== "function") continue;
+					var mirror = face.getSnapshot();
+					var view = mirror && mirror.view;
+					var list = view && view.namespaces;
+					if (!Array.isArray(list)) continue;
+					for (var i = 0; i < list.length; i++) {
+						if (list[i] && list[i].ns === "ui-chat") return list[i];
+					}
+				}
+				return null;
+			} catch (e) { return null; }
+		}
+		/** 该词表属于哪一代；未知词表按「含不含 normal」归类（normal 是 v1 专有值，
+		 *  官方从 v2 起改用 compact/standard/... 且把 normal 只当 legacy 读映射），
+		 *  完全认不出时返回 null 由调用方回退 v1（历史行为不变）。
+		 *  这里也兼容官方未来新增档位：词表照原样返回，选项由它驱动。 */
+		function classifyTranscriptVocab(modes) {
+			if (!modes || !modes.length) return null;
+			if (modes.indexOf("normal") !== -1) return TRANSCRIPT_MODE_VOCAB.v1;
+			// 不含 normal 的枚举：按 v2 代处理，但选项集用宿主实际词表（可能是未来五档）。
+			return { modes: modes.slice(), foldOff: modes.indexOf("verbose") !== -1 ? "verbose" : modes[modes.length - 1] };
+		}
 		function SettingsTranscriptViewRow(props) {
 			var useTranscriptView = props.useTranscriptView;
 			var setTranscriptView = props.setTranscriptView;
-			// 订阅官方 transcriptView（normal/compact）与插件 foldMode（turn-fold 标记）。
+			// 订阅官方 transcriptView（旧版 normal/compact；新版 compact/standard/detailed/verbose）
+			// 与插件 foldMode（turn-fold 标记）。hooks 顺序：全部无条件调用。
 			var official = useTranscriptView(function (v) { return v; });
 			useFoldMode();
 			var openState = react.useState(false);
@@ -4501,14 +4655,25 @@ window.__ModuleLoader__.load({
 				return function () { hideSettingsTip(); };
 			}, []);
 			var officialMode = (official && official.value && official.value.transcriptView) || "normal";
-			// 展示选中项：插件标记 turn-fold 时显示 turn-fold（官方已被我们置为 normal）。
-			// 选项文字用英文（与官方 Normal/Compact 风格一致）；悬浮 title 用中文提示。
-			var OPTIONS = [
-				{ id: "normal", label: _T("settingsTranscriptNormal"), tip: _T("settingsTranscriptNormalTip") },
-				{ id: "compact", label: _T("settingsTranscriptCompact"), tip: _T("settingsTranscriptCompactTip") },
-				{ id: "turn-fold", label: _T("settingsTranscriptTurnFold"), tip: _T("settingsTranscriptTurnFoldTip") }
-			];
-			var selected = foldMode === "turn-fold" ? "turn-fold" : officialMode;
+			// 宿主词表（每次渲染实时读：设置镜像首答到达后会自动纠正选项集）。
+			var vocab = classifyTranscriptVocab(readTranscriptModes(transcriptScopeRef)) || TRANSCRIPT_MODE_VOCAB.v1;
+			// 旧版词表的 normal 在语义上是「不折叠」；新版把它读作 standard（官方映射），
+			// 因此旧存档值到新版要按官方语义归一显示——该值不在当前词表里就按 v2 的
+			// 官方 legacy 映射 normal→standard 处理。
+			var normalized = officialMode === "normal" && vocab.modes.indexOf("normal") === -1 ? "standard" : officialMode;
+			// 官方档选项由词表驱动（含未知词表：官方未来加档也能显示，未登记文案回退英文键名）。
+			var OPTIONS = [];
+			for (var vi = 0; vi < vocab.modes.length; vi++) {
+				var mid = vocab.modes[vi];
+				var keys = TRANSCRIPT_MODE_LABELS[mid];
+				OPTIONS.push({
+					id: mid,
+					label: keys ? _T(keys[0]) : mid,
+					tip: keys ? _T(keys[1]) : mid
+				});
+			}
+			OPTIONS.push({ id: "turn-fold", label: _T("settingsTranscriptTurnFold"), tip: _T("settingsTranscriptTurnFoldTip") });
+			var selected = foldMode === "turn-fold" ? "turn-fold" : normalized;
 			var selectedLabel = OPTIONS[0].label;
 			var selectedTip = OPTIONS[0].tip;
 			for (var oi = 0; oi < OPTIONS.length; oi++) {
@@ -4520,9 +4685,10 @@ window.__ModuleLoader__.load({
 			var selectMode = function (id) {
 				closeMenu();
 				if (id === "turn-fold") {
-					// 插件接管：官方置 normal（避免双重折叠）+ 插件标记 turn-fold
+					// 插件接管：官方置「不折叠」（旧版 normal / 新版 verbose，见词表 foldOff）
+					// + 插件标记 turn-fold，避免与官方折叠双重折叠。
 					setFoldMode("turn-fold");
-					if (officialMode !== "normal") setTranscriptView("normal");
+					if (normalized !== vocab.foldOff) setTranscriptView(vocab.foldOff);
 				} else {
 					setFoldMode("auto");
 					setTranscriptView(id);
@@ -4589,25 +4755,55 @@ window.__ModuleLoader__.load({
 
 		// ---- Cordis 插件入口 ----
 		// 关键：委托渲染内置组件时，内置组件（ToolCallTree 等）依赖由"条目自身
-		// inject 声明"提供的 hook（如 useConnectionGeneration，来自 connection 服务的
-		// generation 可观察源）。我们的条目必须声明同样的 inject，否则手动
-		// createElement 内置组件会因缺少这些 hook 而崩溃，SlotErrorBoundary 会把
-		// 我们的条目"abdicate"（踢出槽位），折叠随即永久失效。
-		exports.inject = ["slots", "connection", "settingsScope"];
+		// inject 声明"提供的 hook（如 useHostInfo，来自 ui-tool 的 tool-call 条目
+		// inject）。我们的条目必须声明同样的 inject，否则手动 createElement 内置
+		// 组件会因缺少这些 hook 而崩溃，SlotErrorBoundary 会把我们的条目
+		// "abdicate"（踢出槽位），折叠随即永久失效。
+		// ⚠️ 绝不把设置服务写进 inject 列表：DSH 0.1.7-rc.1 删除了 ctx.settingsScope
+		// （改为 ctx.configForms），声明不存在的服务会让整个客户端条目永久停在
+		// PENDING —— 不只是插件不生效，0.1.7 的 assertEntriesActive 把 pending 条目
+		// 当启动失败，web 直接打不开。设置行改用运行时探测（见 resolveTranscriptScope）。
+		exports.inject = ["slots", "connection"];
+		/** 解析官方 ui-chat 设置 scope：新版 ctx.configForms.get(ns)，旧版
+		 *  ctx.settingsScope.bind({namespace})。两者快照同形（value/set/subscribe），
+		 *  探测失败（极简宿主/测试环境）返回 null → 不注册设置行，其余功能照常。
+		 *  ctx.get 读服务不需要 inject 声明，因此这里不会把条目拖成 pending。 */
+		function resolveTranscriptScope(ctx) {
+			try {
+				if (ctx.configForms && typeof ctx.configForms.get === "function") {
+					var form = ctx.configForms.get("ui-chat");
+					if (form && typeof form.getSnapshot === "function") {
+						// describe 挂在 configForms 服务上（ConfigForm 实例没有），单独留引用。
+						transcriptDescribeRef = ctx.configForms;
+						return form;
+					}
+				}
+			} catch (e) { /* 新版服务不可用：继续试旧版 */ }
+			try {
+				if (ctx.settingsScope && typeof ctx.settingsScope.bind === "function") {
+					var scope = ctx.settingsScope.bind({ namespace: "ui-chat" });
+					// 旧版 describe 就在 scope 自身；仍记服务引用（readNamespaceView 会两个都试）。
+					transcriptDescribeRef = ctx.settingsScope;
+					return scope;
+				}
+			} catch (e) { /* 旧版服务不可用 */ }
+			return null;
+		}
 		exports.apply = function (ctx) {
 			// 设置 → 对话 → 「回合折叠方式」行：shadow 官方 transcript-view 行（priority:-1）。
-			// 通过 ctx.settingsScope（DSH 服务注入）读写官方 ui-chat 命名空间的 transcriptView 字段。
-			// 旧版/测试环境无 settingsScope 或 slots 时静默跳过。
+			// 经官方 ui-chat 设置 scope 读写 transcriptView（旧版 settingsScope / 新版 configForms）。
+			// 无该服务（旧版更早版本/测试环境）时静默跳过，只不注册设置行。
 			try {
 				var slotsService2 = ctx.slots;
-				if (slotsService2 && ctx.settingsScope && typeof ctx.settingsScope.bind === "function") {
-					var transcriptScope = ctx.settingsScope.bind({ namespace: "ui-chat" });
+				var transcriptScope = slotsService2 ? resolveTranscriptScope(ctx) : null;
+				if (transcriptScope) {
+					transcriptScopeRef = transcriptScope;
 					var settingsRowInject = function () {
 						return {
 							hooks: { transcriptView: transcriptScope },
-							// settingsScope.set 返回 Promise（官方契约）：写入被宿主拒绝
-							// （字段未知/只读/旧版 strip）时不能放任 rejection 外泄成
-							// unhandledrejection——静默吞掉，界面状态仍由订阅值驱动。
+							// set 返回 Promise（官方契约）：写入被宿主拒绝（字段未知/只读/
+							// 旧版 strip）时不能放任 rejection 外泄成 unhandledrejection——
+							// 静默吞掉，界面状态仍由订阅值驱动。
 							setTranscriptView: function (mode) {
 								try {
 									var written = transcriptScope.set("transcriptView", mode);
@@ -4630,7 +4826,7 @@ window.__ModuleLoader__.load({
 						inject: settingsRowInject
 					}, SettingsTranscriptViewRow);
 				}
-			} catch (e) { /* settingsScope 或 slots 不可用：跳过设置行注册 */ }
+			} catch (e) { /* 设置服务或 slots 不可用：跳过设置行注册 */ }
 			// 字段设置弹窗 + 全局 Toast + 悬浮提示：独立 React 根挂在 <body> 上，与折叠渲染无关。
 			// 特性检测（document / react-dom createRoot / ctx.effect）让极简宿主与
 			// 测试环境（mock ctx 无 effect、loader 不提供 react-dom）静默跳过。

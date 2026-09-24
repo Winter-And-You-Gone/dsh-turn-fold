@@ -329,3 +329,77 @@ describe('对话 t 座席兼容（新版 ui-chat \'chat\' 命名空间，防 "me
     for (const r of oursFallback) assert.equal(r.options.locale, 'conversation', '回退 conversation（0.1.1 行为不变）')
   })
 })
+
+// ── DSH 0.1.7 子槽 hook 绑定（tool.call.toolview 的 toolCallArgumentsPartial）──
+// 0.1.7 给 tool.call.toolview 声明了
+//   inject: { hooks: { toolCallArgumentsPartial: bindToolCallArgumentsPartial } }
+// 官方 renderEntry 把这些 factory 用 (standard, hookContext) 绑成 use* props 再交给
+// 组件。本插件自己实现该分发（无 children 声明，拿不到原装 renderSlot），必须照做：
+// file-mutation-row（edit/write）在 preparing 阶段无条件调用
+// useToolCallArgumentsPartial()，缺了会抛错 → 整个 shadow 格 abdicate。
+describe('0.1.7 子槽 hook 绑定（tool.call.toolview）', () => {
+  it('按 inject 面泛化绑定 factory → use<ToolCallArgumentsPartial>，并以 hookContext 缓存', () => {
+    const hooksDef = {
+      toolCallArgumentsPartial: (standard, hookContext) => {
+        return function useToolCallArgumentsPartial() { return `partial:${hookContext.callId}` }
+      },
+    }
+    const injectFace = { hooks: hooksDef }
+    const ctx = { callId: 'call-1' }
+    const bound = T.bindChildSlotHooks(injectFace, ctx)
+    assert.ok(bound, '绑定成功')
+    assert.equal(typeof bound.useToolCallArgumentsPartial, 'function', 'factory 名按标准规则转成 use<Name> prop')
+    assert.equal(bound.useToolCallArgumentsPartial(), 'partial:call-1', '绑定时注入 hookContext')
+    // 同一 (inject 面, hookContext) → 同一对象（props 身份稳定，不破坏 ToolCall 的 memo）
+    const again = T.bindChildSlotHooks(injectFace, ctx)
+    assert.equal(again, bound, '同 hookContext 复用绑定结果')
+    // 不同 hookContext → 各自绑定
+    const other = T.bindChildSlotHooks(injectFace, { callId: 'call-2' })
+    assert.notEqual(other, bound, '不同 hookContext 分别绑定')
+    assert.equal(other.useToolCallArgumentsPartial(), 'partial:call-2')
+  })
+
+  it('无 inject 面 / 非函数成员 / 抛错 → 返回 null（旧版与畸形注册不崩）', () => {
+    assert.equal(T.bindChildSlotHooks(null, {}), null, '无 inject 面')
+    assert.equal(T.bindChildSlotHooks({}, {}), null, 'inject 面无 hooks')
+    assert.equal(T.bindChildSlotHooks({ hooks: {} }, {}), null, 'hooks 为空')
+    assert.equal(T.bindChildSlotHooks({ hooks: { value: 42 } }, {}), null, '非函数成员跳过（无可绑 hook）')
+    const throwing = { hooks: { bad: () => { throw new Error('boom') } } }
+    assert.equal(T.bindChildSlotHooks(throwing, {}), null, 'factory 抛错不外泄')
+  })
+
+  it('renderToolview 给子视图补上 useToolCallArgumentsPartial（0.1.7 真机形态）', () => {
+    // 模拟 0.1.7：tool.call.toolview 声明了 inject.hooks，edit 条目组件消费该 hook。
+    // 走真实 apply 路径（slotsService 由 apply 捕获），再调用导出的 renderToolview。
+    const seen = {}
+    const EditRow = (props) => {
+      seen.hasHook = typeof props.useToolCallArgumentsPartial === 'function'
+      seen.partial = seen.hasHook ? props.useToolCallArgumentsPartial() : undefined
+      seen.phase = props.phase
+      return null
+    }
+    const regs = []
+    const svc = {
+      entries: () => [],
+      entriesOfSlot: (key) => (key === 'tool.call.toolview'
+        ? [{ component: EditRow, options: { key: 'edit' } }]
+        : []),
+      specDynamic: (key) => (key === 'tool.call.toolview'
+        ? { kind: 'keyed', scope: 'session', inject: { hooks: { toolCallArgumentsPartial: (_s, hc) => () => `raw:${hc.callId}` } } }
+        : undefined),
+      inject: (name, factory) => { regs.push(factory()) },
+      register: (options, component) => ({ component, options }),
+    }
+    pluginExports.apply({ inject(deps, cb) { cb({ slots: svc, connection: {} }) } })
+    const kit = { sessionId: 's1', t: (k) => k }
+    const owner = { callId: 'c9', phase: 'preparing' }
+    const el = T.renderToolview(kit, owner, 'edit', null, { callId: 'c9' })
+    assert.ok(el && el.type, 'renderToolview 返回条目元素（非 fallback）')
+    // createElement 只造元素不执行组件：手动以元素自身 props 调用，等价官方渲染期调用。
+    // （mock 的 hook 是普通函数、非真 React hook，可直接调用。）
+    el.type(el.props)
+    assert.equal(seen.hasHook, true, 'edit 行拿到 useToolCallArgumentsPartial（否则 preparing 阶段抛错）')
+    assert.equal(seen.partial, 'raw:c9', 'hook 绑定到本次调用的 hookContext')
+    assert.equal(seen.phase, 'preparing', 'owner props 原样透传')
+  })
+})

@@ -380,3 +380,257 @@ describe('注册异常软降级（异常不外泄，防启动崩溃）', () => {
     assert.ok(!regs.some((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user'), 'user 格条目已降级跳过（占位条缺失，但不影响其余功能）')
   })
 })
+
+// ── DSH 0.1.7-rc.1 设置链路适配 ──
+// 0.1.7 删除了 ctx.settingsScope（改为 ctx.configForms.get(namespace)，快照形状相同），
+// 并把 transcriptView 枚举从 ['normal','compact'] 换成
+// ['compact','standard','detailed','verbose']（官方折叠改由 presentation-policy 的
+// foldCompletedTurns 开关，只有 verbose 为 false）。
+// 因此两件事必须成立：
+//   1) settingsScope 绝不进 exports.inject —— 声明不存在的服务会让条目永久 PENDING，
+//      0.1.7 的 assertEntriesActive 把 pending 当启动失败（web 打不开）。
+//   2) 词表探测正确 → turn-fold 接管写 foldOff（新版 verbose / 旧版 normal），
+//      否则与官方折叠双重折叠。
+describe('DSH 0.1.7 设置链路适配（configForms + transcriptView 四值枚举）', () => {
+  // 0.1.7 官方 ui-chat schema 的序列化 union 形态（schemastery toJSON 实测）
+  function v2Schema(uid = 11) {
+    return {
+      uid,
+      refs: {
+        2: { type: 'const', meta: { required: true }, value: 'compact' },
+        4: { type: 'const', meta: { required: true }, value: 'standard' },
+        6: { type: 'const', meta: { required: true }, value: 'detailed' },
+        8: { type: 'const', meta: { required: true }, value: 'verbose' },
+        10: { type: 'union', meta: { default: 'standard', loose: true }, list: [2, 4, 6, 8] },
+        [uid]: { type: 'object', meta: { default: {} }, dict: { transcriptView: 10 } },
+      },
+    }
+  }
+  // 0.1.7 的 scope：configForms.get('ui-chat') 返回 ConfigForm；describe() 给镜像
+  function makeConfigForm({ transcriptView = 'standard', schema = v2Schema() } = {}) {
+    const value = { transcriptView }
+    const listeners = new Set()
+    const mirror = {
+      status: 'ready',
+      view: { namespaces: [{ ns: 'ui-chat', schema, value: { ...value }, revision: 1 }], writable: true, hasDocument: true },
+      error: null,
+    }
+    return {
+      set(field, v) { value[field] = v; for (const l of [...listeners]) l() },
+      unset(field) { delete value[field]; for (const l of [...listeners]) l() },
+      getSnapshot() { return { status: 'ready', value: { ...value }, writable: true } },
+      subscribe(l) { listeners.add(l); return () => listeners.delete(l) },
+      // 忠实 0.1.7：ConfigForm 实例本身**没有** describe（describe 在 configForms 服务上）。
+      // 词表必须经服务拿到 —— 见 applyV2With 里 configForms.describe 的 mock。
+      _value: value,
+    }
+  }
+  // 0.1.7 的 configForms 服务面：get(ns) + describe()（describe 在这层，不在 form 上）
+  function makeConfigFormsService(formsByNs, describeMirror) {
+    return {
+      get(ns) { return formsByNs[ns] },
+      describe() {
+        return {
+          getSnapshot: () => describeMirror,
+          subscribe: () => () => {},
+          ensure: () => Promise.resolve(),
+        }
+      },
+    }
+  }
+  function makeSlotsSvc() {
+    const regs = []
+    return {
+      regs,
+      svc: {
+        entries: () => [],
+        entriesOfSlot: () => [],
+        inject(name, factory) { regs.push(factory()) },
+        register(options, component) { return { component, options } },
+      },
+    }
+  }
+  // 新版宿主：只有 configForms（无 settingsScope）。
+  // 注意：每个 loadPlugin 实例是独立闭包（各自的 transcriptScopeRef），所以
+  // apply 与渲染必须用同一个实例——pe 传 pluginExports 还是 menuLoaded.exports。
+  function applyV2With(pe, ctxExtra = {}) {
+    const { svc, regs } = makeSlotsSvc()
+    // ctxExtra.form 已是 ConfigForm（旧版词表用例自建 schema）→ 直接使用；
+    // 否则按给定字段造一个新版词表的 form。
+    const form = ctxExtra.form !== undefined && typeof ctxExtra.form.getSnapshot === 'function'
+      ? ctxExtra.form
+      : makeConfigForm(ctxExtra.form)
+    // describe 镜像：词表探测的唯一来源（form 实例上没有 describe）
+    const mirror = {
+      status: 'ready',
+      view: {
+        namespaces: [{ ns: 'ui-chat', schema: ctxExtra.schema ?? v2Schema(), value: { ...form.getSnapshot().value }, revision: 1 }],
+        writable: true,
+        hasDocument: true,
+      },
+      error: null,
+    }
+    pe.apply({
+      slots: svc,
+      configForms: makeConfigFormsService({ 'ui-chat': form }, mirror),
+      inject(deps, cb) { cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } }) },
+    })
+    return { regs, form }
+  }
+  function applyV2(ctxExtra = {}) { return applyV2With(pluginExports, ctxExtra) }
+  function applyV2Menu(ctxExtra = {}) { return applyV2With(menuLoaded.exports, ctxExtra) }
+
+  it('exports.inject 不含 settingsScope（0.1.7 无此服务，声明即 PENDING → 启动失败）', () => {
+    assert.ok(Array.isArray(pluginExports.inject), 'exports.inject 是数组')
+    assert.ok(!pluginExports.inject.includes('settingsScope'), '不得声明已删除的 settingsScope 服务')
+    assert.ok(pluginExports.inject.includes('slots'), 'slots 仍在（shadow 渲染位必需）')
+    assert.ok(pluginExports.inject.includes('connection'), 'connection 仍在（generation hook 必需）')
+  })
+
+  it('仅 configForms（无 settingsScope）→ 仍注册设置行（不再因缺 settingsScope 整块跳过）', () => {
+    const { regs } = applyV2()
+    const row = regs.find((r) => r.options.name === 'settings.general.item' && r.options.id === 'transcript-view')
+    assert.ok(row, '0.1.7 下设置行照常注册')
+    assert.equal(row.options.priority, -1, 'priority=-1 shadow 官方行')
+    const face = row.options.inject()
+    assert.ok(face.hooks.transcriptView, 'inject 提供 transcriptView hook')
+    assert.equal(typeof face.setTranscriptView, 'function', 'inject 提供 setTranscriptView')
+  })
+
+  it('词表探测：新版四值 → 渲染 4 官方档 + Turn-Fold；turn-fold 接管写 verbose', () => {
+    const container = dom.window.document.createElement('div')
+    dom.window.document.body.appendChild(container)
+    const root = createRoot(container)
+    const { form } = applyV2Menu()
+    const written = []
+    TM.setFoldMode('auto')
+    act(() => {
+      root.render(React.createElement(TM.SettingsTranscriptViewRow, {
+        useTranscriptView: (sel) => sel({ value: form.getSnapshot().value }),
+        setTranscriptView: (mode) => { written.push(mode); form.set('transcriptView', mode) },
+      }))
+    })
+    const selector = container.querySelector('.ccg-settings-selector')
+    assert.ok(selector, '选择器渲染')
+    assert.ok(selector.textContent.includes('Standard'), '新版默认 standard 选中（显示 Standard）')
+    act(() => { selector.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    const items = [...container.querySelectorAll('.menu-item')]
+    assert.equal(items.length, 5, '新版选项 = 官方 4 档 + Turn-Fold')
+    const labels = items.map((i) => i.textContent)
+    for (const want of ['Compact', 'Standard', 'Detailed', 'Verbose', 'Turn-Fold']) {
+      assert.ok(labels.some((l) => l.includes(want)), `选项含 ${want}`)
+    }
+    // 选 Turn-Fold → 必须写 foldOff=verbose（新版官方折叠开关；写 standard 会双重折叠）
+    const turnFoldItem = items[items.length - 1]
+    act(() => { turnFoldItem.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    assert.deepEqual(written, ['verbose'], 'turn-fold 接管写 verbose（而非 standard/compact）')
+    assert.equal(TM.getFoldMode(), 'turn-fold', 'foldMode 标记为 turn-fold')
+    // 再选官方 Detailed → foldMode 回 auto + 写 detailed
+    act(() => { selector.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    const items2 = [...container.querySelectorAll('.menu-item')]
+    const detailed = items2.find((i) => i.textContent.includes('Detailed'))
+    act(() => { detailed.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    assert.deepEqual(written, ['verbose', 'detailed'], '选官方档写该档值')
+    assert.equal(TM.getFoldMode(), 'auto', '选官方档 → 插件退出接管（auto）')
+    act(() => { root.unmount() })
+    dom.window.document.body.removeChild(container)
+  })
+
+  it('旧存档值 normal 在新版词表下归一显示为 Standard（官方 legacy 映射）', () => {
+    const container = dom.window.document.createElement('div')
+    dom.window.document.body.appendChild(container)
+    const root = createRoot(container)
+    const { form } = applyV2Menu({ form: { transcriptView: 'normal' } })
+    TM.setFoldMode('auto')
+    act(() => {
+      root.render(React.createElement(TM.SettingsTranscriptViewRow, {
+        useTranscriptView: (sel) => sel({ value: form.getSnapshot().value }),
+        setTranscriptView: () => {},
+      }))
+    })
+    const selector = container.querySelector('.ccg-settings-selector')
+    assert.ok(selector.textContent.includes('Standard'),
+      '旧存档 normal 在新版按官方映射显示为 Standard（不是字面量 normal）')
+    act(() => { root.unmount() })
+    dom.window.document.body.removeChild(container)
+  })
+
+  it('旧版词表（normal/compact）→ 渲染 2 官方档 + Turn-Fold（历史行为不变）', () => {
+    const container = dom.window.document.createElement('div')
+    dom.window.document.body.appendChild(container)
+    const root = createRoot(container)
+    // 旧版 schema：union(normal, compact)
+    const legacySchema = {
+      uid: 7,
+      refs: {
+        2: { type: 'const', meta: { required: true }, value: 'normal' },
+        4: { type: 'const', meta: { required: true }, value: 'compact' },
+        6: { type: 'union', meta: { default: 'compact' }, list: [2, 4] },
+        7: { type: 'object', meta: { default: {} }, dict: { transcriptView: 6 } },
+      },
+    }
+    const form = makeConfigForm({ transcriptView: 'normal' })
+    // 用 menuLoaded 实例 apply + 渲染（同一闭包，transcriptScopeRef 才可见）。
+    // 词表来自 describe 镜像的 schema → 传 legacySchema 模拟旧宿主。
+    applyV2Menu({ form, schema: legacySchema })
+    TM.setFoldMode('auto')
+    act(() => {
+      root.render(React.createElement(TM.SettingsTranscriptViewRow, {
+        useTranscriptView: (sel) => sel({ value: form.getSnapshot().value }),
+        setTranscriptView: () => {},
+      }))
+    })
+    const selector = container.querySelector('.ccg-settings-selector')
+    assert.ok(selector.textContent.includes('Normal'), '旧版显示 Normal 选中')
+    act(() => { selector.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    const items = [...container.querySelectorAll('.menu-item')]
+    assert.equal(items.length, 3, '旧版选项 = Normal / Compact / Turn-Fold（3 个）')
+    act(() => { root.unmount() })
+    dom.window.document.body.removeChild(container)
+  })
+
+  it('未知/未来词表 → 选项由词表驱动（未登记档也能显示，不崩）', () => {
+    const container = dom.window.document.createElement('div')
+    dom.window.document.body.appendChild(container)
+    const root = createRoot(container)
+    // 假设官方未来加了第五档 'ultra'
+    const futureSchema = {
+      uid: 21,
+      refs: {
+        2: { type: 'const', meta: { required: true }, value: 'compact' },
+        4: { type: 'const', meta: { required: true }, value: 'standard' },
+        6: { type: 'const', meta: { required: true }, value: 'ultra' },
+        8: { type: 'union', meta: { default: 'standard' }, list: [2, 4, 6] },
+        21: { type: 'object', meta: { default: {} }, dict: { transcriptView: 8 } },
+      },
+    }
+    const form = makeConfigForm({ transcriptView: 'ultra' })
+    applyV2Menu({ form, schema: futureSchema })
+    TM.setFoldMode('auto')
+    act(() => {
+      root.render(React.createElement(TM.SettingsTranscriptViewRow, {
+        useTranscriptView: (sel) => sel({ value: form.getSnapshot().value }),
+        setTranscriptView: () => {},
+      }))
+    })
+    const selector = container.querySelector('.ccg-settings-selector')
+    assert.ok(selector.textContent.includes('ultra'), '未登记档回退显示 id 本身（不崩、不空白）')
+    act(() => { selector.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    const items = [...container.querySelectorAll('.menu-item')]
+    assert.equal(items.length, 4, '官方 3 档（含未知 ultra）+ Turn-Fold')
+    act(() => { root.unmount() })
+    dom.window.document.body.removeChild(container)
+  })
+
+  it('无任何设置服务（极简宿主）→ apply 不抛错、不注册设置行，其余功能照常', () => {
+    const { svc, regs } = makeSlotsSvc()
+    assert.doesNotThrow(() => {
+      pluginExports.apply({
+        slots: svc,
+        inject(deps, cb) { cb({ slots: svc, connection: {} }) },
+      })
+    }, '无设置服务时不抛错')
+    assert.equal(regs.filter((r) => r.options.name === 'settings.general.item').length, 0, '不注册设置行')
+    assert.ok(regs.some((r) => r.options.key === 'tool-call'), 'chat.node 三格照常注册（不因缺设置服务整块降级）')
+  })
+})
