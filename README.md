@@ -389,9 +389,11 @@ git push --follow-tags
 
 ## 注意事项
 
-- 兼容 DSH 0.1.1-rc.2 ~ 0.1.7-rc.1（会话快照契约差异由插件内适配层消化、官方
-  渲染 hook 面自动跟随，见工作原理；0.1.5-rc.1、0.1.6-alpha.1 与 0.1.7-rc.1 上均已
-  逐条核对槽位/快照/设置行/节点数据契约）。DSH 升级若改变上述槽位契约或内置组件
+- 兼容 DSH 0.1.1-rc.2 ~ 0.1.7-rc.2（会话快照契约差异由插件内适配层消化、官方
+  渲染 hook 面自动跟随，见工作原理；0.1.5-rc.1、0.1.6-alpha.1、0.1.7-rc.1 与 0.1.7-rc.2
+  上均已逐条核对槽位/快照/设置行/节点数据契约——0.1.7-rc.1 为真机验证，0.1.7-rc.2 为
+  逐包契约 diff 复核：直接依赖的 ui-slots/ui-renderer/client-modules/boot 审计零改动，
+  ui-chat/ui-tool/ui-primitives 的变化全部为附加性）。DSH 升级若改变上述槽位契约或内置组件
   props，本插件可能需要随版本小改（属插件维护，非改源码）。
   - **0.1.7 起设置服务改名**：`ctx.settingsScope` → `ctx.configForms`（快照形状不变）。
     插件改为运行时探测（先试 `configForms.get('ui-chat')`，再回退 `settingsScope.bind`），
@@ -402,9 +404,9 @@ git push --follow-tags
     `compact/standard/detailed/verbose`，官方折叠改由 presentation-policy 的
     `foldCompletedTurns` 开关（只有 `verbose` 为 false）。插件按宿主实际词表渲染选项，
     接管时写 `verbose`（旧版写 `normal`），避免与官方双重折叠。
-- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.1-rc.2 <=0.1.7-rc.1`
+- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.1-rc.2 <=0.1.7-rc.2`
   —— 插件市场（dshmarket）读 npm `latest` manifest 的这个字段，在插件卡片上显示
-  `DSH >=0.1.1-rc.2 <=0.1.7-rc.1`，并在**更新**前拦下确定不满足的版本（undeclared/未知
+  `DSH >=0.1.1-rc.2 <=0.1.7-rc.2`，并在**更新**前拦下确定不满足的版本（undeclared/未知
   一律放行；DSH 本体不读该字段，不影响加载）。区间是**闭区间**、锁到已核验的宿主版本：
   每次 DSH 升级后重新核对契约，再抬上限并随新版本发布。
 - 折叠栏文案在 `client.js` 顶部 `CONFIG` 可调。
