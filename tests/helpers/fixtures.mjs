@@ -1,137 +1,145 @@
-// 真实会话结构 fixtures。提取自 session 898a7246 turn 13 和当前会话 turn 3。
-// 这些结构用于数据驱动回归测试 · 确保插件逻辑对真实会话行为正确。
-// 来源：.dsh/sessions/--X-DeepSeek~0020Harness--/session-898a7246-.../session.jsonl.zstd
-
-import { makeNode, toolNode, asNode, userNode, tailNode, contextNode, buildSnapshot } from './store.mjs'
-
-// ──────────────── turn 13 of session 898a7246（PATH 修复 · 22m35s · 4 个工具调用）───────────────
-// 用户消息 "撤销" (seq 35277) · 然后是 4 个 pwsh 步骤 + 1 个最终总结。
-// 步骤 1: as → tool (Revert); 步骤 2: as → tool (Check); 步骤 3: as → tool (Restore);
-// 步骤 4: as → tool (Verify); 步骤 5: as (final summary)
-// 来源：session-898a7246 seq 35272–38330
-const T13_NODES = [
-  userNode('u-35277', 35277),
-  asNode('as-1', 35764, { step: 1, usage: { inputTokens: 10970, outputTokens: 904, cacheReadTokens: 76544 } }),
-  toolNode('tc-revert', 35765, { step: 1, isError: false }),
-  asNode('as-2', 36359, { step: 2, usage: { inputTokens: 2000, outputTokens: 500, cacheReadTokens: 50000 } }),
-  toolNode('tc-check', 36360, { step: 2, isError: false }),
-  asNode('as-3', 36822, { step: 3, usage: { inputTokens: 3000, outputTokens: 600, cacheReadTokens: 60000 } }),
-  toolNode('tc-restore', 36823, { step: 3, isError: false }),
-  asNode('as-4', 37743, { step: 4, usage: { inputTokens: 4000, outputTokens: 700, cacheReadTokens: 70000 } }),
-  toolNode('tc-verify', 37744, { step: 4, isError: false }),
-  asNode('as-5', 38326, { step: 5, status: 'settled', usage: { inputTokens: 2095, outputTokens: 569, cacheReadTokens: 88320 } }),
-  tailNode('tail-13', 38330, { tokensPerSecond: 144, ttftMs: 4900 }),
-]
-export const TURN13 = buildSnapshot(T13_NODES, {
-  turnEnds: new Map([[13, 38330]]),
-  turnTimings: new Map([[13, { startTime: 1787394826374, endTime: 1787396180925 }]]),
-})
-export const TURN13_NODES = T13_NODES
-// 手动核算（与 computeTurnMetrics 的公式一致）：
-// input = 10970+2000+3000+4000+2095 = 22065；cacheRead = 76544+50000+60000+70000+88320 = 344864
-// billedInput = 22065+344864 = 366929；output = 904+500+600+700+569 = 3273
-// tokens = billedInput + output = 370202
-// cacheHitPercent = round(344864 / 366929 * 100) = 94
-// durationMs = 1787396180925 - 1787394826374 = 1354551 → "22分34秒"
-export const TURN13_METRICS = { durationMs: 1354551, ttftMs: 4900, tokens: 370202, outputTokens: 3273, tokensPerSecond: 144, cacheHitPercent: '93.99' }
-export const TURN13_LABEL = '耗时22分34秒 · 首字4.9s · 消耗370202token · 144tok/s · 缓存命中93.99%'
-
-// ──────────────── turn 11 of session 898a7246（调试 · 34s · 3 个工具调用）───────────────
-// 用户消息 "继续" (seq 31135) · 然后是 3 个步骤 + 1 个最终总结。
-// 步骤 1: as → read; 步骤 2: as → grep; 步骤 3: as → read; 步骤 4: as (final)
-const T11_NODES = [
-  userNode('u-31135', 31135),
-  asNode('as-11-1', 31624, { step: 1, usage: { inputTokens: 5000, outputTokens: 200, cacheReadTokens: 20000 } }),
-  toolNode('tc-read', 31625, { step: 1 }),
-  asNode('as-11-2', 32594, { step: 2, usage: { inputTokens: 3000, outputTokens: 150, cacheReadTokens: 15000 } }),
-  toolNode('tc-grep', 32595, { step: 2 }),
-  asNode('as-11-3', 32663, { step: 3, usage: { inputTokens: 2000, outputTokens: 100, cacheReadTokens: 10000 } }),
-  toolNode('tc-read2', 32664, { step: 3 }),
-  asNode('as-11-4', 33988, { step: 4, usage: { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 5000 } }),
-  tailNode('tail-11', 33989, { tokensPerSecond: 142 }),
-]
-export const TURN11 = buildSnapshot(T11_NODES, {
-  turnEnds: new Map([[11, 33989]]),
-  turnTimings: new Map([[11, { startTime: 1787394570026, endTime: 1787394600026 }]]),
-})
-
-// ──────────────── 无工具调用的回合（仅上下文注入 + Think）───────────────
-// 验证"无工具调用也折叠"功能（v0.2.3）
-const NO_TOOL_NODES = [
-  userNode('u-100', 100),
-  contextNode('ctx-skills', 105),
-  asNode('as-nt-1', 200, { step: 1 }),
-  asNode('as-nt-2', 300, { step: 2, status: 'settled', usage: { inputTokens: 500, outputTokens: 100, cacheReadTokens: 0 } }),
-  tailNode('tail-nt', 400),
-]
-export const NO_TOOL = buildSnapshot(NO_TOOL_NODES, {
-  turnEnds: new Map([[13, 400]]),
-  turnTimings: new Map([[13, { startTime: 0, endTime: 30000 }]]),
-})
-
-// ──────────────── outsideScope 场景：上下文注入在用户消息之前 ────────────────
-// ctx-approval (seq 15) 在 user (seq 16) 之前 → ctx 不参与折叠
-const OUTSIDE_NODES = [
-  contextNode('ctx-approval', 15, { data: { seq: 15, source: { kind: 'plugin' } } }),
-  userNode('u-16', 16),
-  asNode('as-o-1', 130, { step: 1 }),
-  toolNode('tc-o-1', 131, { step: 1 }),
-  asNode('as-o-2', 300, { step: 2, status: 'settled', usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0 } }),
-  tailNode('tail-o', 400),
-]
-export const OUTSIDE_SCOPE = buildSnapshot(OUTSIDE_NODES, {
-  turnEnds: new Map([[13, 400]]),
-  turnTimings: new Map([[13, { startTime: 0, endTime: 10000 }]]),
-})
-
-// ──────────────── 两个用户消息（中间有上下文注入）───────────────
-// 验证 headerKey 取最后一个 user 之后的第一条中间节点
-const TWO_USERS_NODES = [
-  userNode('u-a', 200),
-  contextNode('ctx-mid', 201, { data: { seq: 201, source: { kind: 'plugin' } } }),
-  userNode('u-b', 202),
-  asNode('as-2u-1', 203, { step: 1 }),
-  toolNode('tc-2u-1', 204, { step: 1 }),
-  asNode('as-2u-2', 205, { step: 2, status: 'settled', usage: { inputTokens: 50, outputTokens: 10, cacheReadTokens: 0 } }),
-  tailNode('tail-2u', 300),
-]
-export const TWO_USERS = buildSnapshot(TWO_USERS_NODES, {
-  turnEnds: new Map([[13, 300]]),
-  turnTimings: new Map([[13, { startTime: 0, endTime: 5000 }]]),
-})
-
-// ──────────────── issue #2：中途 steering 被宿主归类为 user ────────────────
-// 运行中用户插话（steering）时，宿主可能把它归类为 user 而非 steering：窗口截断
-// 导致 inbox 认领批次重建不全（session-controller 只在 user/message 处切页，认领
-// splice 在窗口内、入队 splice 在窗口外）就会发生，且此后不再重算。这类节点的
-// anchorSeq 比本回合所有中间节点都大 —— 旧算法取"回合内全部 user 的最大 anchorSeq"
-// 当右边界，边界越过全部中间节点 → headerKey 恒为 null → 回合折叠栏消失（段栏仍在）。
+// turn-process 渲染器测试 fixtures：按 DSH 官方契约（ui-chat contract/slots.ts、
+// contract/chat-nodes.ts、contract/turn-process.ts、ui-conversation conversation.ts）
+// 构造最小 props——EnhancedTurnProcessView 只消费 node / turnProcess / useChat。
 //
-// 关键形状：该 user 必须是**回合内最后一个节点**（插话后尚无后续中间节点，即回合
-// 正在等待下一步）。此时 headerKey 与 finalAssistantKey 双 null → foldable=false
-// → 该回合的回合栏消失。若它之后还有中间节点，旧算法会退回用那个节点当折叠栏、
-// 掩盖问题（因此下面的 fixture 刻意让误判 user 收尾）。
-const MID_STEER_NODES = [
-  userNode('u-100', 100),
-  asNode('as-ms-1', 200, { step: 1 }),
-  toolNode('tc-ms-1', 300, { step: 1 }),
-  userNode('u-mis-400', 400),
-]
-export const MID_STEER = buildSnapshot(MID_STEER_NODES, {
-  turnEnds: new Map(),
-  turnTimings: new Map([[13, { startTime: 0 }]]),
-})
+// 官方数据面：
+//   node: ChatNode<'turn-process'> = { key, kind:'turn-process', data: TurnProcessChatData,
+//                                       location: { kind:'turn', turn: TurnLocation } }
+//   TurnLocation = { turn, start:{time}, end:{time, data:{reason:{kind}}}, status,
+//                    steps: StepLocation[]（每步 data.get('assistant-step')）,
+//                    data: ConversationLocationDataStore（get('turn-process'/'turn-tail')） }
+//   turnProcess: TurnProcessOwnerProps = { spec, foldable, hasContent, open, setOpen }
+//   useChat: SessionStandardProps 合并成员 —— (selector) => selector(snapshot)
 
-// 同结构但插话之后又有中间节点：旧算法会退回该节点当折叠栏（掩盖问题），
-// 用于确认修复后折叠栏锚定在首条中间节点而非"退回兜底"。
-const MID_STEER_FOLLOWED_NODES = [
-  userNode('u-100f', 100),
-  asNode('as-msf-1', 200, { step: 1 }),
-  toolNode('tc-msf-1', 300, { step: 1 }),
-  userNode('u-mis-400f', 400),
-  toolNode('tc-msf-2', 500, { step: 2 }),
+/** 数值参照（沿用旧版 TURN13 的手工核算：4+1 步 · 22m34s · 370,202 token）。 */
+export const T0 = 1787394826374
+export const T1 = 1787396180925
+export const TURN13_USAGE_STEPS = [
+  { inputTokens: 10970, outputTokens: 904, cacheReadTokens: 76544 },
+  { inputTokens: 2000, outputTokens: 500, cacheReadTokens: 50000 },
+  { inputTokens: 3000, outputTokens: 600, cacheReadTokens: 60000 },
+  { inputTokens: 4000, outputTokens: 700, cacheReadTokens: 70000 },
+  { inputTokens: 2095, outputTokens: 569, cacheReadTokens: 88320 },
 ]
-export const MID_STEER_FOLLOWED = buildSnapshot(MID_STEER_FOLLOWED_NODES, {
-  turnEnds: new Map(),
-  turnTimings: new Map([[13, { startTime: 0 }]]),
-})
+// 手工核算：input=22065 · cacheRead=344864 · billedInput=366929 · output=3273
+// tokens=370202 · cacheHit=344864/366929=93.99 · duration=1354551ms
+export const TURN13_EXPECT = {
+  durationMs: 1354551,
+  tokens: 370202,
+  outputTokens: 3273,
+  cacheHitPercent: '93.99',
+}
+
+/** step data store：官方 ConversationLocationDataStore 的最小形状。 */
+export function stepDataStore(value) {
+  return { get: (key) => (key === 'assistant-step' ? value : undefined) }
+}
+
+/** turn data store：官方 ConversationLocationDataStore 的最小形状。 */
+export function turnDataStore({ spec, tail } = {}) {
+  return {
+    get: (key) => {
+      if (key === 'turn-process') return spec
+      if (key === 'turn-tail') return tail
+      return undefined
+    },
+  }
+}
+
+/** 一个已 settle 的 assistant-step 数据（usage + finalNode.timing，官方形状）。 */
+export function makeStepData(step, { usage, timing } = {}) {
+  return {
+    turn: 13,
+    step,
+    status: 'settled',
+    usage,
+    finalNode: timing
+      ? { step, timing: { stepStartTime: timing.stepStartTime, firstTokenTime: timing.firstTokenTime, completedTime: timing.completedTime ?? T1 } }
+      : undefined,
+  }
+}
+
+/** StepLocation 最小形状。 */
+export function makeStep(step, data) {
+  return { turn: 13, step, data: stepDataStore(data) }
+}
+
+/**
+ * 构造 turn-process 节点（含完整 TurnLocation）。
+ * @param {object} opts
+ * @param {'open'|'closed'|'unknown'} [opts.status]
+ * @param {number} [opts.startTime] - turn/start 墙钟
+ * @param {number} [opts.endTime] - turn/end 墙钟
+ * @param {string} [opts.reason] - turn/end reason.kind
+ * @param {Array} [opts.steps] - StepLocation[]
+ * @param {object} [opts.spec] - TurnProcessSpec（turn data store）
+ * @param {object} [opts.tail] - TurnTailChatData（turn data store）
+ * @param {object} [opts.data] - 直接覆盖 TurnProcessChatData
+ */
+export function makeTurnNode(opts = {}) {
+  const {
+    status = 'closed',
+    startTime = T0,
+    endTime = T1,
+    reason = 'completed',
+    steps = [],
+    spec,
+    tail,
+    data,
+  } = opts
+  const turn = {
+    turn: 13,
+    status,
+    start: startTime === null ? undefined : { time: startTime },
+    end: status === 'closed' && endTime !== null
+      ? { time: endTime, data: { reason: { kind: reason } } }
+      : undefined,
+    steps,
+    data: turnDataStore({ spec, tail }),
+  }
+  return {
+    key: 'turn-process:13',
+    kind: 'turn-process',
+    data: data ?? {
+      turn: 13,
+      controlAnchorSeq: 100,
+      processStartSeq: 100,
+      answerAnchorSeq: 200,
+      answerStep: 5,
+      inlineReasoning: false,
+      messageCount: 1,
+      toolCallCount: 4,
+      subagentCount: 0,
+    },
+    location: { kind: 'turn', turn },
+  }
+}
+
+/** TurnProcessOwnerProps mock（官方 ChatNodeSeat 构建的 owner state）。 */
+export function makeTurnProcessOwner(overrides = {}) {
+  const setOpen = overrides.setOpen ?? (() => {})
+  return {
+    spec: overrides.spec ?? {
+      turn: 13, controlAnchorSeq: 100, processStartSeq: 100,
+      answerAnchorSeq: 200, answerStep: 5, inlineReasoning: false,
+      messageCount: 1, toolCallCount: 4, subagentCount: 0,
+    },
+    foldable: overrides.foldable ?? true,
+    hasContent: overrides.hasContent ?? true,
+    open: overrides.open ?? false,
+    setOpen,
+  }
+}
+
+/** useChat mock：SessionStandardProps 的 useChat（selector 直读快照）。 */
+export function makeUseChat(snapshot = {}) {
+  return (selector) => selector(snapshot)
+}
+
+/** 官方聚合 tokenUsage（turn-tail 携带，deriveTurnTokenUsage 形状）。 */
+export const OFFICIAL_TOKEN_USAGE = {
+  uncachedInputTokens: 22065,
+  outputTokens: 3273,
+  totalTokens: 370202,
+  cacheReadTokens: 344864,
+}

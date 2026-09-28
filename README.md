@@ -2,179 +2,99 @@
 
 > **简体中文**（默认） | [English](README.en.md)
 
-> 受够了几十条工具调用占满屏幕？
-> 也眼馋隔壁 Codex 的自动折叠？
-> 那这个插件就是为你准备的。
+> DeepSeek Harness（DSH）原生折叠 + 扑克牌视觉 + 回合性能指标。
 
-DeepSeek Harness（DSH）**纯插件**，只负责**折叠**：
-1. **步骤分组自动折叠**：两个 text 之间的所有工具调用和 Think（含纯 Think 段）收成**一个步骤折叠栏**，**默认折叠**；运行中步骤折叠栏动态显示「正在运行 `图标 工具名` · 描述 / 正在思考 `图标 Think` · 内容」（文字带 shimmer 光泽动效），下一个 text 出现后按工具类型分组显示详细标题（如「运行了pwsh」「读取了client.js」「编辑了index.js [ +12 -3 ]」），纯 Think 段闭合后显示「思考了N次」。
-2. **运行中回合折叠栏**：**发消息即出现**（0 秒占位，不等第一个 response），折叠栏实时显示耗时/首字/消耗token/tok/s/缓存命中率/待折叠步数，最右侧右对齐显示「第x轮」；折叠栏与内容之间有分隔线。
-3. **整回合折叠**：一轮回复完成后自动收成**一个回合折叠栏**（默认收起），最终总结只显示正文。
-4. **手动展开/收起**：点击折叠栏切换。
+**DSH 原生负责全部折叠语义**（分组、成员归属、展开/收起状态、分页、搜索显隐、历史状态），
+本插件在官方折叠引擎之上做**纯 UI 增强**：
+
+1. **增强回合栏（Enhanced Turn Process Bar）**：替换官方 `turn-process` 渲染器，
+   提供比官方更丰富的回合栏——扑克牌前导图标、耗时、首字（TTFT）、token、tok/s、
+   缓存命中率、右对齐轮次「第x轮」、非正常结束状态词（已停止 / 运行失败 / 已中断）。
+   折叠状态**完全来自官方**（`turnProcess.open / setOpen / foldable / hasContent`），
+   点击回合栏只调用 `turnProcess.setOpen()`，成员的隐藏/显示由官方 seat 完成；
+2. **运行中状态条（Running Turn Bar）**：回合开始（`turn/start` 投影）即出现——
+   官方渲染器此时什么都不渲染，插件补上这根状态条：耗时从 0 秒起步实时走动，
+   token / tok/s / 缓存命中率随真实数据到达而更新。它只是**状态表面**：不维护任何
+   折叠状态、不隐藏任何成员；回合结束后平滑交接为完整的收起态回合栏；
+3. **Step 扑克牌皮（Poker Step Skin）**：官方步骤分组栏（`ChatGroupSeat` /
+   `ProcessGroupHeader`）原样保留，插件通过官方 DOM 钩子
+   （`data-step-process-icon` / `data-process-activity`）做一层**纯 CSS** 的扑克牌换装，
+   花色按官方活动类型语义映射（♥ 思考/提问 · ♠ 读取/搜索 · ♦ 编辑/写入 · ♣ 命令/代码 ·
+   🐋鲸鱼 编排/计划/子代理）。软依赖：钩子失效时皮消失、官方图标与折叠原样保留；
+4. **真实指标承诺**：全部数值来自官方真实数据（`TurnLocation.start/end`、step 的
+   `usage` 与 `finalNode.timing`、turn-tail 的官方聚合 `tokenUsage`）。**没有伪造增长**——
+   旧版的 +1/+11 动画偏移已删除：真实数据变化时数字才滚动，真实数据不变时数字不变；
+5. **插件设置**：回合栏字段显隐（耗时/首字/Token/tok/s/缓存命中）、前导图标风格
+   （扑克牌 / 官方图标）、Step 皮（扑克 / 官方图标），持久化到
+   `localStorage['dsh-turn-fold:settings']`。**与官方 transcriptView 完全解耦**——
+   官方 Compact / Standard / Detailed / Verbose 四档照常工作，插件只增强其 UI。
 
 **不修改任何 `@deepseek-ai/dsh-*` 源码。**
 
-## 功能一：步骤分组自动折叠
+## 职责边界
+
+| 归属 | 内容 |
+| --- | --- |
+| **DSH owns** | grouping · membership · disclosure（何时折叠/是否展开）· paging · search reveal · history state · Step 分组栏与其标题（正在读取…/已读取… 等官方语义） |
+| **dsh-turn-fold owns** | 增强回合栏 · 运行中回合状态条 · 扑克牌视觉 · 指标呈现 · 动画 · 插件设置 |
+
+## 回合栏形态
 
 ```
-text：先看仓库状态和改动规模：                        ← text 直接显示
-┌────────────────────────────────────────────────────┐
-│ › 正在运行 ⬢ Pwsh · Commit 1: core +tests          │  ← 运行中：图标 + 工具名 + 参数摘要
-└────────────────────────────────────────────────────┘
-text：……                                             ← 下一个 text 出现
-┌────────────────────────────────────────────────────┐
-│ › 编辑了client.js [ +7 -7 ] 运行了2条命令           │  ← 段闭合：按工具类型分组显示
-└────────────────────────────────────────────────────┘
+运行中（turn/start → turn/end）：
+  [翻牌动画] 耗时0秒 · 第13轮                              ← 0 秒即出现，纯状态条
+  ────────────────────────────────────────
+  [官方过程内容逐条加载…（官方 liveProcess 语义，始终展开）]
+
+  [翻牌动画] 耗时13秒 · 首字0.8s · 3,214 token · 247tok/s   ← 真实数据到达即更新
+  ────────────────────────────────────────
+
+回合结束（默认收起，点击展开）：
+  [牌堆/扇形] 耗时22分34秒 · 首字4.9s · 370,202 token · 2.4tok/s · 缓存93.99%   第13轮
+  ────────────────────────────────────────
+  [最终总结正文（官方渲染）]
+
+失败/中止：
+  [牌堆] 运行失败 · 48秒 · 7,812 token · 28tok/s           第13轮
+  [牌堆] 已停止 · 21秒 · 3,201 token                        第13轮
 ```
 
-- **段 = 两个 text 之间的内容**：连续的工具调用与 Think 混排成一段（Think 不再打断分组），
-  含 text 的消息是段边界；**text 正文始终在步骤折叠栏下方直接显示**（官方渲染，唯一一份，
-  不参与折叠——DSH 把 think 和 text 放在同一节点，think 部分收进段、text 部分留在段外）。
-- **默认折叠**：步骤折叠栏**始终默认收起**（运行中也不例外）——运行中只显示 text 和步骤折叠栏行，
-  工具卡片/Think 内容点击步骤折叠栏才展开。
-- **运行中动态标题**：段未闭合（下一个 text 还没出现）时，步骤折叠栏显示段内最后一个节点——
-  工具调用显示「正在运行 `图标 工具名` · 参数摘要」（工具图标复用官方 VARIANT_ICONS 映射，
-  如 Pwsh → API 图标、Read → 浏览图标、Grep → 搜索图标），
-  Think 显示「正在思考 `图标` Think · 最新一行」（前缀 + 官方 Think 图标 + 摘要，摘要取
-  最新一行、横向自动滚动跟随末尾，内容随流式逐字推进）；运行中标题文字带**shimmer 光泽
-  扫过动画**（灰色基调 + 高光流动，节奏为流动 1.8s + 停顿 2s，亮/暗主题各自配色）。
-- **段闭合标题（按工具类型分组）**：下一个 text 出现后，按段内工具类型分组显示——
-  仅命令：`运行了pwsh`（单次显示工具名）/ `运行了3条命令`（多次显示次数）；
-  仅读取：`读取了client.js`（同一文件显示文件名）/ `读取了2份文件`（多文件显示数量）；
-  仅编辑：`编辑了index.js [ +12 -3 ]`（单文件附加行数变更，从官方 diffs 数据读取）/
-  `编辑了3份文件`；搜索：`搜索了2次`；
-  混合时按「读取 → 编辑 → 搜索 → 命令」排序且**命令始终在最后**，
-  如 `读取了client.js 编辑了App.tsx 运行了2条命令`；纯 Think 段（段内无工具）闭合后显示
-  「思考了N次」（N = 段内 Think 次数）。
-- **手动可展开/收起**：点击步骤折叠栏切换；手动选择会覆盖自动规则。
-- **失败命令标红**：组内已有命令**执行失败**（工具结果 `isError`，含中断）时，折叠栏文字变红，
-  并在标题后追加失败数——仅单条工具调用失败显示「 —— 执行失败」（无条数），
-  多条工具调用时 1 条失败也显示「 —— 1条执行失败」、多条显示「 —— y条执行失败」。
-  失败统计涵盖段内**所有**工具类型（read/edit/search/命令都算）。
+- **指标来源（全部官方真实数据）**：
+  - 耗时：`TurnLocation.start.time → end.time`（运行中用实时时钟补足）；
+  - 首字（TTFT）：第一个请求 settle 后读官方 `finalNode.timing`
+    （`firstTokenTime - stepStartTime`，与官方统计同款语义）；
+  - Token / 缓存命中：回合结束后优先 turn-tail 的官方聚合 `tokenUsage`
+    （`deriveTurnTokenUsage` 折叠全部计费 attempt，含被重试请求；缓存分母 = prompt 侧
+    总量），运行中/缺失时按 step usage 累加（官方 step data store 与节点可见性无关，
+    隐藏纯工具步骤同样计入）；
+  - tok/s：真实输出 token / 真实耗时（耗时 ≥1s 才显示，避免开场瞬时速率）。
+- **滚轮数字动画**：运行中数值变化时逐位滚动（里程表效果，回弹缓动）；完整文案有
+  sr-only 副本（读屏无障碍）；系统「减少动态效果」时自动退化为静态数字。
+- **回合栏下常驻分隔线**（`--dsw-alias-line-secondary` token 链式回退，随主题适配）。
+- **无障碍**：`aria-expanded` / `aria-label`，键盘可操作（Enter / Space）；不可折叠的
+  回合（如 Verbose 官方语义、中止/失败回合）呈现为静态栏。
+- **四个官方 transcript 档位全兼容**：Compact / Standard / Detailed / Verbose 下回合栏
+  都正常渲染；`foldable=false`（如 Verbose）与分页加载中（`turn/start` 未在窗口内，
+  官方本就不渲染控制条）时优雅降级。
 
-### 效果示意
+## Step 扑克牌皮
 
-段闭合标题：按工具类型汇总 + 编辑行数统计（`[ +11 -11 ]`，悬停括号 +N 变绿 / -N 变红）：
+官方步骤分组栏（含官方标题语义「正在读取…」「已读取 3 个文件」「正在思考…」、官方
+shimmer、官方分页与搜索显隐）原样工作，插件只换装：
 
-![段折叠栏：编辑了 client.js [ +11 -11 ]](docs/images/segment-edit-stats.png)
-
-标题里的文件名可点击复制完整路径：悬停变 DeepSeek 蓝 + 白色下划实线：
-
-![文件名悬停](docs/images/segment-file-hover.png)
-
-## 功能二：运行中回合折叠栏 + 整回合折叠成一个回合折叠栏
-
-```
-[用户消息]
-[▸ 耗时5分12秒 · 首字1.2s · 消耗12345token · 34tok/s · 缓存命中80.00% · 待折叠6步        第13轮]  ← 回复开始即出现的回合折叠栏
-─────────────────────────────────────────────          ← 分隔线
-[Think / 工具调用逐条加载…]                             ← 运行中默认折叠成步骤折叠栏
-[最终总结正文]                                           ← 无 Think 行，只有正文
-[耗时 · token 脚注]                                      ← 官方 turn-tail
-```
-
-- **发消息即出现回合折叠栏（0 秒占位）**：用户发送消息后立即出现回合折叠栏（耗时从 0 开始计时），
-  不等第一个 response——占位栏渲染在 user 消息正下方（官方「状态描述」行
-  "Deep diving..." 之上，与正式回合折叠栏同位置、交接无位移），第一条中间节点到达后
-  占位消失、正式回合折叠栏接替显示；
-- **指标实时更新**：回合折叠栏中的**耗时秒数每秒走动**（从回合 `turn/start` 起计时），
-  **"消耗token"按随机间隔（默认 125~250ms）刷新且持续增长**，tok/s 按已输出 token / 已耗时实时估算，
-  **缓存命中率显示两位小数**（如 `80.00%`），**首字（TTFT）**在第一个请求完成
-  （step settle）后即显示官方值（`assistant-step` 的 `finalNode.timing`：
-  `firstTokenTime - stepStartTime`），回合结束后切换为官方持久化聚合值
-  （turn-tail 携带的 `ttftMs`，来自事件日志，刷新页面不丢）；仅当首个请求仍在流式时
-  用渲染时刻近似（回合启动到首个 assistant-step 渲染）；
-  回合结束后全部指标切换为官方权威值（turn-tail 的 tok/s、`turn/end` 的精确耗时）；
-  消耗token 亦切换为 turn-tail 携带的官方 `tokenUsage` 精确值（见下）；
-- **回合折叠栏最右侧右对齐显示"第x轮"**（如 `第13轮` / `Turn 13`，英文随 DSH 语言切换）；
-- **"消耗token"持续增长动画**：真实 usage 只在每个请求完成时到达，两次之间数字会
-  停住——运行中在真实基线之上叠加纯展示用的动画偏移，偏移按实际 tick 次数推进
-  （**+1/+11 交替**：个位每 tick +1、十位每 2 tick +1、更高位随进位自然走动），
-  tick 间隔 = `liveTickMs` × 随机数（`liveTickJitter` ~ 1，默认 125~250ms），
-  数字跳动节奏不规律，更像真实生成速率而不是节拍器；真实 usage 到达时只把基线校
-  正为真实值，偏移继续累计、数字只增不减。**偏移封顶**：上限 = max(500, 真实基线
-  × 10%)（`CONFIG.liveTokenAnimMaxRatio` / `liveTokenAnimMaxFloor`，比例与下限都置 0
-  即关闭增长）——长时间工具执行不会把虚构数字堆到万级、失真不可信，真实值到达时
-  上限随基线一起抬高。基准间隔和抖动分别通过 `CONFIG.liveTickMs`
-  和 `CONFIG.liveTickJitter` 调整；
-- **消耗token 与官方统计同口径**：回合结束后优先采用官方 turn-tail 携带的
-  `tokenUsage`（官方 `deriveTurnTokenUsage` 在持久化事件日志上折叠全部计费 attempt
-  的精确值，含被重试的请求；缓存命中率分母同为 prompt 侧总量 `totalTokens - outputTokens`）；
-  节点累加路径（运行中基线、无 `tokenUsage` 时的回退）通过 `nodes.values()` 补采
-  `visibility:hidden` 的 assistant-step——纯 tool-call 的中间步骤（无可见 reasoning/text）
-  官方以隐藏节点结算、不进 `locations.getTurn`，只遍历可见节点会漏计（实测案例：
-  官方统计 175,844 vs 修复前 117,301，差值恰为一个隐藏步骤的 58,543）；
-- **滚轮式数字动画**：运行中数值变化时，每一位数字独立"滚动"到新值（里程表/滚轮效果，
-  回弹缓动；动画时长按变化频率自适应：token 个位这类快速变化用略短于刷新周期的短动画
-  保证每拍完整走完，耗时秒数等慢速变化用 350ms 回弹滚动）——数字拆成逐位视窗、内部
-  竖排 0-9，视觉上像计数滚筒；完整文案另有 sr-only 副本，读屏/无障碍不受影响，
-  系统开启「减少动态效果」时自动退化为静态数字；
-- **折叠栏下方常驻分隔线**：回合折叠栏文字下方始终有一条 1px 水平细线
-  （颜色取官方 `--dsw-alias-line-secondary` token，随主题明暗自动适配），
-  **收起/展开都显示**，展开时同时充当折叠栏与内容的视觉分界；
-- 一轮回复**完成**（输出最终总结、回合结束）后，回合折叠栏自动收起，本回合内所有 Think、
-  工具调用和上下文注入收进回合折叠栏，只保留最终总结消息和官方耗时/token 脚注可见；
-  （手动展开过的回合保持展开状态）
-- **无工具调用也折叠**：回合内只有上下文注入 / Think、没有任何工具调用时，同样收成
-  一个回合折叠栏（折叠栏显示耗时/token 指标，不显示命令数）；
-- **回合折叠栏显示本轮指标**：`耗时x时x分x秒（不足 1 小时只显示分秒，不足 1 分钟只显示秒），
-  首字x.xs，消耗xxx token，xxx tok/s，缓存命中xx.xx%，待折叠/已折叠N步（>0 时才显示；
-  运行中为「待折叠N步」，回合结束后为「已折叠N步」）」`；某几项缺失时自动省略，
-  全部缺失才回退为「运行了 N 条命令」；字段之间用 ` · ` 分隔，右侧附「第x轮」；
-- 点击回合折叠栏展开/收起整轮内容；重新打开历史会话时，已完成的回合同样保持整回合折叠；
-- **折叠作用域不越过用户消息**：回合折叠栏只折叠「用户消息之后、agent 回复之间」的内容。
-  锚定在用户消息**上方**的上下文行（如审批策略变更通知）不属于本回合输出区间，
-  始终保持原样可见，绝不参与折叠，也不会被当作折叠栏锚点——避免回合折叠栏「跨过」用户消息
-  去折叠其上方的内容；
-- **最终总结只显示正文**：回合结束后，最终总结消息内部自带的 Think 行也一并隐藏；
-- **状态标签**：非正常结束的回合（用户停止 / 中断）在回合折叠栏前置状态文本，
-  如「已停止 | 耗时5分12秒…」，正常完成不显示额外标签；
-- **单条也分组**：两个 text 之间只有 **1 条**命令（或 1 个 Think）时同样套步骤折叠栏，
-  运行中显示「正在运行 `图标 工具名` · …」、text 出现后显示「运行了pwsh」；
-  回合结束整回合折叠时它收进回合折叠栏，展开回合折叠栏后步骤折叠栏行可见。
-
-### 效果示意
-
-回合进行中/手动展开：回合折叠栏实时显示耗时、首字、token、tok/s、缓存命中率、
-已折叠步数（右端对齐轮次），过程内容按步骤分组折叠、工具卡片与 Think 行原样可读：
-
-![回合展开态](docs/images/turn-expanded.png)
-
-回合结束后（或手动收起）：整回合收进回合折叠栏，只保留最终总结正文与用量脚注：
-
-![整回合折叠](docs/images/turn-folded.png)
-
-## 组件样式与行距
-
-- **折叠栏即官方样式**：折叠栏直接复用官方 `DisclosureRow` 原语（`@deepseek-ai/dsh-client-ui-primitives`）
-  渲染——24px 行高、16px 前导、官方 14px chevron（收起右向 / 展开下向）、14px/24px 标题，
-  与 Think / 工具卡片的折叠行逐像素一致；
-- **回合折叠栏分隔线**：折叠栏下方常驻一条 1px 水平细线（`.ccg-turn-divider`，颜色按
-  `var(--dsw-alias-line-secondary, var(--dsw-alias-border-l1, #d1d5db))` 链式回退——
-  截至目前（0.1.1 ~ 0.1.5-rc.1）DSH 均未定义 `--dsw-alias-line-secondary`，实际生效的
-  是两版共有的 `--dsw-alias-border-l1`，随主题明暗自动适配），收起/展开都显示，
-  上下留白 4px / 8px；
-- **紧凑行距**：折叠组只占一行（24px）；被折叠的成员节点整行 `display:none`，不会残留空行，
-  行距与官方消息完全一致（column 的 16px 节奏），折叠再多也不会越空越大；
-- **过渡动画**：展开时内容从 0 高度平滑展开到真实高度（grid 轨道 `0fr→1fr` 过渡 + 淡入，280ms，
-  起始帧用 `useLayoutEffect` 同步提交保证过渡稳定播放）；收起时播放收缩动画（280ms）后卸载内容；
-  系统开启「减少动态效果」时自动禁用动画；回合运行中（直播模式）内容高度自适应，
-  不裁切不断增长的流式内容；
-- **运行中标题 shimmer 动效**：步骤折叠栏运行中标题（「正在运行…」「正在思考…」）的文字带
-  shimmer 光泽扫过动画——渐变背景 + `background-clip: text` + 背景位移动画，整行一个渐变
-  统一流动（高光节奏：流动 1.8s + 停顿 2s）；暗色/亮色主题各有配色，图标不受影响；
-- **滚轮数字**：运行中回合折叠栏的数字（耗时/首字/token/tok/s/缓存命中）按数位拆成 1ch 宽的
-  滚动视窗，数值变化时逐位滚动（350ms 回弹缓动）；回合结束后回退纯文本；
-- **多语言**：界面文案**跟随 DSH 界面语言**实时切换（读取 `document.documentElement.lang`，
-  简体中文 / 英语），浏览器语言仅作回退；
-- **无障碍**：折叠栏带 `aria-label` / `aria-expanded`，键盘可操作（Enter / Space 切换）。
+- **牌身透明**的扑克卡（CSS mask，当前色描边 + 花色点，壁纸可透出）替换官方活动图标；
+- 花色按官方 `data-process-activity` 值映射（`ACTIVITY_SUIT` 单一数据源生成 CSS）：
+  thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
+  edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
+  未登记活动回退 ♥；
+- **软依赖**：全部选择器挂在官方 DOM 钩子上并由 `<body data-tf-step-skin>` 总闸控制——
+  DSH 改掉钩子时**最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。
 
 ## 安装
 
 ### 方式一（推荐）：从 npm 安装
 
 本插件已发布到 npm registry：[@winteries/dsh-turn-fold](https://www.npmjs.com/package/@winteries/dsh-turn-fold)
-（旧包名 `dsh-turn-fold` 仍会随每次发布同步更新，供已安装旧包的用户持续获取更新；**新安装请使用 `@winteries/dsh-turn-fold`**。）
 
 ```sh
 # 官方命令（推荐）
@@ -231,44 +151,36 @@ npm run check      # 语法检查 client.js / index.js
 ```
 
 测试套件（`tests/`）直接加载真实 `client.js`（经 `__ModuleLoader__` 注入 + `__test`
-导出，无复制粘贴漂移），分六层（7 个文件）：
+导出，无复制粘贴漂移），分层如下：
 
 | 文件 | 覆盖 |
 | --- | --- |
-| `unit.logic.test.mjs` | 纯函数：`computeGroup` 步骤分组、`computeTurnFold` 整回合折叠、`computeTurnMetrics` / `turnHeaderLabel` 指标文案、`turnNumber` 定位；含历史 verify-fix 的全部场景与真实会话数据（TURN13） |
-| `unit.render.test.mjs` | React 渲染：初始折叠 → 点击回合折叠栏展开 → 再收起 的完整交互；委托渲染内置组件时官方 inject 面 hook 的逐名透传（`useConnectionGeneration` / `useHostInfo`，由 `chatNodeEntryInject` 探测合并）；条目注册契约（inject 声明） |
-| `unit.css.test.mjs` | CSS `:has()` 隐藏规则在真实 DOM 上的生效（含"展开→收起"往返） |
-| `regression.test.mjs` | 历史 bug 回归：节点对象替换（Bug1）、inject 缺失崩溃/abdicate（Bug2）、无工具调用回合折叠（v0.2.3）、折叠作用域不越过用户消息（v0.2.2）、步骤分组手动展开/收起 |
-| `unit.gear.test.mjs` / `unit.settings-row.test.mjs` | 齿轮字段弹窗与 shadow 官方 transcript-view 的设置行（界面标题为官方原文「对话显示」；选项按宿主词表：旧版 Normal / Compact / Turn-Fold，0.1.7+ Compact / Standard / Detailed / Verbose / Turn-Fold，含词表探测与 foldOff 写入断言） |
-| `unit.compat.test.mjs` | DSH 双版本兼容：0.1.1 `useSession(.chat + 顶层 turnEnds/turnTimings)` 与 0.1.2 `useChat + chat.legacy` 两条快照路径、折叠模式切换 hooks 顺序回归、官方 diffs 读取链（`meta.diffs` / `resultView` / `callView`） |
+| `unit.logic.test.mjs` | 指标纯函数：`turnClockOf` / `computeTurnMetrics` / `readStepUsage`（官方 TurnLocation / step usage / turn-tail 聚合三来源）、格式化、字段显隐与 localStorage 持久化；同一输入两次计算结果逐字段相等（无伪造增长） |
+| `unit.turn-renderer.test.mjs` | Turn 渲染器：`open=false → 点击 → setOpen(true)`、`open=true → 点击 → setOpen(false)`；`foldable=false`/aborted/error → 静态栏无 setOpen 通道；Running Bar 0 秒出现、非交互、不触碰 Fold 状态；回合结束平滑交接；`turnProcess` 缺失降级 |
+| `unit.poker.test.mjs` | 活动→花色映射（官方 ProcessActivity 词表全覆盖）、牌堆/扇形/翻牌 SVG 生成、组件渲染、reduced-motion 与无 WAAPI 静态降级 |
+| `unit.css.test.mjs` | Step 皮总闸（`body[data-tf-step-skin]`）与官方 DOM 钩子规则；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
+| `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫） |
+| `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零**；官方四档 transcript 模式渲染兼容 |
+| `regression.test.mjs` | 历史回归：直播时钟空转定时器、**禁止假 token 增长（真实数据不变 → 数字不变）**、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
 
 > 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
 > `npm test` 中内置）；普通 Linux/macOS CI 同样可用该参数（Node ≥ 22.9）。
 
 ## 折叠图标（扑克牌）
 
-步骤/回合折叠栏的前导图标默认为**动态扑克牌**（回合折叠栏右侧 ⚙ 齿轮 → 弹窗里的
-「折叠图标」选择器可切回官方 chevron）：
+回合栏前导图标默认为**动态扑克牌**（回合栏右侧 ⚙ 齿轮 → 弹窗里的「回合栏图标」
+选择器可切回官方 chevron）：
 
-- **完成态**：收起为牌堆（段内工具 ≤3 用 3 张、>3 用 5 张），点击展开变扇形；
-- **牌面池**：♠ ♥ ♦ ♣ + DeepSeek 鲸鱼 Logo **五选一**，每个折叠栏按 leaderKey
-  随机记忆（重渲染不变）；
-- **运行态**：步骤栏播放五牌面轮换动画、回合栏播放对角线轴翻牌（四花色循环、
-  Logo 背面），均为 SVG 原生动画；
-- **遮挡**：luminance mask 按上层牌变换动态挖空下层覆盖区，牌身透明（壁纸/
-  透明背景下正确）；
-- **设置预览**：4 个静态形态每秒轮换牌面（相位错开，同一时刻 4 种不同牌面）+
-  两个运行态动画预览；
-- **数据源**：`icons/default.json`（花色路径、卡牌几何、扇形/牌堆变换表、动画
-  模板），改完 `npm run sync:icons` 注入、`npm run icons:check` 校验。
-
-设置弹窗（回合折叠栏字段显隐 + 折叠图标选择；预览项悬浮 2x 放大）：
-
-![设置弹窗](docs/images/gear-popup.png)
+- **完成态**：收起为牌堆（本回合工具+子代理 ≤3 用 3 张、>3 用 5 张），展开变扇形；
+- **牌面池**：♠ ♥ ♦ ♣ + DeepSeek 鲸鱼 Logo **五选一**，每回合按回合号随机记忆（重渲染不变）；
+- **运行态**：对角线轴翻牌（四花色循环、Logo 背面），SVG 原生动画，SMIL 不随重渲染重启；
+- **遮挡**：luminance mask 按上层牌变换动态挖空下层覆盖区，牌身透明（壁纸/透明背景下正确）；
+- **数据源**：`icons/default.json`（花色路径、卡牌几何、扇形/牌堆变换表、动画模板），
+  改完 `npm run sync:icons` 注入、`npm run icons:check` 校验。
 
 ## 自定义图标（Agent Skill）
 
-想改折叠栏图标的用户不用手动操作——本插件随包注册了一个 **agent skill**
+想改回合栏图标的用户不用手动操作——本插件随包注册了一个 **agent skill**
 `dsh-turn-fold-customize-icons`（host 半边 `index.js` 通过 `ctx.skills` 注册，
 DSH 0.1.2+ 装配了 `@deepseek-ai/dsh-skill` 时自动生效）。对 AI 助手说"帮我把
 扑克牌图标改成××样式"，助手会自动加载该 skill，得到完整自定义流程：
@@ -309,130 +221,73 @@ git push --follow-tags
 ## 工作原理（为什么不用改源码）
 
 - DSH 会话 UI 是 Cordis 插件 + Slot 插槽系统拼出来的；聊天流每个块经
-  `conversation.chat.node`（keyed slot）按类型分发渲染器。
-- Slot 注册器官方支持 **不同 priority 覆盖**（`register at a different priority to shadow it, lowest renders`）。
-  本插件用 `priority: -1` 覆盖内置的 `tool-call` / `assistant-step` / `context` 渲染器；
-  `user` 格（0 秒占位条）注册在 **`-2`（顺序无关下限，绝不占 `-1`）**——dsh-easyrewrite
-  硬编码 `-1`，本插件若先加载占了 `-1`、它后注册就会撞车抛错（真机事故：bundle 顺序
-  turn-fold 在 easyrewrite 前）；固定 `-2` 后无论谁先加载都不冲突（easyrewrite 永远
-  `-1`、本插件永远 `-2` 或更低，注册表层面零碰撞）。仅当 `-2` 也被第三方占用（极罕见）
-  才继续下探到最低占用位 `-1`。并把第三方条目（如 dsh-easyrewrite 的撤回/重编辑气泡）
-  的组件**链式委托渲染**（整包 props 转发、其 inject 面的扁平 props 并入注入面）——
-  占位条与 user 消息专用插件共存、功能互不丢失。⚠️ 其他想占用 user 格的插件请避开
-  `-2` 或使用探测式优先级：本插件从不主动撞已注册者（探测到更低占用即下探），但
-  后注册且硬编码同优先级者会自撞（slot 模型固有，责任在硬编码者）。
-- **注册冲突自动让位**：注册前探测同 key/id 的 `priority: -1` 是否已被占用
-  （`ctx.slots.entries`），被占则自动让位到第一个不冲突的值（官方 `0` 恒预留，绝不
-  落回官方档）并打 `console.warn`——本插件后加载时不再与先占者冲突。
-  `conversation.chat.node` 三格（tool-call/assistant-step/context）与
-  `settings.general.item` 的 transcript-view 行都走该逻辑；`user` 格例外（占位条必须
-  渲染在 user 消息正下方，让位即弃权，且不能用探测-1 方案）——固定 `-2` 下限并链式
-  委托共存。
-- **注册异常软降级（绝不带崩 DSH）**：slots 注入回调若让异常外泄，延迟执行路径
-  （目标 slot 声明晚于插件加载时，回调跑在官方声明者的调用栈里 / 声明订阅里
-  uncaught re-throw）会打断官方 UI 激活、web 整页无法启动。因此本插件**所有** slot
-  注册（chat.node 四格、设置行）统一走一个注册管道：inject 声明等待
-  与回调内 register 各自兜异常（`return undefined` 即"无可清理资源"，官方
-  cachedSlotInject 对 falsy 返回无害），单个条目注册失败仅跳过该条目，`console.warn`
-  留排查线索并弹一次中性措辞的降级 Toast 告知用户（不指涉冲突方——旧版宿主未声明
-  slot 的版本缺口也走同一条降级路径）；宿主半边的 skill 注册同样双层防护。DSH 启动
-  不受本插件任何注册异常影响。
-- 展开时通过 `ctx.slots.entries('conversation.chat.node')` 取到内置组件引用做**委托渲染**，
-  工具卡片/Think 行/上下文注入的内容与样式与内置完全一致。
-- 整回合折叠通过会话快照的 `turnEnds`（turn/end 事件驱动）判定回合完成，配合
-  `chat.locations.getTurn()` 计算折叠栏/成员/最终消息，再以 CSS `:has()` 隐藏成员 flowItem。
-  回合运行中由 `turnTimings`（turn/start 事件给出 `startTime`）判定回合已开始，
-  回合折叠栏即出现：耗时用随机间隔时钟（每 `CONFIG.liveTickMs` × 0.5~1，默认 125~250ms）
-  补 `Date.now()` 实时走动，"消耗token"在真实值之上叠加每 tick +1/+11 交替的动画
-  偏移持续增长（真实 `usage` 到达时校正基线），全部指标在 `turn/end` 后切换为权威值。
-- **消耗token 口径（对齐官方统计）**：回合结束后优先取 turn-tail 携带的官方
-  `tokenUsage`（官方 `deriveTurnTokenUsage` 在持久化事件日志上折叠全部计费 attempt：
-  `totalTokens` = 精确 prompt+output、含被重试请求，缓存命中率分母 = prompt 侧总量）；
-  节点累加路径（运行中基线、无 `tokenUsage` 回退）在 `locations.getTurn()` 之外用
-  `nodes.values()`（返回 visible+hidden 全部已物化节点，旧版缺方法自动跳过）按节点
-  引用去重补采本回合隐藏的 assistant-step——纯 tool-call 步骤官方以 `visibility:hidden`
-  结算、不进 order/locations，只遍历 getTurn 会漏计其 usage。
-- **会话快照双版本读取层**：DSH 0.1.1 与 0.1.2 的快照契约不同——0.1.2 把快照拆分成
-  `useSession`（会话级状态）与 `useChat`（chat 数据），`turnEnds`/`turnTimings` 收进
-  `chat.legacy`。组件统一经 `useChatSnapshotData` 适配：有 `useChat`（0.1.2+）就读
-  `useChat` 快照本体，否则从 `useSession(s).chat` 取；`turnEnds`/`turnTimings` 优先读
-  `chat.legacy`、顶层兼容字段兜底。所有 hooks 无条件调用（数据计算与订阅和"是否接管
-  折叠"解耦），折叠模式切换（接管 ↔ 委托内置）不改变 hook 数量，条目不会崩。
-- **0 秒占位（user 消息正下方）**：`GroupedUserView` 注册 `conversation.chat.node` 的
-  `user` key，优先级**固定 `-2`（顺序无关下限，绝不占 `-1`——与 easyrewrite 硬编码
-  `-1` 零碰撞，本插件先加载也不会让它后注册撞车；`-2` 被第三方占用时才继续下探）**，
-  在「会话运行中且该 user 是最后一条消息」时于 user 消息正下方渲染占位回合
-  折叠栏（耗时从运行中回合的 `startTime` 计时），第一条中间节点到达后自动交接给正式
-  回合折叠栏（占位栏补 16px 上间距与官方 flow gap 对齐，交接无位移）。第三方 user
-  条目（dsh-easyrewrite）的组件链式委托渲染、整包 props 转发；`chat.node` 是核心 slot
-  恒声明，无需 try/catch 兜底。位置说明：占位栏在聊天流列内、官方 TurnStatus
-  （"Deep diving..." 状态描述行）之上——2026-08-30 至 0.5.x 曾挂输入区 dock，会跑到
-  状态描述行下面（输入框左上角），位置错误，故恢复 user 格方案。
-- **首字（TTFT）三来源（官方优先）**：① **step settle 后即实时读取官方值**——
-  `assistant-step` 节点的 `data.finalNode.timing`（官方在 `assistant/message` 事件后写入
-  `{ stepStartTime, firstTokenTime, completedTime }`），取回合内 step 号最小者（第一个
-  请求）的 `firstTokenTime - stepStartTime`（与官方 `deriveTurnMetrics` 同款语义）；
-  ② **回合结束后**优先用 turn-tail 携带的聚合 `ttftMs`（同值、来自持久化事件日志、
-  刷新页面不丢）；③ 仅当无任何 step 完成（首个请求仍在流式）时回退渲染时刻近似
-  （`Date.now() - turnTimings.startTime`，误差约一帧渲染延迟，幂等记录、回合内只记一次）。
-- **段闭合标题缓存**：段闭合后标题不再变化，按 `leaderKey + 节点 keys + 语言 + 工具指纹`
-  （名称/isError/argsRaw 长度，不解析内容）记忆，避免每次渲染重复解析 argsRaw；
-  工具行数变更优先读取官方 diffs 数据（`oldText`/`newText` 块行数；0.1.2 在结算 metadata
-  `root.meta.diffs`、0.1.1 在 wire 视图 `root.resultView.diffs` / `root.callView.diffs`），
-  无 diffs 时才回退解析 argsRaw（单次解析同时提取路径与行数）。
-- **会话切换清理**：`segmentLabelCache`（段闭合标题缓存，每段一条字符串、长会话可达数百 KB）、
-  `liveTokenCache`（每回合 1-2 条）与手动展开状态（`overrides` / `turnOverrides`）在切换
-  会话时清理——手动状态回到自动规则（已结束回合默认收起）；`ttftCache` 保留（每回合一个
-  数字，量级可忽略）。切换回原会话仅"已结束回合回到默认收起 + 段标题重新计算一次"。
+  `conversation.chat.node`（keyed slot）按节点类型分发渲染器，**复用同 key 即替换该
+  渲染器（lowest renders）**。
+- 本插件用 `priority: -1` 覆盖官方 `turn-process` 渲染器——这是插件替换的**唯一**
+  官方渲染器。不 shadow `tool-call` / `assistant-step` / `context` / `user`，不扫描
+  官方 slot entries 做委托渲染，不复制官方 inject hooks（官方组件始终由官方条目
+  自己渲染）。
+- **折叠语义全部来自官方 owner state**：官方 `ChatNodeSeat` 为每个节点构建
+  `turnProcess = { spec, foldable, hasContent, open, setOpen }` 并自己负责成员的隐藏
+  （`data-turn-process-hidden`）与展开。插件回合栏只在点击时调用
+  `turnProcess.setOpen(!open)`；`canCollapse` 的判定与官方渲染器一致
+  （`foldable && hasContent`，且回合 aborted/error/open 时不可折叠——官方
+  `turnProcessAlwaysOpen` 语义）。
+- **运行中状态条**：官方 `turn-process` 节点在 `turn/start` 即投影，但官方渲染器在
+  回合未结束时返回 null——插件渲染器在此阶段显示 Running Turn Bar（0 秒起、真实
+  指标、无折叠行为）。回合结束后同一渲染器切换为完整回合栏，视觉与位置连续。
+- **指标读取面（只读官方数据，不重算折叠成员）**：`node.location.turn`
+  （`TurnLocation`：start/end/status/reason/steps）+ turn data store（`get('turn-tail')`
+  官方聚合 `tokenUsage`、`get('turn-process')` 官方 spec）+ 每 step 的
+  `data.get('assistant-step')`（usage / `finalNode.timing`）。快照经 `useChat`
+  （SessionStandardProps 合并成员）订阅以驱动重渲染；step data store 与节点可见性
+  无关，隐藏纯工具步骤的 usage 不漏计。
+- **Step 皮（纯 CSS）**：官方 `ChatGroupSeat` / `ProcessGroupHeader` 原样渲染步骤分组
+  与标题；插件 CSS 隐藏 `data-step-process-icon` 的官方图标内容、用 `::before` +
+  CSS mask 渲染扑克卡，花色由 `data-process-activity` 值经 `ACTIVITY_SUIT` 映射生成
+  （JS 映射 → CSS 规则同源生成）。总闸：`<body data-tf-step-skin="poker">`。
+  **不用 MutationObserver、不往官方 header 挂 React 根、不自己维护 Step 展开状态。**
+- **注册冲突自动让位**：注册前探测同 key 的 `priority: -1` 是否已被占用
+  （`ctx.slots.entries`），被占则自动让位到第一个不冲突的值（官方 `0` 恒预留）并
+  `console.warn`。
+- **注册异常软降级（绝不带崩 DSH）**：slots 注入回调若让异常外泄，延迟执行路径会
+  打断官方 UI 激活、web 整页无法启动。因此 slot 注册统一走一个注册管道：inject 声明
+  等待与回调内 register 各自兜异常，单个条目注册失败仅跳过该条目，`console.warn`
+  留排查线索并弹一次中性措辞的降级 Toast；宿主半边的 skill 注册同样双层防护。
+- **设置完全独立**：插件不读、更不写官方 `transcriptView` 字段（源码级架构守卫测试
+  锁死）。插件设置存 `localStorage['dsh-turn-fold:settings']`（字段显隐、图标风格、
+  Step 皮），图标包仍走 `localStorage['dsh-turn-fold:icons']`。
 - **多语言跟随**：文案读取 `document.documentElement.lang`（DSH 切换界面语言时由
   `dsh-client-locale` 设置），随 DSH 语言实时切换，浏览器语言仅作回退。
 
 ## 注意事项
 
-- 兼容 DSH 0.1.1-rc.2 ~ 0.1.7-rc.2（会话快照契约差异由插件内适配层消化、官方
-  渲染 hook 面自动跟随，见工作原理；0.1.5-rc.1、0.1.6-alpha.1、0.1.7-rc.1 与 0.1.7-rc.2
-  上均已逐条核对槽位/快照/设置行/节点数据契约——0.1.7-rc.1 为真机验证，0.1.7-rc.2 为
-  逐包契约 diff 复核：直接依赖的 ui-slots/ui-renderer/client-modules/boot 审计零改动，
-  ui-chat/ui-tool/ui-primitives 的变化全部为附加性）。DSH 升级若改变上述槽位契约或内置组件
-  props，本插件可能需要随版本小改（属插件维护，非改源码）。
-  - **0.1.7 起设置服务改名**：`ctx.settingsScope` → `ctx.configForms`（快照形状不变）。
-    插件改为运行时探测（先试 `configForms.get('ui-chat')`，再回退 `settingsScope.bind`），
-    **不再把设置服务写进 `exports.inject`** —— 声明一个已删除的服务会让整个客户端条目
-    永久停在 `pending`，而 0.1.7 的启动审计把 pending 条目当**启动失败**（web 直接打不开），
-    不只是插件不生效。
-  - **0.1.7 起 transcriptView 枚举四值化**：`normal/compact` →
-    `compact/standard/detailed/verbose`，官方折叠改由 presentation-policy 的
-    `foldCompletedTurns` 开关（只有 `verbose` 为 false）。插件按宿主实际词表渲染选项，
-    接管时写 `verbose`（旧版写 `normal`），避免与官方双重折叠。
+- 兼容性目标：**DSH 0.1.7-rc.1 / rc.2 的 `conversation.chat.node` + `turn-process`
+  owner state 契约**（0.1.7-rc.1 真机验证、rc.2 逐包契约 diff 复核）。本重构后插件
+  不再携带旧版（≤0.1.6）快照适配层——在不投影 `turn-process` 节点/owner state 的
+  更老宿主上，插件条目自然休眠（官方渲染原样、插件无副作用），属预期降级。
+  DSH 升级若改变上述契约，本插件可能需要随版本小改（属插件维护，非改源码）。
 - **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.1-rc.2 <=0.1.7-rc.2`
   —— 插件市场（dshmarket）读 npm `latest` manifest 的这个字段，在插件卡片上显示
-  `DSH >=0.1.1-rc.2 <=0.1.7-rc.2`，并在**更新**前拦下确定不满足的版本（undeclared/未知
-  一律放行；DSH 本体不读该字段，不影响加载）。区间是**闭区间**、锁到已核验的宿主版本：
-  每次 DSH 升级后重新核对契约，再抬上限并随新版本发布。
-- 折叠栏文案在 `client.js` 顶部 `CONFIG` 可调。
-- **耦合点清单**（DSH 升级时对照排查；任一失效均优雅降级——回退内置渲染 / 文案兜底 +
-  `console.warn` 提示，不会白屏）：
-  - 会话快照字段：0.1.1 走 `useSession` 快照的 `s.chat.order / nodes / locations`、
-    `locations.getTurn()`、顶层 `turnEnds` / `turnTimings`、`chat.timeline.turns`；
-    0.1.2 快照拆分后改走框架注入的 `useChat`（扁平 ChatSnapshot），`turnEnds` /
-    `turnTimings` 在 `chat.legacy`（适配层自动选择，见工作原理）——用于段/回合分组、
-    结束判定、耗时与状态标签；
-  - 节点数据结构：`tool-call` 的 `data.root`（`call.name / argsRaw`；diffs 按版本在
-    `root.meta.diffs`（0.1.2）或 `resultView` / `callView` 视图（0.1.1））、
-    `assistant-step` 的 `blocks`（reasoning / text）与 `usage`、`turn-tail` 的
-    `tokensPerSecond` 与 `tokenUsage`（用于折叠栏文案、think 摘要、token/缓存命中指标；
-    `tokenUsage` 为 0.1.2+ 官方每回合精确统计，缺失时回退节点累加）、
-    `ChatNodeStore.values()`（隐藏 assistant-step 补采；缺失时自动跳过）；
-  - CSS 选择器：`[data-chat-flow-kind]`、`[data-variant="think"]`（隐藏折叠成员 flowItem
-    与最终总结的 Think 行）；
-  - Slot 系统：`conversation.chat.node` 内置条目（`priority: 0`）、
-    `slotsService.entriesOfSlot()`（委托渲染与 `tool.call.toolview` 子视图分发）；
-  - Locale 命名空间：条目的 `locale:` 声明决定注入的 `t` 词典，且**同一个 slot 上官方
-    条目混用两种命名空间**——`tool-call`（ui-tool 注册）声明 `'conversation'`（工具标题词
-    `tool.title.read`=读取 等），`assistant-step`/`context`/`user`（ui-chat 注册）声明
-    `'chat'`（`message.think`=思考 等）；旧版全在 `'conversation'`。插件注册时**按条目 key
-    对应复制**同 key 官方条目的声明（`detectChatLocale`，无对应时 `ctx.locale` 试查后回退
-    `'conversation'`），转发给官方组件的 `t` 一律过 `wrapLocaleT` 兜底（查不到 key 时用
-    内嵌的官方词典合并本——chat + conversation + common 共 282 词条——做 `{占位符}`
-    插值兜底，不再裸显 `"message.think"` / `"message.contextInjection"` /
-    `"tool.title.read"` 等任何原始 key）。
+  宿主要求，并在**更新**前拦下确定不满足的版本（DSH 本体不读该字段，不影响加载）。
+  区间是**闭区间**、锁到已核验的宿主版本：每次 DSH 升级后重新核对契约，再抬上限
+  并随新版本发布。
+- **集成依赖清单**（DSH 升级时对照排查）：
+  - **Public/stable**：`conversation.chat.node` keyed slot（`turn-process` key +
+    owner state `TurnProcessOwnerProps`）；`TurnLocation`（start/end/status/steps）、
+    step data store（`assistant-step` usage/timing）、turn data store
+    （`turn-tail` / `turn-process`）——均来自官方 `dsh-client-ui-chat` /
+    `dsh-client-ui-conversation` 契约；
+  - **Soft visual dependency**：`data-step-process-icon` / `data-process-activity`
+    （仅 Step 皮；失效 = 皮消失，官方图标与折叠原样保留）。
+- 相比上一代（≤0.5.x）的行为变化：
+  - 步骤分组/标题完全交还官方——插件自研的「运行了N条命令 / 读取了… / 思考了N次」
+    段标题、段内文件链接复制、[ +N -M ] 行数统计、标题缓存已删除（官方标题语义为准）；
+  - 「待折叠/已折叠 N 步」字段删除（折叠成员归属由官方决定，插件不再自行统计步数）；
+  - **假 token 增长删除**——运行中两次 usage 之间数字保持真实值不动（不再 +1/+11）；
+  - 「Turn-Fold」transcript 模式与 shadow 官方设置行删除——官方四档照常工作，
+    插件设置改为纯 UI 增强（见职责边界）；
+  - 0 秒占位条从「user 消息正下方」改为挂在官方 `turn-process` 节点上：回合开始
+    （turn/start 投影）即出现；发送消息到 turn/start 之间的窗口（通常亚秒级）由官方
+    "Deep diving..." 状态行呈现；
+  - 运行中首字（TTFT）仅在第一个请求 settle 后显示官方 timing 值（渲染时刻近似已删除）。

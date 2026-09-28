@@ -1,195 +1,112 @@
-// CSS 测试：验证 client.js 注入的样式规则在真实 DOM 上生效——
-// 被折叠的成员 flowItem（含 [data-ccg-hidden] 标记）display:none，
-// 展开（移除标记）恢复显示，再次收起重新隐藏。
-import { describe, it } from 'node:test'
+// CSS 契约测试：
+//   - Turn 栏 / 齿轮弹窗 / 滚轮数字样式存在
+//   - Step Poker Skin：body 属性总闸 + 官方 DOM 钩子（data-step-process*）+ 活动映射规则
+//   - 架构守卫：旧折叠引擎的 CSS 隐藏机制（:has() 隐藏成员、hidden 标记、
+//     fold-clip / group-root / 旧 header）必须全部消失
+import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { createRequire } from 'node:module'
 import { loadPlugin } from './helpers/loader.mjs'
 
-const require = createRequire(import.meta.url)
-const { JSDOM } = require('jsdom')
+const { test: T, document, window } = loadPlugin({ uiPrimitives: {} })
 
-function makeFlowItem(doc, kind, contentHtml) {
-  const el = doc.createElement('div')
-  el.setAttribute('data-chat-flow-kind', kind)
-  const slot = doc.createElement('div')
-  slot.setAttribute('data-slot', 'conversation.chat.node')
-  slot.style.display = 'contents'
-  slot.innerHTML = contentHtml
-  el.appendChild(slot)
-  return el
+function styleText() {
+  const tag = document.querySelector('style[data-plugin-css="dsh-turn-fold/style"]')
+  assert.ok(tag, '插件样式表已注入')
+  return tag.textContent
 }
 
-describe('CSS 折叠隐藏规则', () => {
-  const { document } = loadPlugin()
+beforeEach(() => {
+  window.localStorage.clear()
+  T.applyStepSkinAttr()
+})
 
-  it('注入的 style 标签包含 :has() 隐藏规则', () => {
-    const tag = document.querySelector('style[data-plugin-css="dsh-turn-fold/style"]')
-    assert.ok(tag, '插件应注入 style 标签')
-    const css = tag.textContent
-    assert.match(css, /\[data-chat-flow-kind\]:has\(\[data-ccg-hidden\]\)\{display:none\}/)
-    assert.match(css, /\[data-ccg-turn-folded\] \[data-variant="think"\]\{display:none\}/)
+describe('Turn 栏样式', () => {
+  it('核心类全部注入', () => {
+    const css = styleText()
+    for (const cls of ['.ccg-turn-bar{', '.ccg-turn-bar-label{', '.ccg-turn-bar-right{', '.ccg-turn-bar-chevron{', '.ccg-turn-divider{']) {
+      assert.ok(css.includes(cls), '缺少 ' + cls)
+    }
   })
 
-  it('注入的 style 标签包含回合折叠栏分隔线规则（折叠栏与内容之间的水平细线）', () => {
-    const tag = document.querySelector('style[data-plugin-css="dsh-turn-fold/style"]')
-    const css = tag.textContent
-    assert.match(css, /\.ccg-turn-divider\{height:1px/, '分隔线应为 1px 水平细线')
-    assert.match(css, /\.ccg-group-root\[data-ccg-open\]:not\(\[data-ccg-turn\]\) > \.ccg-fold-clip\{margin-top:16px\}/,
-      '展开间距应挂在直接子元素 .ccg-fold-clip 上（16px，排除回合栏）——header 在 DisclosureRow 内部 DOM，挂 header 无法既命中又不跨层泄漏')
-    assert.doesNotMatch(css, /\.ccg-group-root\[data-ccg-open\][^{]*\.ccg-header\{margin/,
-      '不得再用 header 承载展开间距（后代选择器跨层泄漏 / > 选择器匹配不上 DisclosureRow 内部 DOM）')
-    // 防跳动：fold-clip 的 margin-top 参与过渡（收起时 16px 间距随高度一起动画，
-    // 不在收起开始瞬间瞬跳）
-    assert.match(css, /transition:grid-template-rows \.28s[^}]*margin-top \.28s/, 'fold-clip 过渡应包含 margin-top')
-    // dock 占位条横向几何：官方 dock 卡片同款收束（内容宽度为上限、居中），
-    // 否则宽栏里拉满整行、左缘贴侧边栏（bug：回合空窗占位条出现在左下角）
-    assert.match(css, /\.ccg-group-root\[data-ccg-placeholder\]\{margin-top:16px\}/, '占位栏应补 16px 上间距与正式栏 flow gap 对齐')
-    // 0 秒占位栏与正式回合栏的位置接续：占位栏渲染在 user 消息的 flowItem 内（正下方、
-    // 无间距），正式回合栏在下一个 flowItem 顶部（官方 column 有 16px flow gap）——
-    // 占位栏补 16px 上间距，交接瞬间位置逐像素一致、不跳变
-    assert.match(css, /\.ccg-group-root\[data-ccg-placeholder\]\{margin-top:16px\}/, '占位栏应补 16px 上间距与正式栏 flow gap 对齐')
-    assert.doesNotMatch(css, /\.ccg-dock-run/, '输入区 dock 占位条已移除（占位回 user 消息正下方，避免跑到状态描述行下面）')
+  it('非交互态样式钩子（data-tf-static / data-open 旋转箭头）', () => {
+    const css = styleText()
+    assert.ok(css.includes('[data-tf-static]'))
+    assert.ok(css.includes('.ccg-turn-bar[data-open] .ccg-turn-bar-chevron'))
+  })
+})
+
+describe('Step Poker Skin（官方结构 + 软 DOM 依赖）', () => {
+  it('皮肤由 body 属性总闸（data-tf-step-skin）控制', () => {
+    const css = styleText()
+    assert.ok(css.includes('body[data-tf-step-skin="poker"]'))
+    // 所有皮肤规则都挂在总闸之下：不含脱离 body 前缀的 data-step-process 规则
+    for (const line of css.split('\n')) {
+      if (line.includes('data-step-process')) {
+        assert.ok(line.startsWith('body[data-tf-step-skin="poker"]'), '皮肤规则必须挂在总闸下：' + line)
+      }
+    }
   })
 
-  it('展开间距不跨层泄漏：回合嵌套段自己的 fold-clip 命中 16px，回合的不命中', () => {
-    // 结构模拟真实 DOM：header 在 DisclosureRow 内部包装层里（非 group-root 直接子元素）
-    const turn = document.createElement('div')
-    turn.className = 'ccg-group-root'
-    turn.setAttribute('data-ccg-turn', 'true')
-    turn.setAttribute('data-ccg-open', 'true')
-    turn.innerHTML =
-      '<div class="disclosure-wrap"><div class="ccg-header">回合折叠栏</div></div>' +
-      '<div class="ccg-turn-divider"></div>' +
-      '<div class="ccg-fold-clip ccg-fold-clip-open"><div class="ccg-fold-body">' +
-        '<div class="ccg-group-root" data-ccg-open="true">' +
-          '<div class="disclosure-wrap"><div class="ccg-header">步骤折叠栏</div></div>' +
-          '<div class="ccg-fold-clip ccg-fold-clip-open"><div class="ccg-fold-body">成员行</div></div>' +
-        '</div>' +
-      '</div></div>'
-    document.body.appendChild(turn)
-    const clips = turn.querySelectorAll('.ccg-fold-clip')
-    assert.equal(clips.length, 2)
-    assert.equal(parseInt(document.defaultView.getComputedStyle(clips[0]).marginTop, 10), 0,
-      '回合折叠栏的 fold-clip 不应获得 16px（间距由分隔线承担）')
-    assert.equal(parseInt(document.defaultView.getComputedStyle(clips[1]).marginTop, 10), 16,
-      '嵌套步骤折叠栏自己的 fold-clip 应获得 16px（与成员间距同节奏）')
-    document.body.removeChild(turn)
+  it('官方 DOM 钩子（data-step-process / data-step-process-icon / data-process-activity）全部命中', () => {
+    const css = styleText()
+    assert.ok(css.includes('[data-step-process] [data-step-process-icon] > *{display:none}'), '官方图标内容隐藏')
+    assert.ok(css.includes('[data-step-process] [data-step-process-icon]::before'), '卡牌渲染位')
   })
 
-  it('注入的 style 标签包含滚轮数字规则与 sr-only 规则', () => {
-    const tag = document.querySelector('style[data-plugin-css="dsh-turn-fold/style"]')
-    const css = tag.textContent
-    assert.match(css, /\.ccg-roll-cell\{display:inline-block;width:1ch;height:1em;overflow:hidden/, '数位视窗应裁切为 1ch×1em')
-    assert.match(css, /\.ccg-roll-strip\{display:flex;flex-direction:column\}/, '数字条竖排 0-9')
-    assert.match(css, /\.ccg-sr-only\{position:absolute;width:1px;height:1px/, 'sr-only 完整文案应视觉隐藏')
+  it('活动 → 花色映射规则（官方 ProcessActivity 词表）', () => {
+    const css = styleText()
+    const activities = ['thinking', 'read', 'readImage', 'search', 'edit', 'write', 'commands', 'code', 'webSearch', 'webFetch', 'subagents', 'plan', 'questions', 'tools']
+    for (const activity of activities) {
+      assert.ok(css.includes('[data-process-activity="' + activity + '"]'), '缺少活动规则 ' + activity)
+    }
+    assert.ok(css.includes('data:image/svg+xml'), '卡牌 mask data-URI')
   })
 
-  it('成员含 hidden 标记 → flowItem display:none（收起状态）', () => {
-    const el = makeFlowItem(document, 'tool-call', '<span data-ccg-hidden="true" style="display:none"></span>')
-    document.body.appendChild(el)
-    const cs = document.defaultView.getComputedStyle(el)
-    assert.equal(cs.display, 'none')
-    document.body.removeChild(el)
+  it('花色 JS 映射与 CSS 规则一致（同源生成）', () => {
+    const css = styleText()
+    const suits = new Set(Object.values(T.ACTIVITY_SUIT))
+    for (const suit of suits) {
+      if (suit === 'whale' && !T.POKER_SPIN_DEEPSEEK) continue
+      // 每个花色至少有一条映射规则（同花色活动合并选择器）
+      const activity = Object.keys(T.ACTIVITY_SUIT).find((a) => T.ACTIVITY_SUIT[a] === suit)
+      assert.ok(css.includes('[data-process-activity="' + activity + '"]'), suit + ' 规则缺失')
+    }
+  })
+})
+
+describe('架构守卫：旧折叠引擎 CSS 必须消失', () => {
+  it('无 :has() 成员隐藏、无 hidden 标记选择器、无旧折叠容器', () => {
+    const css = styleText()
+    assert.ok(!css.includes(':has('), ':has() 隐藏规则必须删除')
+    assert.ok(!css.includes('data-ccg-hidden'), '隐藏标记选择器必须删除')
+    assert.ok(!css.includes('ccg-fold-clip'), '旧 FoldClip 容器样式必须删除')
+    assert.ok(!css.includes('ccg-group-root'), '旧组容器样式必须删除')
+    assert.ok(!css.includes('ccg-header'), '旧折叠栏标题样式必须删除')
+    assert.ok(!css.includes('ccg-member-in'), '旧成员入场样式必须删除')
+    assert.ok(!css.includes('ccg-think-title'), '旧步骤运行标题样式必须删除')
+    assert.ok(!css.includes('ccg-settings-row'), '旧设置行样式必须删除')
+    assert.ok(!css.includes('ccg-text-only'), '旧 text-only 样式必须删除')
   })
 
-  it('无 hidden 标记 → flowItem 正常显示（展开状态）', () => {
-    const el = makeFlowItem(document, 'tool-call', '<div class="tool-card">content</div>')
-    document.body.appendChild(el)
-    const cs = document.defaultView.getComputedStyle(el)
-    assert.notEqual(cs.display, 'none')
-    document.body.removeChild(el)
+  it('reduced-motion 尊重（动画块均有降级）', () => {
+    const css = styleText()
+    assert.ok(css.includes('@media (prefers-reduced-motion:reduce)'))
+  })
+})
+
+describe('body 属性开关（applyStepSkinAttr）', () => {
+  it('apply 后默认 poker；setStepSkin("native") 移除；改回恢复', () => {
+    assert.equal(document.body.getAttribute(T.STEP_SKIN_ATTR), 'poker')
+    T.setStepSkin('native')
+    assert.equal(document.body.getAttribute(T.STEP_SKIN_ATTR), null)
+    T.setStepSkin('poker')
+    assert.equal(document.body.getAttribute(T.STEP_SKIN_ATTR), 'poker')
   })
 
-  it('回归 Bug2 场景（CSS 层面）：展开 → 收起 → 重新隐藏', () => {
-    const el = makeFlowItem(document, 'tool-call', '<span data-ccg-hidden="true" style="display:none"></span>')
-    document.body.appendChild(el)
-    const slot = el.querySelector('[data-slot]')
-    assert.equal(document.defaultView.getComputedStyle(el).display, 'none', '初始收起')
-    // 模拟展开：替换内容为卡片
-    slot.innerHTML = '<div class="tool-card">card</div>'
-    assert.notEqual(document.defaultView.getComputedStyle(el).display, 'none', '展开后显示')
-    // 模拟收起：替换回 hidden 标记
-    slot.innerHTML = '<span data-ccg-hidden="true" style="display:none"></span>'
-    assert.equal(document.defaultView.getComputedStyle(el).display, 'none', '收起后重新隐藏')
-    document.body.removeChild(el)
-  })
-
-  it('无 hidden 标记的普通节点（user 等）不受影响', () => {
-    const el = makeFlowItem(document, 'user', '<div class="user-msg">用户消息</div>')
-    document.body.appendChild(el)
-    const cs = document.defaultView.getComputedStyle(el)
-    assert.notEqual(cs.display, 'none', '不含 hidden 标记的节点不应被隐藏')
-    document.body.removeChild(el)
-  })
-
-  it('规则对任意 kind 的成员生效（assistant-step 成员同样隐藏）', () => {
-    const el = makeFlowItem(document, 'assistant-step', '<span data-ccg-hidden="true" style="display:none"></span>')
-    document.body.appendChild(el)
-    assert.equal(document.defaultView.getComputedStyle(el).display, 'none')
-    document.body.removeChild(el)
-  })
-
-  it('文件名链接：悬停变蓝 + 白色下划实线（底态透明下划线占位，可过渡淡入）', () => {
-    const tag = document.querySelector('style[data-plugin-css="dsh-turn-fold/style"]')
-    const css = tag.textContent
-    assert.match(css, /\.ccg-file-link\{[^}]*text-decoration-line:underline[^}]*text-decoration-color:transparent/,
-      '底态应有透明下划线占位（悬停时颜色过渡淡入）')
-    assert.match(css, /\.ccg-file-link:hover\{color:#4D6BFE!important;text-decoration-color:#fff!important\}/,
-      '悬停应变官方蓝 + 白色下划实线')
-    // 行为：底态下划线不可见（透明），悬停后变白
-    const el = document.createElement('span')
-    el.className = 'ccg-file-link'
-    document.body.appendChild(el)
-    const view = document.defaultView
-    assert.equal(view.getComputedStyle(el).textDecorationColor, 'rgba(0, 0, 0, 0)', '底态下划线透明')
-    document.body.removeChild(el)
-  })
-
-  it('段外 text 正文首尾块 margin 钳制为 0（镜像官方重置，防止与 16px padding/gap 叠加）', () => {    // 模拟官方 AssistantMarkdown 结构：root > body > .markdown > p（p 自带 margin:16px 0，
-    // 运行中的官方 bundle 首尾重置未必生效——插件用 >*>*>*> 结构选择器钳制）
-    const el = document.createElement('div')
-    el.className = 'ccg-text-only'
-    el.innerHTML = '<div class="root"><div class="body"><div class="markdown">' +
-      '<p style="margin:16px 0">正文段落</p>' +
-      '</div></div></div>'
-    document.body.appendChild(el)
-    const cs = document.defaultView.getComputedStyle(el.querySelector('p'))
-    assert.equal(cs.marginTop, '0px', '首块 margin-top 应被钳为 0（含覆盖内联 margin）')
-    assert.equal(cs.marginBottom, '0px', '尾块 margin-bottom 应被钳为 0')
-    document.body.removeChild(el)
-  })
-
-  it('text-only 内非首尾块的 margin 不受钳制（多段落内部间距保持官方值）', () => {
-    const el = document.createElement('div')
-    el.className = 'ccg-text-only'
-    el.innerHTML = '<div><div><div class="markdown">' +
-      '<p style="margin:16px 0">第一段</p>' +
-      '<p style="margin:16px 0">第二段</p>' +
-      '</div></div></div>'
-    document.body.appendChild(el)
-    const ps = el.querySelectorAll('p')
-    assert.equal(document.defaultView.getComputedStyle(ps[0]).marginTop, '0px')
-    assert.equal(document.defaultView.getComputedStyle(ps[1]).marginBottom, '0px')
-    // 中间块的 margin 不动（此例两段互为首尾，构造三段验证中段）
-    el.innerHTML = '<div><div><div class="markdown">' +
-      '<p>一</p><p style="margin:16px 0">二</p><p>三</p>' +
-      '</div></div></div>'
-    const mid = el.querySelectorAll('p')[1]
-    assert.equal(document.defaultView.getComputedStyle(mid).marginTop, '16px', '中段 margin-top 不应被钳制')
-    assert.equal(document.defaultView.getComputedStyle(mid).marginBottom, '16px', '中段 margin-bottom 不应被钳制')
-    document.body.removeChild(el)
-  })
-
-  it('最终总结包装器 [data-ccg-turn-folded] 首尾块 margin 同样钳制', () => {
-    const el = document.createElement('div')
-    el.setAttribute('data-ccg-turn-folded', 'true')
-    el.innerHTML = '<div class="root"><div class="body"><div class="markdown">' +
-      '<p style="margin:16px 0">最终总结</p>' +
-      '</div></div></div>'
-    document.body.appendChild(el)
-    const cs = document.defaultView.getComputedStyle(el.querySelector('p'))
-    assert.equal(cs.marginTop, '0px', '最终总结首块 margin-top 应被钳为 0')
-    document.body.removeChild(el)
+  it('非法皮肤值被忽略', () => {
+    T.setStepSkin('random')
+    assert.equal(document.body.getAttribute(T.STEP_SKIN_ATTR), 'poker')
+    T.setStepSkin(undefined)
+    assert.equal(document.body.getAttribute(T.STEP_SKIN_ATTR), 'poker')
   })
 })

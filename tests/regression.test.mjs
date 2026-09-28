@@ -1,18 +1,18 @@
-// 回归测试：覆盖历史 bug 与关键行为。
-//  - Bug1（身份竞争）：store 节点对象被替换后折叠仍正常（渲染级）
-//  - Bug2（inject/useHostDescription）：注册契约 + 委托渲染不崩溃
-//  - 无工具调用回合也折叠（v0.2.3）
-//  - 折叠作用域不越过用户消息（v0.2.2 fix）
-//  - 步骤分组手动展开/收起
-//  - 真实会话数据全量折叠断言
+// 历史回归（每修一个 bug 都要往里加用例）：
+//   1. 直播时钟：订阅者在回调栈内全部退订后不得留下空转定时器（无人持有的 250ms 链）
+//   2. 假 token 增长已删除：真实数据不变 → 数字不变（跨渲染、跨直播 tick 都不漂移）
+//   3. 齿轮点击 stopPropagation：弹窗不误触折叠 toggle
+//   4. 运行中栏不是 Fold Controller：任何交互都不产生 setOpen
+//   5. 注册异常软降级：单个条目抛错不影响其余功能与宿主启动
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { loadPlugin } from './helpers/loader.mjs'
-import { createSessionStore, makeUseSession, makeNode, userNode, asNode, toolNode, contextNode, tailNode, buildSnapshot } from './helpers/store.mjs'
-import { TURN13, NO_TOOL, OUTSIDE_SCOPE, MID_STEER, MID_STEER_FOLLOWED } from './helpers/fixtures.mjs'
+import {
+  T0, makeTurnNode, makeTurnProcessOwner, makeUseChat, makeStep, makeStepData,
+} from './helpers/fixtures.mjs'
 
 const require = createRequire(import.meta.url)
 const { JSDOM } = require('jsdom')
@@ -23,899 +23,186 @@ const dom = new JSDOM('<!DOCTYPE html><html><head></head><body><div id="root"></
 })
 globalThis.window = dom.window
 globalThis.document = dom.window.document
-// 固定界面语言为简体中文（client.js 按 navigator.language(s) 检测；文案断言按中文）。
 Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-const { test: T, exports: pluginExports, React } = loadPlugin({ window: dom.window })
-
-function MockToolCallTree(props) {
-  return React.createElement('div', { className: 'mock-tool-card', 'data-call': props.node?.key }, 'TOOL')
+const PRIMITIVES_STUB = {
+  IconChevronDownOutline14: function IconChevronDownStub() { return null },
+  IconChevronRightOutline14: function IconChevronRightStub() { return null },
+  Toast: function ToastStub() { return null },
 }
-function MockAssistantNodeView(props) {
-  return React.createElement('div', { className: 'mock-assistant', 'data-node': props.node?.key }, 'AS')
-}
-const BUILTIN_ENTRIES = [
-  { component: MockToolCallTree, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
-  { component: MockAssistantNodeView, options: { key: 'assistant-step', priority: 0, locale: 'conversation' } },
-  { component: MockAssistantNodeView, options: { key: 'context', priority: 0, locale: 'conversation' } },
-]
-const slotRegistrations = []
-const slotsService = {
-  entries() { return [...BUILTIN_ENTRIES, ...slotRegistrations] },
-  entriesOfSlot() { return [] },
-  inject(name, factory) { slotRegistrations.push(factory()) },
-  register(options, component) { return { component, options } },
-}
-pluginExports.apply({
-  inject(deps, cb) {
-    cb({ slots: slotsService, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
-  },
-})
+const { test: T } = loadPlugin({ window: dom.window, uiPrimitives: PRIMITIVES_STUB })
+const react = require('react')
 
-// 模拟 cachedSlotInject：inject 声明的 hooks → use<Name> props
-const injectedHooks = (() => {
-  const source = slotRegistrations[0].options.inject().hooks.connectionGeneration
-  return {
-    useConnectionGeneration: (selector) =>
-      React.useSyncExternalStore(
-        (fn) => source.subscribe(fn),
-        () => selector(source.getSnapshot()),
-      ),
-  }
-})()
-
-let root = null
 let container = null
-function mount(snapshot, sessionId = 's1') {
-  container = document.createElement('div')
-  document.body.appendChild(container)
+let root = null
+function mount() {
+  container = dom.window.document.createElement('div')
+  dom.window.document.body.appendChild(container)
   root = createRoot(container)
-  const store = createSessionStore(snapshot)
-  const useSession = makeUseSession(store)
-  act(() => {
-    root.render(
-      React.createElement('div', null,
-        snapshot.chat.order
-          .filter((k) => {
-            const n = snapshot.chat.nodes.get(k)
-            return n.kind !== 'user' && n.kind !== 'turn-tail'
-          })
-          .map((k) => {
-            const node = snapshot.chat.nodes.get(k)
-            const Comp = node.kind === 'tool-call' ? T.GroupedToolCallView : node.kind === 'context' ? T.GroupedContextView : T.GroupedAssistantView
-            return React.createElement(Comp, { key: k, node, useSession, sessionId, ...injectedHooks })
-          }),
-      ),
-    )
-  })
-  return { store, useSession }
 }
-const clickHeader = () => {
-  const el = container.querySelector('.ccg-header')
-  assert.ok(el, '回合折叠栏应存在')
-  act(() => { el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+function renderView(props) {
+  act(() => { root.render(react.createElement(T.EnhancedTurnProcessView, props)) })
 }
-const counts = () => ({
-  headers: container.querySelectorAll('.ccg-header').length,
-  cards: container.querySelectorAll('.mock-tool-card').length,
-  assistants: container.querySelectorAll('.mock-assistant').length,
-  hidden: container.querySelectorAll('[data-ccg-hidden]').length,
-})
-
-function withClean(fn) {
-  return () => {
-    T.turnOverrides.clear()
-    T.overrides.clear()
-    mount(TURN13)
-    try {
-      fn()
-    } finally {
-      act(() => root.unmount())
-      document.body.innerHTML = ''
-      T.turnOverrides.clear()
-      T.overrides.clear()
-    }
-  }
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-describe('回归 Bug1：store 节点对象替换（渲染级）', () => {
-  it('替换节点对象后折叠状态不丢失（key 定位，不依赖对象身份）', withClean(() => {
-    // 模拟运行时替换 store 中的节点对象：同 key 新对象
-    const newNodes = new Map(TURN13.chat.nodes)
-    newNodes.set('tc-revert', toolNode('tc-revert', 35765, { step: 1 }))
-    // 只替换 store 而不改 order；刷新快照
-    // （渲染级验证：先展开再收起，仍应正常）
-    clickHeader()
-    clickHeader()
-    const c = counts()
-    assert.equal(c.cards, 0, '替换节点对象后收起仍应隐藏所有卡片')
-    assert.equal(c.hidden, 7)
-  }))
+const usageStep = makeStep(1, makeStepData(1, {
+  usage: { inputTokens: 1000, outputTokens: 3214, cacheReadTokens: 2000 },
+}))
+
+beforeEach(() => {
+  dom.window.localStorage.clear()
+  mount()
 })
 
-describe('回归 v0.2.3：无工具调用回合也折叠', () => {
-  it('仅 context + Think 的回合收成回合折叠栏', () => {
-    T.turnOverrides.clear()
-    T.overrides.clear()
-    mount(NO_TOOL)
-    const c = counts()
-    assert.equal(c.headers, 1, '无工具调用回合也应渲染回合折叠栏')
-    assert.equal(c.assistants, 1, '最终总结可见')
-    assert.equal(c.hidden, 1, '中间的 Think 成员隐藏')
-    act(() => root.unmount())
-    document.body.innerHTML = ''
-    T.turnOverrides.clear()
-    T.overrides.clear()
-  })
-})
-
-describe('回归 v0.2.2：折叠作用域不越过用户消息', () => {
-  it('用户消息上方的上下文注入始终可见、不参与折叠', () => {
-    T.turnOverrides.clear()
-    T.overrides.clear()
-    mount(OUTSIDE_SCOPE)
-    // ctx-approval 渲染为 mock-assistant（ContextMessageNodeView 的 mock 也是 AS 类）
-    // 它不应带 hidden 标记、也不应成为折叠栏
-    const ctxEl = container.querySelector('[data-node="ctx-approval"]')
-    assert.ok(ctxEl, '作用域外的上下文注入应渲染')
-    // 折叠栏应为 as-o-1
-    const header = container.querySelector('.ccg-header .ccg-title')
-    assert.ok(header)
-    assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 1, '仅中间 Think 成员隐藏')
-    act(() => root.unmount())
-    document.body.innerHTML = ''
-    T.turnOverrides.clear()
-    T.overrides.clear()
-  })
-})
-
-describe('回归 issue #2：中途 steering 被宿主归类为 user 时回合栏仍渲染', () => {
-  it('运行中：误判 user 是回合内最后一个节点（anchorSeq 越过全部中间节点）→ 回合栏照常出现', () => {
-    T.turnOverrides.clear()
-    T.overrides.clear()
-    mount(MID_STEER)
-    try {
-      // 这是报告人给的症状签名：段栏在、回合栏没了（.ccg-group-root[data-ccg-turn] 为 0）
-      const turnHeader = container.querySelector('.ccg-group-root[data-ccg-turn] > .ccg-header')
-      assert.ok(turnHeader, '回合折叠栏必须渲染（旧算法此处 foldable=false → 消失）')
-      const title = turnHeader.querySelector('.ccg-title')
-      assert.ok(title && title.textContent.length > 0, '回合折叠栏标题非空')
-      // 折叠栏锚定在首条中间节点（as-ms-1），不是误判的 user（u-mis-400）
-      assert.ok(
-        container.querySelector('.mock-assistant[data-node="as-ms-1"]') !== null
-          || container.querySelector('.mock-tool-card') !== null,
-        '本回合中间节点仍参与折叠',
-      )
-    } finally {
-      act(() => root.unmount())
-      document.body.innerHTML = ''
-      T.turnOverrides.clear()
-      T.overrides.clear()
-    }
-  })
-
-  it('插话之后又有中间节点：折叠栏仍锚定首条中间节点（不靠"退回兜底"掩盖）', () => {
-    T.turnOverrides.clear()
-    T.overrides.clear()
-    mount(MID_STEER_FOLLOWED)
-    try {
-      assert.ok(
-        container.querySelector('.ccg-group-root[data-ccg-turn] > .ccg-header'),
-        '回合折叠栏必须渲染',
-      )
-      assert.equal(
-        container.querySelectorAll('.ccg-group-root[data-ccg-turn]').length,
-        1,
-        '恰好一个回合折叠栏',
-      )
-    } finally {
-      act(() => root.unmount())
-      document.body.innerHTML = ''
-      T.turnOverrides.clear()
-      T.overrides.clear()
-    }
-  })
-})
-
-describe('步骤分组：手动展开/收起', () => {
-  it('连续工具调用组：运行中渲染回合折叠栏 + 步骤折叠栏（默认折叠）；步骤折叠栏展开/收起成员，回合折叠栏收起整回合', () => {
-    T.turnOverrides.clear()
-    T.overrides.clear()
-    // 段边界：纯 text 节点（无 reasoning 块）
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
-    const nodes = [
-      userNode('u', 100),
-      textNode('as', 200, 'text'),
-      toolNode('tc1', 300),
-      toolNode('tc2', 301),
-      toolNode('tc3', 302),
-      textNode('as2', 400, 'text'),
-      textNode('final', 500, 'text'),
-    ]
-    // 回合进行中（turnEnds 为空）→ 回合折叠栏从回复开始出现（默认展开），步骤折叠栏默认折叠
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    try {
-      mount(s)
-      const turnHeader = container.querySelector('.ccg-group-root[data-ccg-turn] > .ccg-header')
-      assert.ok(turnHeader, '运行中应渲染回合折叠栏')
-      const segHeader = container.querySelector('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
-      assert.ok(segHeader, '步骤折叠栏应作为独立 flowItem 渲染在回合折叠栏下方')
-      assert.ok(segHeader.textContent.includes('运行了3条命令'), '步骤折叠栏标题应为"运行了3条命令"（段后有 text 已闭合）')
-      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '组内两个非 leader 成员 flowItem 隐藏（内容由段 leader 统一渲染）')
-      // 点击步骤折叠栏展开
-      act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '展开后非 leader 成员 flowItem 仍隐藏（内容在步骤折叠栏内）')
-      assert.equal(container.querySelectorAll('.mock-tool-card').length, 3, '3 个工具卡片在步骤折叠栏内可见')
-      // 再点收起
-      act(() => { segHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 2, '收起后成员 flowItem 仍隐藏')
-      assert.equal(container.querySelectorAll('.mock-tool-card').length, 0, '收起后工具卡片隐藏')
-      // 点击回合折叠栏收起整回合：步骤折叠栏随成员隐藏，只剩回合折叠栏
-      act(() => { turnHeader.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
-      assert.equal(container.querySelectorAll('.ccg-header').length, 1, '只剩回合折叠栏')
-      assert.equal(container.querySelectorAll('.mock-assistant').length, 0, '回合折叠栏收起后中间 Think 隐藏')
-      assert.equal(container.querySelectorAll('[data-ccg-hidden]').length, 5, 'tc1/tc2/tc3/as2/final 全部带隐藏标记')
-    } finally {
-      act(() => root.unmount())
-      document.body.innerHTML = ''
-      T.turnOverrides.clear()
-      T.overrides.clear()
-      T.liveTokenCache.clear()
-    }
-  })
-
-  it('单条命令运行中也套步骤折叠栏（不再原样渲染）', () => {
-    T.turnOverrides.clear()
-    T.overrides.clear()
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
-    const nodes = [
-      userNode('u', 100),
-      textNode('as', 200, 'text'),
-      toolNode('tc', 300),
-      textNode('as2', 400, 'text'),
-      textNode('final', 500, 'text'),
-    ]
-    // 运行中：步骤折叠栏出现
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    mount(s)
-    const segHeaders = [...container.querySelectorAll('.ccg-header')].filter((h) => !h.closest('[data-ccg-turn]'))
-    assert.equal(segHeaders.length, 1, '运行中单条工具调用应套步骤折叠栏')
-    assert.ok(segHeaders[0].textContent.includes('运行了Pwsh'), '步骤折叠栏标题应为"运行了Pwsh"（单次命令显示工具名）')
-    act(() => root.unmount())
-    document.body.innerHTML = ''
-    // 回合结束后：回合折叠栏收起，步骤折叠栏随回合折叠栏隐藏
-    const s2 = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
-    mount(s2)
-    const segHeaders2 = [...container.querySelectorAll('.ccg-header')].filter((h) => !h.closest('[data-ccg-turn]'))
-    assert.equal(segHeaders2.length, 0, '回合结束后步骤折叠栏随回合折叠栏隐藏')
-    act(() => root.unmount())
-    document.body.innerHTML = ''
-    T.turnOverrides.clear()
-    T.overrides.clear()
-  })
-})
-
-describe('真实会话数据（TURN13）全量折叠', () => {
-  it('所有成员节点 foldable 且非折叠栏/非最终 → 渲染层隐藏', withClean(() => {
-    const c = counts()
-    assert.equal(c.cards, 0)
-    assert.equal(c.assistants, 1)
-    assert.equal(c.hidden, 7)
-    // 展开回合折叠栏后：as-1 纯 think 段 + 4 个工具段步骤折叠栏行可见、
-    // text 正文段外渲染，工具卡片仍默认折叠
-    clickHeader()
-    const expanded = counts()
-    assert.equal(expanded.cards, 0, '步骤折叠始终默认收起，工具卡片不可见')
-    assert.equal(expanded.assistants, 5, 'as-1 段外 text + as-2/3/4 段外 text + final = 5')
-    assert.equal(expanded.hidden, 3, 'as-2/3/4 非 leader 成员隐藏标记')
-    // as-1 纯 think 段 + 4 个工具段步骤折叠栏 = 5
-    const segHeaders = container.querySelectorAll('.ccg-group-root:not([data-ccg-turn]) > .ccg-header')
-    assert.equal(segHeaders.length, 5, 'as-1 纯 think 段 + 4 个工具段步骤折叠栏')
-    // 4 个 text-only 段外正文（as-1/2/3/4）
-    assert.equal(container.querySelectorAll('.ccg-text-only').length, 4)
-  }))
-})
-
-describe('connection 双版本兼容（DSH 0.1.2+ generation / 旧版 hostDescription）', () => {
-  // 旧版 API：connection.hostDescription（含 .home）
-  it('旧版 connection.hostDescription → inject 声明 hostDescription hook', () => {
-    const regs = []
-    const svc = {
-      entries() { return [] },
-      entriesOfSlot() { return [] },
-      inject(name, factory) { regs.push(factory()) },
-      register(options, component) { return { component, options } },
-    }
-    pluginExports.apply({
-      inject(deps, cb) {
-        cb({ slots: svc, connection: { hostDescription: { getSnapshot: () => ({ home: 'C:/Users/Test' }), subscribe: () => () => {} } } })
-      },
-    })
-    assert.equal(regs.length, 4, '旧版也应注册 4 个条目（4 个 chat.node shadow 格，无 dock 占位条）')
-    // 四个 chat.node 格都声明 inject（user 格同样走双版本 connection hook 透传）。
-    const chatNodeEntries = regs.filter((e) => e.options.name === 'conversation.chat.node')
-    assert.equal(chatNodeEntries.length, 4, 'chat.node 四格（tool-call + assistant-step + context + user）')
-    for (const entry of chatNodeEntries) {
-      const hooks = entry.options.inject().hooks
-      assert.ok(hooks.hostDescription, `条目 ${entry.options.key} 应声明 hostDescription（旧版）`)
-      assert.equal(hooks.connectionGeneration, undefined, '旧版不注入 connectionGeneration')
-    }
-  })
-
-  // 新版 API：connection.generation（含 .host.home）
-  it('新版 connection.generation → inject 声明 connectionGeneration hook', () => {
-    const regs = []
-    const svc = {
-      entries() { return [] },
-      entriesOfSlot() { return [] },
-      inject(name, factory) { regs.push(factory()) },
-      register(options, component) { return { component, options } },
-    }
-    pluginExports.apply({
-      inject(deps, cb) {
-        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
-      },
-    })
-    assert.equal(regs.length, 4, '新版也应注册 4 个条目（4 个 chat.node shadow 格，无 dock 占位条）')
-    // 四个 chat.node 格都声明 inject（user 格同样走双版本 connection hook 透传）。
-    const chatNodeEntries = regs.filter((e) => e.options.name === 'conversation.chat.node')
-    assert.equal(chatNodeEntries.length, 4, 'chat.node 四格（tool-call + assistant-step + context + user）')
-    for (const entry of chatNodeEntries) {
-      const hooks = entry.options.inject().hooks
-      assert.ok(hooks.connectionGeneration, `条目 ${entry.options.key} 应声明 connectionGeneration（新版）`)
-      assert.equal(hooks.hostDescription, undefined, '新版不注入 hostDescription')
-    }
-  })
-})
-
-describe('connection 三版本兼容（DSH 0.1.2-rc.1+ / 0.1.3：官方条目 inject 面探测合并）', () => {
-  // 0.1.2-rc.1 起官方 tool-call 条目的 inject 面换成 hooks.hostInfo（ToolCallTree 调
-  // useHostInfo(info => info.home)）。插件条目的 inject 完全替换官方面——不探测合并时
-  // 官方组件在插件条目栈里渲染即抛 "useHostInfo is not a function"，SlotErrorBoundary
-  // 把插件条目永久 abdicate：步骤折叠栏几乎全部消失、工具调用无法折叠（真机 0.1.3-alpha.1
-  // 症状会话实测复现）。
-  const officialHostInfo = { getSnapshot: () => ({ home: 'C:/Users/Test' }), subscribe: () => () => {} }
-
-  it('官方 tool-call 条目声明 hooks.hostInfo → 插件条目 inject 合并 hostInfo（不再 abdicate 崩溃）', () => {
-    const regs = []
-    const svc = {
-      entries() {
-        // 官方 0.1.3 真机形态：ui-tool 注册 tool-call 条目，inject 返回 { hooks: { hostInfo } }
-        return [
-          {
-            component: function OfficialToolCallTree() {},
-            options: { key: 'tool-call', priority: 0, locale: 'conversation' },
-            inject: () => ({ hooks: { hostInfo: officialHostInfo } }),
-          },
-          { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
-        ]
-      },
-      entriesOfSlot() { return [] },
-      inject(name, factory) { regs.push(factory()) },
-      register(options, component) { return { component, options } },
-    }
-    pluginExports.apply({
-      inject(deps, cb) {
-        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
-      },
-    })
-    const byKey = {}
-    for (const r of regs) {
-      if (r.options.name === 'conversation.chat.node') byKey[r.options.key] = r.options.inject().hooks
-    }
-    // 三格的 inject 面统一携带全部官方 hooks（跨类委托：think 段 leader 是
-    // assistant-step，但段内工具成员照样渲染官方 ToolCallTree、消费 tool-call
-    // 条目的 hostInfo——修复前正是这条跨类路径漏了 hostInfo 而崩溃）
-    assert.ok(byKey['tool-call'].hostInfo, 'tool-call 条目必须合并官方 hostInfo（0.1.3 崩溃根因）')
-    assert.ok(byKey['assistant-step'].hostInfo, 'assistant-step 条目同样合并 hostInfo（跨类委托渲染工具卡）')
-    assert.ok(byKey['context'].hostInfo, 'context 条目同样合并 hostInfo（跨类委托渲染工具卡）')
-    // 自备 hook 全部保留（其他版本组件可能消费）
-    assert.ok(byKey['tool-call'].connectionGeneration, '自备 connectionGeneration 保留')
-    assert.ok(byKey['assistant-step'].connectionGeneration, 'assistant-step 保留自备 connectionGeneration')
-    assert.ok(byKey['context'].connectionGeneration)
-  })
-
-  it('官方条目 inject 抛错 / priority 非 0 → 探测静默退回自备 hook，不外泄异常', () => {
-    const regsBad = []
-    const svcBad = {
-      entries() {
-        return [
-          {
-            component: function Bad() {},
-            options: { key: 'tool-call', priority: 0, locale: 'conversation' },
-            inject: () => { throw new Error('official inject boom') },
-          },
-          {
-            component: function ShadowedByOther() {},
-            options: { key: 'tool-call', priority: 7, locale: 'conversation' },
-            inject: () => ({ hooks: { hostInfo: officialHostInfo } }),
-          },
-        ]
-      },
-      entriesOfSlot() { return [] },
-      inject(name, factory) { regsBad.push(factory()) },
-      register(options, component) { return { component, options } },
-    }
-    pluginExports.apply({
-      inject(deps, cb) {
-        cb({ slots: svcBad, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
-      },
-    })
-    const toolEntry = regsBad.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'tool-call')
-    assert.ok(toolEntry)
-    const hooks = toolEntry.options.inject().hooks // 抛错条目 + priority 非 0 条目都被跳过，不外泄
-    assert.ok(hooks.connectionGeneration, '退回仅自备 connectionGeneration')
-    assert.equal(hooks.hostInfo, undefined, 'priority 7 的条目（非官方 priority 0）不参与合并')
-  })
-})
-
-describe('回归：隐藏纯工具步骤的消耗token漏计（对齐官方统计）', () => {
-  // 真机案例（DSH WorkSpace「SVG鹈鹕骑自行车动画」，单回合 3 步）：step2 的 assistant
-  // 消息只有 tool-call（present）块、无可见 reasoning/text → 官方以 visibility:hidden
-  // 结算该 assistant-step（assistant.ts blockIsVisible：tool-call 块不可见），且
-  // orderedVisibleChatNodes 只把 visible 节点写进 order/locations → 旧版插件只遍历
-  // locations.getTurn 漏计 step2 的 58,543（官方统计 175,844 vs 插件 117,301）。
-  // usage 取自该会话持久化事件日志的 assistant/message 逐步原值。
-  const U1 = { inputTokens: 18396, outputTokens: 36020, cacheReadTokens: 4032 } // = 58,448
-  const U2 = { inputTokens: 54452, outputTokens: 59, cacheReadTokens: 4032 } // = 58,543（隐藏步骤）
-  const U3 = { inputTokens: 129, outputTokens: 292, cacheReadTokens: 58432 } // = 58,853
-  const OFFICIAL_TOTAL = 175844 // 58448 + 58543 + 58853，官方 tokenUsage projection 同值
-
-  function hiddenStepSnapshot({ withTokenUsage = false, officialTotal = OFFICIAL_TOTAL } = {}) {
-    const tail = withTokenUsage
-      ? [tailNode('tail-13', 500, {
-          tokensPerSecond: 144,
-          // 模拟官方 deriveTurnTokenUsage：多算一个只在事件日志里存在的被重试 attempt
-          // （+9000 input），节点上不可见——证明官方值优先于节点累加
-          tokenUsage: { uncachedInputTokens: 72977 + 9000, outputTokens: 36371, totalTokens: officialTotal + 9000, cacheReadTokens: 66496 },
-        })]
-      : []
-    const nodes = [
-      userNode('u-13', 100),
-      asNode('as-13-1', 200, { step: 1, usage: U1 }),
-      toolNode('tc-13-1', 250, { step: 1 }),
-      asNode('as-13-2', 300, { step: 2, usage: U2, hidden: true }), // 纯工具步骤 → hidden
-      toolNode('tc-13-2', 320, { step: 2 }),
-      asNode('as-13-3', 400, { step: 3, usage: U3 }),
-      ...tail,
-    ]
-    return buildSnapshot(nodes, {
-      turnEnds: new Map([[13, 500]]),
-      turnTimings: new Map([[13, { startTime: 1000, endTime: 9000 }]]),
-    })
+afterEach(() => {
+  if (root) {
+    act(() => { root.unmount() })
+    root = null
   }
+  if (container) {
+    container.remove()
+    container = null
+  }
+})
 
-  it('无官方 tokenUsage（旧版/证据不全）：从 nodes.values() 补采隐藏 assistant-step → 总数对齐官方统计', () => {
-    const s = hiddenStepSnapshot()
-    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
-    assert.equal(m.tokens, OFFICIAL_TOTAL, '58448 + 58543(隐藏) + 58853 = 175844（修复前 117301）')
-    assert.equal(m.outputTokens, 36371)
-    // 缓存命中：66496 / (72977 + 66496 + 0) → 47.68
-    assert.equal(m.cacheHitPercent, '47.68')
+describe('直播时钟状态机', () => {
+  it('最后一个订阅者在回调栈内退订 → 定时器被回收，无空转链', async () => {
+    const unsub = T.subscribeTicks(() => {
+      // 回调栈内退订自己（模拟 React uSES 同步重渲染路径）
+      unsub()
+    })
+    // 等待 2 个 tick 周期（基准 250ms × 随机 0.5~1）
+    await sleep(700)
+    assert.equal(T.tickListeners.size, 0, '订阅者已全部退订')
+    const version = T.getTickVersion()
+    await sleep(700)
+    assert.equal(T.getTickVersion(), version, '无订阅者后时钟停表（无空转定时器）')
   })
 
-  it('官方 tokenUsage 优先于节点累加（被重试 attempt 只在事件日志里也计入）', () => {
-    const s = hiddenStepSnapshot({ withTokenUsage: true })
-    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
-    assert.equal(m.tokens, OFFICIAL_TOTAL + 9000, '官方 totalTokens（含重试 attempt）优先，不用节点累加值 175844')
-    assert.equal(m.outputTokens, 36371)
-    // 官方 TurnUsagePanel 同款分母：cacheRead / (totalTokens - outputTokens)
-    // = 66496 / (184844 - 36371) → 44.79
-    assert.equal(m.cacheHitPercent, '44.79')
-    // 其余指标不受影响：tok/s 与 ttft 仍读 turn-tail
-    assert.equal(m.tokensPerSecond, 144)
-    assert.equal(T.turnHeaderLabel(m), '耗时8秒 · 消耗184844token · 144tok/s · 缓存命中44.79%')
-  })
-
-  it('跨回合不串账：其他回合的隐藏 assistant-step 不计入本回合', () => {
-    const s = hiddenStepSnapshot()
-    // turn 99 的隐藏步骤（data.turn=99）已物化在同一个 nodes Map 里
-    const other = asNode('as-99-1', 600, { step: 1, usage: U2, hidden: true, turn: 99 })
-    s.chat.nodes.set(other.key, other)
-    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
-    assert.equal(m.tokens, OFFICIAL_TOTAL, 'turn 99 的 usage 不串进 turn 13')
-  })
-
-  it('旧版节点容器无 values() 方法（0.1.1 形状）→ 不崩溃，回退 getTurn 路径', () => {
-    const s = hiddenStepSnapshot()
-    const legacyNodes = { get: (k) => s.chat.nodes.get(k) } // 无 values()
-    const m = T.computeTurnMetrics(13, legacyNodes, s.chat.locations, s.turnTimings, undefined)
-    assert.equal(m.tokens, 117301, '只能看到 visible 节点（旧行为：58448 + 58853）')
+  it('回调期间新订阅者不会开出并行链（tick 速率不翻倍）', async () => {
+    let innerSubscribed = false
+    let inner = null
+    const unsub = T.subscribeTicks(() => {
+      if (!innerSubscribed) {
+        innerSubscribed = true
+        inner = T.subscribeTicks(() => {}) // 回调内订阅
+      }
+    })
+    await sleep(700)
+    assert.ok(innerSubscribed)
+    assert.equal(T.tickListeners.size, 2, '回调内订阅被接受')
+    // 退订全部 → 停表
+    unsub()
+    inner()
+    assert.equal(T.tickListeners.size, 0)
+    const version = T.getTickVersion()
+    await sleep(700)
+    assert.equal(T.getTickVersion(), version)
   })
 })
 
-describe('回归：0 秒占位回 user 格——与第三方 user 条目（dsh-easyrewrite 类）链式委托共存', () => {
-  // 背景：2026-08-30 曾因 dsh-easyrewrite（撤回/重编辑气泡）同 key 同 priority 注册冲突，
-  // 把 0 秒占位条迁出 user 格、改挂输入区 conversation.input.dock——但 dock 位于整个
-  // 聊天流列（含官方 TurnStatus "Deep diving..." 状态描述行）之下，占位条跑到状态描述行
-  // 下面（输入框左上角），位置错误（真机截图确认）。现恢复 user 格：注册在第三方条目
-  // 之下（lowest renders 语义下由本插件渲染），并把其组件链式委托渲染（整包 props 转发、
-  // 其 inject 的扁平 props 并入注入面），两边共存、easyrewrite 功能不丢。
-  function easyrewriteLikeSlots({ onThirdRender } = {}) {
-    const regs = []
-    const official = [
-      { component: function OfficialUser() {}, options: { key: 'user', priority: 0, locale: 'chat' } },
-      { component: function OfficialTool() {}, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
-      { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
-      { component: function OfficialContext() {}, options: { key: 'context', priority: 0, locale: 'conversation' } },
-    ]
-    const thirdParty = {
-      component: function EasyRewriteBubble(props) {
-        if (onThirdRender) onThirdRender(props)
-        return React.createElement('div', { className: 'mock-easyrewrite', 'data-node': props.node?.key }, 'BUBBLE')
-      },
-      options: { key: 'user', priority: -1, locale: 'chat' },
-      // easyrewrite 的 inject 返回扁平 props（无 hooks 键）：openSession/inputState 等
-      inject: () => ({ openSession: () => {}, inputState: { draft: '草稿' }, inputActions: { send: () => {} } }),
-    }
-    const svc = {
-      entries: () => [...official, thirdParty, ...regs],
-      entriesOfSlot: () => [],
-      inject: (name, factory) => { regs.push(factory()) },
-      register: (options, component) => ({ component, options }),
-    }
-    return { svc, regs }
-  }
-  it('user 格优先级注册在第三方占用位之下（lowest renders 语义下由本插件渲染）· 不再注册 dock', () => {
-    const { svc, regs } = easyrewriteLikeSlots()
-    pluginExports.apply({
-      inject(deps, cb) {
-        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
-      },
+describe('禁止假 Token 增长（真实数据不变 → 数字不变）', () => {
+  it('真实数据不变的重复渲染：token 数值逐字节一致（无 +1/+11 动画偏移）', () => {
+    const props = () => ({
+      node: makeTurnNode({ status: 'closed', steps: [usageStep] }),
+      turnProcess: makeTurnProcessOwner(),
+      useChat: makeUseChat(),
     })
-    const userEntry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
-    assert.ok(userEntry, 'user 格恢复注册')
-    assert.equal(userEntry.options.priority, -2, '注册在第三方 -1 之下（-2）')
-    assert.equal(userEntry.component, T.GroupedUserView)
-    assert.equal(regs.some((r) => r.options.name === 'conversation.input.dock'), false, '不再注册 dock 占位条')
-    // 注入面：官方/自备 hook 保留，第三方扁平 props 并入（链式委托转发用）
-    const face = userEntry.options.inject('s1')
-    assert.ok(face.hooks.connectionGeneration, '官方/自备 hook 保留')
-    assert.equal(typeof face.openSession, 'function', '第三方扁平 props（openSession）并入注入面')
-    assert.ok(face.inputState, '第三方扁平 props（inputState）并入注入面')
+    renderView(props())
+    const label1 = container.querySelector('.ccg-turn-bar-label').textContent
+    renderView(props())
+    const label2 = container.querySelector('.ccg-turn-bar-label').textContent
+    assert.equal(label1, label2)
+    assert.ok(label1.includes('6,214 token'), label1)
   })
-  it('渲染：GroupedUserView 链式委托第三方 user 组件 + 占位条（easyrewrite 功能不丢、位置在 user 消息下方）', () => {
-    let thirdProps = null
-    let thirdRendered = false
-    const { svc, regs } = easyrewriteLikeSlots({
-      onThirdRender: (props) => { thirdRendered = true; thirdProps = props },
-    })
-    pluginExports.apply({
-      inject(deps, cb) {
-        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
-      },
-    })
-    const userEntry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
-    const face = userEntry.options.inject('s1')
-    // 模拟 renderer 的 cachedSlotInject：face.hooks → use<Name>；扁平 props 原样透传
-    const bind = (s) => (selector) =>
-      React.useSyncExternalStore(
-        (fn) => s.subscribe(fn),
-        () => selector(s.getSnapshot()),
-      )
-    const nodes = [userNode('u', 100)]
-    const snapshot = buildSnapshot(nodes, {
-      turnTimings: new Map([[13, { startTime: 1000000, endTime: undefined }]]),
-    })
-    snapshot.running = true
-    const store = createSessionStore(snapshot)
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    const root = createRoot(container)
+
+  it('运行中跨直播 tick：耗时增长（真实时钟），token 保持真实值不变', async () => {
+    const realNow = Date.now
+    Date.now = () => T0 + 5000
     try {
-      act(() => {
-        root.render(React.createElement(T.GroupedUserView, {
-          node: nodes[0],
-          useSession: makeUseSession(store),
-          sessionId: 's1',
-          useConnectionGeneration: bind(face.hooks.connectionGeneration),
-          openSession: face.openSession,
-          inputState: face.inputState,
-          inputActions: face.inputActions,
-        }))
+      renderView({
+        node: makeTurnNode({ status: 'open', startTime: T0, endTime: null, steps: [usageStep] }),
+        turnProcess: makeTurnProcessOwner(),
+        useChat: makeUseChat(),
       })
-      assert.ok(thirdRendered, '第三方 user 组件（easyrewrite 气泡）被链式委托渲染')
-      assert.equal(thirdProps.inputState.draft, '草稿', '第三方扁平 props 整包转发')
-      assert.ok(container.querySelector('.mock-easyrewrite'), 'easyrewrite 气泡 DOM 存在')
-      const placeholder = container.querySelector('.ccg-group-root[data-ccg-placeholder]')
-      assert.ok(placeholder, '占位回合折叠栏渲染在 user 消息下方（TurnStatus 状态描述行之上）')
-      assert.ok(placeholder.textContent.includes('耗时'), '占位显示耗时')
-      assert.ok(placeholder.textContent.includes('第13轮'), '占位显示回合号')
+      const label1 = container.querySelector('.ccg-turn-bar-label').textContent
+      assert.ok(label1.includes('6,214 token'), label1)
+      // 等待 1-2 个直播 tick（仅时钟前进；usage 无新数据）
+      await sleep(700)
+      const label2 = container.querySelector('.ccg-turn-bar-label').textContent
+      assert.ok(label2.includes('6,214 token'), 'token 不被伪造增长：' + label2)
+      // 耗时字段来自真实时钟，允许 ≥ 之前的秒数
+      const sec1 = Number(/耗时(\d+)秒/.exec(label1)[1])
+      const sec2 = Number(/耗时(\d+)秒/.exec(label2)[1])
+      assert.ok(sec2 >= sec1, '耗时随真实时钟推进')
     } finally {
-      root.unmount()
-      container.remove()
+      Date.now = realNow
     }
-  })
-  it('顺序无关：turn-fold 先加载（entries 无第三方）→ 取 -2 而非 -1，easyrewrite 后注册 -1 不撞车', () => {
-    // 真机事故（2026-09-14）：profile bundle 顺序 turn-fold 在 easyrewrite 前——旧版
-    // resolveUserCellPriority 探测不到第三方就取 -1，easyrewrite 随后硬编码注册 -1，
-    // SlotCore（index.ts:848 同 key 同 priority 第二次注册）直接抛错、页面启动失败。
-    // 修复：下限锁死 -2（绝不占 -1），与加载顺序无关。
-    const regs = []
-    const byCell = new Map() // key → Set(priority)，模拟 SlotCore 的同格同位冲突检测
-    const official = [
-      { component: function OfficialUser() {}, options: { key: 'user', priority: 0, locale: 'chat' } },
-      { component: function OfficialTool() {}, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
-      { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
-      { component: function OfficialContext() {}, options: { key: 'context', priority: 0, locale: 'conversation' } },
-    ]
-    const svc = {
-      entries: () => [...official, ...regs], // 无第三方 user 条目（turn-fold 先加载）
-      entriesOfSlot: () => [],
-      inject: (name, factory) => { regs.push(factory()) },
-      register(options, component) {
-        const cellKey = options.key ?? options.id ?? 'list'
-        const pri = options.priority ?? 0
-        const cell = byCell.get(cellKey) ?? new Set()
-        if (cell.has(pri)) throw new Error(`keyed slot already has an entry for key "${cellKey}" at priority ${pri}`)
-        cell.add(pri)
-        byCell.set(cellKey, cell)
-        return { component, options }
-      },
-    }
-    pluginExports.apply({
-      inject(deps, cb) {
-        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
-      },
-    })
-    const userEntry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
-    assert.ok(userEntry, 'user 格注册')
-    assert.equal(userEntry.options.priority, -2, '探测不到第三方也不占 -1（顺序无关下限）')
-    // 随后 easyrewrite 以硬编码 -1 注册：SlotCore 同格同位冲突检测必须不抛
-    assert.doesNotThrow(
-      () => svc.register({ name: 'conversation.chat.node', key: 'user', priority: -1 }, function EasyRewriteBubble() {}),
-      'easyrewrite 后注册 -1 与我们的 -2 不冲突（页面不再启动失败）',
-    )
-  })
-  it('另一个插件先占 -2（我们后加载）→ 下探到 -3，绝不撞已注册者', () => {
-    // 若未来某插件硬编码 -2（与我们的下限同位）：它先注册时我们探测到 -2 → 取 -3，
-    // 与它及 easyrewrite（-1）都不冲突（lowest-renders 语义下 -3 仍渲染、链式委托不变）。
-    const regs = []
-    const official = [
-      { component: function OfficialUser() {}, options: { key: 'user', priority: 0, locale: 'chat' } },
-      { component: function OfficialTool() {}, options: { key: 'tool-call', priority: 0, locale: 'conversation' } },
-      { component: function OfficialAssistant() {}, options: { key: 'assistant-step', priority: 0, locale: 'chat' } },
-      { component: function OfficialContext() {}, options: { key: 'context', priority: 0, locale: 'conversation' } },
-    ]
-    // 第三方占 -1（easyrewrite）与 -2（另一个插件，硬编码同下限位）
-    const thirdParty = [
-      { component: function OtherUserPlugin() {}, options: { key: 'user', priority: -2, locale: 'chat' } },
-      { component: function EasyRewriteBubble() {}, options: { key: 'user', priority: -1, locale: 'chat' } },
-    ]
-    const svc = {
-      entries: () => [...official, ...thirdParty, ...regs],
-      entriesOfSlot: () => [],
-      inject: (name, factory) => { regs.push(factory()) },
-      register: (options, component) => ({ component, options }),
-    }
-    pluginExports.apply({
-      inject(deps, cb) {
-        cb({ slots: svc, connection: { generation: { getSnapshot: () => ({ host: { home: 'C:/Users/Test' } }), subscribe: () => () => {} } } })
-      },
-    })
-    const userEntry = regs.find((r) => r.options.name === 'conversation.chat.node' && r.options.key === 'user')
-    assert.ok(userEntry, 'user 格注册')
-    assert.equal(userEntry.options.priority, -3, '探测到 -2 已被第三方占用 → 下探到 -3')
   })
 })
 
-// ─────────────── 回归：直播时钟定时器生命周期（孤儿定时器） ───────────────
-// scheduleTick 是模块级递归 setTimeout：有订阅者才走表、全部退订即停。旧实现在
-// tick 回调末尾**无条件**续订——若最后一个退订发生在回调栈内（React 对 uSES 通知
-// 做同步重渲染时会跑到 subscribeNothing 的清理），退订分支看到 tickTimer 已被
-// 回调开头置 null 而什么也不做，回调末尾又续上一只新表 → 留下一只永远空转、
-// 没人能停的定时器（每 ~250ms 一次直到页面关闭），并让 liveTickState.index 无限增长。
-describe('回归：直播时钟定时器生命周期（不留下空转的孤儿定时器）', () => {
-  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  // 清空可能由先前用例留下的订阅者，并等一拍让在途的链自行收敛（无订阅者即停）
-  const settle = async () => {
-    T.tickListeners.clear()
-    await wait(400)
-  }
-
-  it('最后一个订阅者在 tick 回调内退订 → 表彻底停（不再自续）', async () => {
-    await settle()
-    const before = T.getTickVersion()
-    let ticks = 0
-    const unsubscribe = T.subscribeTicks(() => {
-      ticks += 1
-      unsubscribe() // 模拟 uSES 在通知栈内同步退订
+describe('齿轮与折叠互不误触', () => {
+  it('齿轮点击：stopPropagation → 不触发 setOpen，弹窗打开', () => {
+    const setOpenCalls = []
+    renderView({
+      node: makeTurnNode({ status: 'closed', steps: [usageStep] }),
+      turnProcess: makeTurnProcessOwner({ setOpen: (o) => setOpenCalls.push(o) }),
+      useChat: makeUseChat(),
     })
-    await wait(700)
-    const afterRun = T.getTickVersion()
-    assert.ok(afterRun > before, '至少应走过一拍')
-    assert.equal(ticks, 1, '回调内退订后不应再收到第二拍')
-    assert.equal(T.tickListeners.size, 0)
-    await wait(600)
-    assert.equal(T.getTickVersion(), afterRun, '退订后表必须停：版本号不再增长')
+    T.setPopupVisible(false)
+    const gear = container.querySelector('.ccg-gear-icon')
+    assert.ok(gear)
+    act(() => {
+      gear.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    assert.deepEqual(setOpenCalls, [], '弹窗触发不得折叠回合')
+    assert.equal(T.getPopupVisible(), true, '弹窗已打开')
+    T.setPopupVisible(false)
   })
 
-  it('回调期间新增订阅者不会留下第二条链（全部退订后表停）', async () => {
-    await settle()
-    let second = null
-    const first = T.subscribeTicks(() => {
-      if (second === null) second = T.subscribeTicks(() => {})
+  it('不可折叠栏（aborted）点击整行：无 setOpen、无异常', () => {
+    const setOpenCalls = []
+    renderView({
+      node: makeTurnNode({ status: 'closed', reason: 'aborted', steps: [usageStep] }),
+      turnProcess: makeTurnProcessOwner({ setOpen: (o) => setOpenCalls.push(o) }),
+      useChat: makeUseChat(),
     })
-    await wait(700)
-    assert.ok(second, '回调期间应能新增订阅者')
-    first()
-    second()
-    await wait(300) // 让在途的一拍落地
-    const settled = T.getTickVersion()
-    await wait(600)
-    assert.equal(T.getTickVersion(), settled, '全部退订后不应残留第二条链')
-    assert.equal(T.tickListeners.size, 0)
-  })
-
-  it('仍有订阅者时正常续订（修复不能把表提前停掉）', async () => {
-    await settle()
-    let ticks = 0
-    const unsubscribe = T.subscribeTicks(() => { ticks += 1 })
-    await wait(800)
-    unsubscribe()
-    assert.ok(ticks >= 2, `连续走表（收到 ${ticks} 拍）`)
-    const stopped = T.getTickVersion()
-    await wait(600)
-    assert.equal(T.getTickVersion(), stopped, '退订后停表')
-  })
-
-  it('监听者抛错不卡死状态机：单个订阅者异常被隔离，时钟继续走表', async () => {
-    await settle()
-    let bad = 0
-    let good = 0
-    let boom = true
-    // 第一个订阅者第一次回调抛错（模拟 uSES 通知链路异常）——必须被逐个隔离
-    const unBad = T.subscribeTicks(() => {
-      bad += 1
-      if (boom) { boom = false; throw new Error('listener boom') }
+    const bar = container.querySelector('button.ccg-turn-bar')
+    act(() => {
+      bar.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
     })
-    const unGood = T.subscribeTicks(() => { good += 1 })
-    await wait(900)
-    unBad()
-    unGood()
-    assert.ok(bad >= 1, '抛错的监听者已被调用')
-    assert.ok(good >= 2, `另一个监听者不受影响、时钟继续走表（收到 ${good} 拍）`)
-    const stopped = T.getTickVersion()
-    await wait(500)
-    assert.equal(T.getTickVersion(), stopped, '全部退订后停表')
+    assert.deepEqual(setOpenCalls, [])
   })
 })
 
-// ─────────────── 回归：GroupHeader 子元素 key / SVG 属性（React 零告警） ───────────────
-// 数组子元素缺 key 时 React 会告警并按"按位复用"协调（文件链接/齿轮增删时可能错位
-// 复用 DOM）；SVG 属性写成连字符形式（stroke-width）会逐条报 Invalid DOM property。
-// 两者都在折叠栏标题这条热路径上，用真实渲染 + 捕获 console.error 守住。
-describe('回归：GroupHeader 子元素 key 与 SVG 属性（React 控制台零告警）', () => {
-  const captureWarnings = (fn) => {
-    const captured = []
-    const original = console.error
-    console.error = function () {
-      captured.push(Array.prototype.map.call(arguments, String).join(' '))
-    }
-    try { fn() } finally { console.error = original }
-    return captured
-  }
-  const renderOnce = (element) => {
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const r = createRoot(host)
-    const captured = captureWarnings(() => { act(() => { r.render(element) }) })
-    act(() => r.unmount())
-    document.body.innerHTML = ''
-    return captured
-  }
-  const offenders = (captured, pattern) => captured.filter((line) => line.indexOf(pattern) !== -1)
-
-  it('闭合回合折叠栏（指标 + 齿轮 + 轮次）零 key 告警', () => {
-    const captured = renderOnce(React.createElement(T.GroupHeader, {
-      label: '耗时10秒 · 消耗1200token · 已折叠5步',
-      count: 5,
-      open: false,
-      onToggle: () => {},
-      isTurn: true,
-      live: false,
-      right: '第3轮',
-      gearIcon: React.createElement(T.GearIcon, null),
+describe('降级要求（UI 增强可坏，Fold 不能被拖坏）', () => {
+  it('图标包损坏（非法 JSON / 不兼容 compat）→ 回退内置默认，不抛错', () => {
+    dom.window.localStorage.setItem('dsh-turn-fold:icons', '{broken')
+    assert.doesNotThrow(() => loadPlugin({ window: dom.window }))
+    dom.window.localStorage.setItem('dsh-turn-fold:icons', JSON.stringify({
+      meta: { version: 1, compat: '>=99.0.0' },
+      pokerPips: { spade: { path: '', cx: 12, cy: 12, factor: 1 } },
     }))
-    assert.deepEqual(offenders(captured, 'unique "key"'), [], captured.join('\n'))
+    const { test: T2 } = loadPlugin({ window: dom.window })
+    assert.ok(T2.POKER_PIPS.spade.path.length > 0, '不兼容图标包被拒绝，回退内置')
+    dom.window.localStorage.removeItem('dsh-turn-fold:icons')
   })
 
-  it('步骤折叠栏标题（文件名 + diff + 失败）零 key 告警，文件链接照常渲染', () => {
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-    const r = createRoot(host)
-    const captured = captureWarnings(() => {
-      act(() => {
-        r.render(React.createElement(T.GroupHeader, {
-          label: '编辑了client.js [ +12 -3 ] 运行了pwsh —— 1条执行失败',
-          count: 2,
-          open: false,
-          onToggle: () => {},
-          isTurn: false,
-          filePaths: new Map([['client.js', 'C:/repo/client.js']]),
-        }))
-      })
+  it('设置数据损坏 → 回退默认值，不抛错', () => {
+    dom.window.localStorage.setItem(T.SETTINGS_KEY, '{broken json')
+    const { test: T2 } = loadPlugin({ window: dom.window })
+    assert.equal(T2.settings.stepSkin, 'poker')
+    assert.equal(T2.settings.fields.tokens, true)
+  })
+
+  it('Turn 栏渲染所需 props 全部缺失（裸 node）→ 不抛错（降级最小占位栏）', () => {
+    const props = { node: { kind: 'turn-process', data: {} } }
+    assert.doesNotThrow(() => {
+      act(() => { root.render(react.createElement(T.EnhancedTurnProcessView, props)) })
     })
-    const links = host.querySelectorAll('.ccg-file-link')
-    const diffAdd = host.querySelector('.ccg-diff-add')
-    const failure = host.querySelector('.ccg-header-failure')
-    act(() => r.unmount())
-    document.body.innerHTML = ''
-    assert.deepEqual(offenders(captured, 'unique "key"'), [], captured.join('\n'))
-    assert.equal(links.length, 1, '文件名链接仍渲染')
-    assert.ok(diffAdd, 'diff 高亮仍渲染')
-    assert.ok(failure, '失败提示仍渲染')
-  })
-
-  it('默认 chevron（折叠图标选择器里的官方样式预览）零 Invalid DOM property 告警', () => {
-    const captured = renderOnce(React.createElement(T.FoldIconSelector, null))
-    assert.deepEqual(offenders(captured, 'Invalid DOM property'), [], captured.join('\n'))
-  })
-})
-
-// ─────────── 回归：tool-result 的 call 头缺失（窗口截断）时名称必须是字符串 ───────────
-// 官方契约：`ToolResultNode.call` 在"窗口截断把 tool/call 留在窗口外"时为 null（官方
-// ToolCallTree 的 callName 同样回退成空串）。旧实现 toolCallInfo 直接透传 undefined，
-// 下游 classifySegmentTools 的 `String(info.name)` 会得到字面量 "undefined"——显示分支
-// 恰好都对空值做了真值判断，所以当时没暴露到界面上，但内部多了一个"名为 undefined 的
-// 工具"这一陷阱。现在在唯一入口归一为空串，并用本用例锁住这个不变量。
-describe('回归：tool-result 的 call 头缺失时名称归一为空串', () => {
-  const truncatedNode = (key, seq) => makeNode(key, 'tool-call', seq, {
-    data: {
-      root: {
-        kind: 'tool-result',
-        callId: key,
-        call: null,
-        content: [],
-        isError: false,
-        callTime: null,
-        subCalls: [],
-      },
-    },
-  })
-  const segOf = (list) => {
-    const nodes = new Map(list.map((n) => [n.key, n]))
-    const group = T.computeGroup(list.map((n) => n.key), nodes, list[0])
-    assert.ok(group, '分组应能计算')
-    return { nodes, group }
-  }
-
-  it('toolCallInfo：name 恒为字符串（空串），argsRaw 为 undefined', () => {
-    const info = T.toolCallInfo(truncatedNode('tc-trunc', 10))
-    assert.equal(typeof info.name, 'string', 'name 必须是字符串，不能是 undefined')
-    assert.equal(info.name, '')
-    assert.equal(info.argsRaw, undefined)
-    assert.equal(info.running, false)
-  })
-
-  it('单条截断调用：运行中标题与闭合标题都不含字面量 "undefined"', () => {
-    const { nodes, group } = segOf([truncatedNode('tc-trunc', 10)])
-    const runningTitle = T.segmentTitle(group, nodes, false)
-    assert.equal(typeof runningTitle, 'string', 'name 为空串 → 运行态分支不命中，走纯文本兜底')
-    assert.ok(!/undefined/i.test(runningTitle), `运行中标题不应含 undefined：${runningTitle}`)
-    assert.ok(!/undefined/i.test(T.segmentLabel(group, nodes, true)), '闭合标题不应含 undefined')
-    assert.equal(T.segmentLabel(group, nodes, true), '执行了1项操作', '按"其它操作"计数，不臆造工具名')
-  })
-
-  it('混合段：截断调用不污染其它工具的分类', () => {
-    const readNode = makeNode('tc-read', 'tool-call', 11, {
-      data: {
-        root: {
-          kind: 'tool-result',
-          callId: 'tc-read',
-          call: { name: 'read', argsRaw: '{"file_path":"C:/x/a.js"}' },
-          content: [],
-          isError: false,
-          callTime: null,
-          subCalls: [],
-        },
-      },
-    })
-    const { nodes, group } = segOf([readNode, truncatedNode('tc-trunc2', 12)])
-    const label = T.segmentLabel(group, nodes, true)
-    assert.ok(!/undefined/i.test(label), `混合段标题不应含 undefined：${label}`)
-    assert.ok(label.includes('a.js'), `read 的文件名照常显示：${label}`)
-    assert.ok(label.includes('执行了1项操作'), `截断调用计为其它操作：${label}`)
+    assert.ok(container.querySelector('.ccg-turn-bar'), '最小占位栏仍渲染')
   })
 })

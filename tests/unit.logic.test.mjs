@@ -1,1229 +1,237 @@
-// 纯函数单元测试：computeGroup / computeTurnFold / computeTurnMetrics /
-// turnHeaderLabel / formatTurnDuration / formatTokPerSec / turnNumber。
-// 直接测试 client.js 的真实实现（经 loader 注入 __test 导出 · 无复制漂移）。
+// 纯函数单测：官方真实数据 → 指标 / 文案（无任何随机或伪造成分）。
+//   - turnClockOf / computeTurnMetrics / readStepUsage（官方 TurnLocation 契约）
+//   - 格式化：耗时 / tok/s / token 千位分组 / 状态词 / 轮次
+//   - 字段显隐过滤与 localStorage 持久化
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { loadPlugin } from './helpers/loader.mjs'
-import { makeNode, toolNode, asNode, userNode, contextNode, tailNode, buildSnapshot } from './helpers/store.mjs'
-import { TURN13, TURN13_NODES, TURN13_METRICS, TURN13_LABEL, OUTSIDE_SCOPE, TWO_USERS } from './helpers/fixtures.mjs'
+import {
+  T0, T1, TURN13_USAGE_STEPS, TURN13_EXPECT, OFFICIAL_TOKEN_USAGE,
+  makeStepData,
+} from './helpers/fixtures.mjs'
 
-// 固定界面语言为简体中文（client.js 按 navigator.language(s) 检测；文案断言按中文）。
-Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
+const { test: T, window } = loadPlugin({ uiPrimitives: {} })
 
-const { test: T } = loadPlugin()
+function setLang(lang) {
+  window.document.documentElement.lang = lang
+}
 
-// ─────────────────────────── computeGroup ───────────────────────────
-describe('computeGroup（步骤分组）', () => {
-  it('单条工具调用：count=1 · 自身为 leader', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
-    const nodes = [
-      userNode('u', 100),
-      textNode('as', 200, 'text'),
-      toolNode('tc', 300),
-      textNode('as2', 400, 'text'),
-      asNode('final', 500),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.ok(g)
-    assert.equal(g.count, 1)
-    assert.equal(g.leaderKey, 'tc')
-    assert.equal(g.isLeader, true)
-    assert.equal(g.failures, 0)
-  })
-
-  it('连续多条工具调用组成一组：count=3 · 中间成员 isLeader=false', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
-    const nodes = [
-      userNode('u', 100),
-      textNode('as', 200, 'text'),
-      toolNode('tc1', 300),
-      toolNode('tc2', 301),
-      toolNode('tc3', 302),
-      textNode('as2', 400, 'text'),
-      asNode('final', 500),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc2'))
-    assert.ok(g)
-    assert.equal(g.count, 3)
-    assert.equal(g.leaderKey, 'tc1')
-    assert.equal(g.isLeader, false)
-    assert.deepEqual(g.keys, ['tc1', 'tc2', 'tc3'])
-  })
-
-  it('纯 think 入段：think 与工具调用混排成一段（think 不打断段）', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
-    const nodes = [
-      userNode('u', 100),
-      textNode('as', 200, 'text'),
-      toolNode('tc1', 300),
-      // 纯 think（只有 reasoning 块、无 text 块）→ 段成员
-      asNode('as-think', 310, { blocks: [{ kind: 'reasoning', text: '思考中' }] }),
-      toolNode('tc2', 400),
-      textNode('as3', 500, 'text'),
-      asNode('final', 600),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc1'))
-    assert.equal(g.count, 3)
-    assert.deepEqual(g.keys, ['tc1', 'as-think', 'tc2'])
-    assert.equal(g.toolCount, 2, 'think 不算命令数')
-    // think 节点自己也能定位到同一段
-    const g2 = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('as-think'))
-    assert.equal(g2.leaderKey, 'tc1')
-    assert.equal(g2.isLeader, false)
-  })
-
-  it('text 打断：纯 text 节点（无 reasoning）是段边界 · 两侧工具调用不合并', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
-    const nodes = [
-      userNode('u', 100),
-      textNode('as1', 200, 'text'),
-      toolNode('tc1', 300),
-      textNode('as2', 310, 'text'),
-      toolNode('tc2', 400),
-      textNode('final', 500, 'text'),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
-    const g1 = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc1'))
-    const g2 = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc2'))
-    assert.equal(g1.count, 1)
-    assert.equal(g2.count, 1)
-    assert.notEqual(g1.leaderKey, g2.leaderKey)
-  })
-
-  it('失败计数：isError=true 计入 · 运行中不计入', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
-    const nodes = [
-      userNode('u', 100),
-      textNode('as', 200, 'text'),
-      toolNode('ok', 300),
-      toolNode('err', 301, { isError: true }),
-      toolNode('run', 302, { running: true }),
-      textNode('as2', 400, 'text'),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
-    assert.equal(g.failures, 1)
-    assert.equal(g.anyRunning, true)
-  })
-
-  it('autoCollapsed 恒 true（步骤折叠始终默认收起 · 运行中也不例外）', () => {
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolNode('tc', 300, { running: true }),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.equal(g.autoCollapsed, true, '运行中也要默认折叠')
-    assert.equal(g.textAfter, false, '段尾之后无 text → 段未闭合')
-    assert.equal(g.lastActiveKey, 'tc')
-  })
-
-  it('textAfter：段尾之后出现含 text 的节点 → true（段闭合）', () => {
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolNode('tc', 300),
-      asNode('as2', 400),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.equal(g.textAfter, true)
-    assert.equal(g.toolCount, 1)
-  })
-
-  it('回归 Bug1：store 节点对象被替换后 · 按 key 仍能定位（不依赖对象身份）', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
-    const nodes = [
-      userNode('u', 100),
-      textNode('as', 200, 'text'),
-      toolNode('tc', 300),
-      textNode('as2', 400, 'text'),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
-    const staleProp = s.chat.nodes.get('tc') // ChatNodeSeat 持有的旧对象
-    // 模拟运行时替换 store 中的节点对象（同 key 新对象）
-    s.chat.nodes.set('tc', toolNode('tc', 300))
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, staleProp)
-    assert.ok(g, '节点对象替换后 computeGroup 不得返回 null（否则短路渲染内置组件并触发 abdicate）')
-    assert.equal(g.leaderKey, 'tc')
-    assert.equal(g.count, 1)
-  })
-
-  it('order 中找不到节点 key → null', () => {
-    const nodes = [userNode('u', 100), asNode('as', 200), toolNode('tc', 300)]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 500]]) })
-    const ghost = toolNode('ghost', 999)
-    assert.equal(T.computeGroup(s.chat.order, s.chat.nodes, ghost), null)
-  })
-
-  it('排除工具（todo_write）不并入任何段', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || '' }] } })
-    const todoNode = (key, seq) => makeNode(key, 'tool-call', seq, {
-      data: { root: { kind: 'tool-result', callId: key, name: 'todo_write', isError: false } },
-    })
-    const nodes = [
-      userNode('u', 100),
-      textNode('as', 200, 'text'),
-      todoNode('todo', 300),
-      toolNode('tc', 400),
-      textNode('as2', 500, 'text'),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
-    // 普通工具 tc 的段不包含排除工具（核心保证：排除工具不并入任何段）
-    const gTool = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.ok(gTool, 'tc 应有段')
-    assert.equal(gTool.keys.indexOf('todo'), -1, 'tc 段不包含 todo_write')
-    assert.equal(gTool.keys.length, 1, 'tc 段仅自身')
-    // 排除工具自身的 computeGroup 不返回 null（渲染层由 isExcludedSegmentTool 分支绕过，
-    // 若返回 null 会误触发 GroupedToolCallView 的 !group 官方兜底、破坏回合折叠）
-    const gTodo = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('todo'))
-    assert.ok(gTodo, 'todo_write 的 computeGroup 不得返回 null')
-    // isExcludedSegmentTool 判定
-    assert.ok(T.isExcludedSegmentTool(s.chat.nodes.get('todo')), 'todo_write 被识别为排除工具')
-    assert.equal(T.isExcludedSegmentTool(s.chat.nodes.get('tc')), false, '普通工具非排除')
-  })
+beforeEach(() => {
+  setLang('zh-CN')
+  window.localStorage.clear()
+  // 恢复默认字段显隐（设置在模块级持久化，测试间互不污染）
+  for (const key of T.FIELD_KEYS) T.setFieldVisible(key, true)
+  T.settings.foldIcon = 'poker'
+  T.settings.stepSkin = 'poker'
 })
 
-// ─────────────────────────── segmentLabel / summarizeArgs（步骤折叠栏标题） ───────────────────────────
-describe('segmentLabel / summarizeArgs（步骤折叠栏标题）', () => {
-  // 段闭合标题缓存按 leaderKey+keys 记忆；测试复用节点 key（如 e1/r1） · 需清理防串
-  beforeEach(() => { T.segmentLabelCache.clear() })
-  const toolWithArgs = (key, seq, { running = false, name = 'Pwsh', argsRaw } = {}) =>
-    makeNode(key, 'tool-call', seq, {
-      data: { root: running ? { callId: key, name, argsRaw } : { kind: 'tool-result', callId: key, name, argsRaw, isError: false } },
-    })
-  const thinkOnly = (key, seq, text) =>
-    asNode(key, seq, { blocks: [{ kind: 'reasoning', text }] })
-
-  it('summarizeArgs：取 argsRaw 中最长字符串值（-m 正文 / 路径） · 截断到上限', () => {
-    assert.equal(T.summarizeArgs(JSON.stringify({ args: ['commit', '-m', 'Commit 1: core +tests'] })), 'Commit 1: core +tests')
-    assert.equal(T.summarizeArgs(JSON.stringify({ path: 'C:\\Users\\Test\\long folder name\\plugin' })), 'C:\\Users\\Test\\long folder name\\plugin')
-    assert.equal(T.summarizeArgs('not-json'), 'not-json')
-    assert.equal(T.summarizeArgs(JSON.stringify({ a: 'x'.repeat(100) }), 20), 'x'.repeat(20) + '…')
-    assert.equal(T.summarizeArgs(''), '')
-    assert.equal(T.summarizeArgs(null), '')
-  })
-
-  it('运行中（段未闭合）：标题 = 正在运行 <工具名> · <参数摘要>', () => {
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithArgs('tc', 300, { running: true, argsRaw: JSON.stringify({ args: ['commit', '-m', 'Commit 1: core +tests'] }) }),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.equal(g.textAfter, false)
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在运行Pwsh · Commit 1: core +tests')
-  })
-
-  it('运行中（段未闭合）：最后一个节点是 think → 标题 = 正在思考 · 最新一行（流式跟随）', () => {
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithArgs('tc', 300, { running: false, argsRaw: JSON.stringify({ args: ['x'] }) }),
-      thinkOnly('th', 310, '第一行思考\n第二行思考\n正在分析仓库结构'),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    // 多行 think：运行中摘要取最新一行（官方 ReasoningRow 同款 latestLine）
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在思考正在分析仓库结构')
-    // think 内容只有一行时完整显示（溢出交给 CSS ellipsis / 横向滚动跟随）
-    const nodes2 = [
-      userNode('u', 100),
-      thinkOnly('th2', 200, '长'.repeat(80)),
-    ]
-    const s2 = buildSnapshot(nodes2, { turnEnds: new Map() })
-    const g2 = T.computeGroup(s2.chat.order, s2.chat.nodes, s2.chat.nodes.get('th2'))
-    assert.equal(T.segmentLabel(g2, s2.chat.nodes), '正在思考' + '长'.repeat(80))
-  })
-
-  it('段闭合（出现下一个 text）：标题 = 运行了 N 条命令（think 不算命令数）', () => {
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      thinkOnly('th', 300, '思考'),
-      toolWithArgs('tc1', 301, { running: false, argsRaw: '{}' }),
-      toolWithArgs('tc2', 302, { running: false, argsRaw: '{}' }),
-      asNode('as2', 400), // 含 text → 段闭合
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc1'))
-    assert.equal(g.textAfter, true)
-    assert.equal(g.toolCount, 2)
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令')
-  })
-
-  // ── 回归：被停止/出错的回合（closed=true）──────────────────────────────
-  // 被打断的回合往往没有最终 text（段未闭合），但回合已经结束、不会再有新内容：
-  // 此时段标题必须立即退出运行态（"正在思考/正在运行"+shimmer 会永久停留），
-  // 走闭合标题（工具分组文案 / "思考了N次"）。
-  it('被停止的回合（closed=true · 无 text）：运行中工具段 → 立即走闭合标题，不再"正在运行"', () => {
-    const nodes = [
-      userNode('u', 100),
-      toolWithArgs('tc', 300, { running: true, argsRaw: JSON.stringify({ args: ['x'] }) }),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.equal(g.textAfter, false, '段未闭合（无最终 text——被停止的回合没有总结）')
-    // 不传 closed（运行中）：仍是运行态标题（既有行为不变）
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在运行Pwsh · x')
-    // 传 closed=true（回合已结束）：立即闭合——单条命令闭合标题显示工具名+详情
-    //（既有闭合语义，见"段闭合：单次命令显示工具名"用例），绝不永久停在"正在运行"
-    assert.equal(T.segmentLabel(g, s.chat.nodes, true), '运行了Pwsh · x')
-  })
-
-  it('被停止的回合（closed=true）：think 段 → "思考了N次"，不再"正在思考"', () => {
-    const nodes = [
-      userNode('u', 100),
-      thinkOnly('th', 200, '正在分析'),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('th'))
-    assert.equal(g.textAfter, false)
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '正在思考正在分析')
-    assert.equal(T.segmentLabel(g, s.chat.nodes, true), '思考了1次')
-  })
-
-  it('被停止的回合（closed=true）：read 段闭合标题照常按工具分组（文件名链接数据源可用）', () => {
-    const readNode = (key, seq) => makeNode(key, 'tool-call', seq, {
-      data: { root: { kind: 'tool-result', callId: key, name: 'read', argsRaw: JSON.stringify({ path: 'X:/a/b.js' }) } },
-    })
-    const nodes = [userNode('u', 100), readNode('rd', 300)]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('rd'))
-    assert.equal(g.textAfter, false)
-    // closed=true：标题与文件路径（FileLink 数据源）按闭合语义工作
-    assert.equal(T.segmentLabel(g, s.chat.nodes, true), '读取了b.js')
-    assert.ok(T.segmentFilePaths(g, s.chat.nodes, true), '闭合标题里的文件名可渲染为链接')
-    assert.equal(T.segmentFilePaths(g, s.chat.nodes), null, '运行中不提供文件链接数据源')
-  })
-
-  it('段闭合且组内有失败命令：标题追加失败数', () => {
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolNode('ok', 300),
-      toolNode('err', 301, { isError: true }),
-      asNode('as2', 400),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令 —— 1条执行失败', '多条工具调用时 1 条失败也显示"1条执行失败"')
-  })
-
-  it('段闭合：多条失败追加"——y条执行失败"', () => {
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolNode('ok', 300),
-      toolNode('err1', 301, { isError: true }),
-      toolNode('err2', 302, { isError: true }),
-      asNode('as2', 400),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('ok'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了3条命令 —— 2条执行失败')
-  })
-
-  it('段闭合：混合操作失败计入所有工具（read 失败也算）', () => {
-    const toolWithPath = (key, seq, name, path, isError) =>
-      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: path ? JSON.stringify({ file_path: path }) : '{}', isError } } })
-    // read 失败 + pwsh 成功 → 1 条执行失败（不区分类型）
-    let nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('r1', 300, 'read', 'C:\\proj\\a.js', true),
-      toolWithPath('c1', 301, 'pwsh', null, false),
-      asNode('as2', 400),
-    ]
-    let s = buildSnapshot(nodes, { turnEnds: new Map() })
-    let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 运行了Pwsh —— 1条执行失败', 'read 失败计入失败数（多条工具调用时 1 条也带条数）')
-    // edit + pwsh 都失败 → 2 条执行失败
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('e1', 300, 'edit', 'C:\\proj\\b.js', true),
-      toolWithPath('c1', 301, 'pwsh', null, true),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js 运行了Pwsh —— 2条执行失败', 'edit+pwsh 失败计入失败数')
-  })
-
-  it('段闭合：单条工具调用失败 → 显示"执行失败"（不带条数）', () => {
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolNode('err', 300, { isError: true }),
-      asNode('as2', 400),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('err'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了Pwsh —— 执行失败', '单条工具调用失败不带条数')
-  })
-
-  it('段闭合：单次命令显示工具名 · 多次显示次数+单位', () => {
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolNode('tc', 300),
-      asNode('as2', 400),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('tc'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了Pwsh', '单次命令显示工具名')
-  })
-
-  it('段闭合：单次命令显示"运行了Pwsh · 命令详情"（command 字段）· 多次命令不显示详情', () => {
-    const toolWithArgs = (key, seq, argsRaw) =>
-      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name: 'pwsh', argsRaw, isError: false } } })
-    // 单次命令：优先取 command 字段
-    let nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithArgs('c1', 300, JSON.stringify({ command: 'cd x:/abc' })),
-      asNode('as2', 400),
-    ]
-    let s = buildSnapshot(nodes, { turnEnds: new Map() })
-    let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('c1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了Pwsh · cd x:/abc', '单次命令显示命令详情')
-    // 无 command 字段：兜底取最长字符串值
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithArgs('c2', 300, JSON.stringify({ args: ['cd', 'x:/abc'] })),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('c2'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了Pwsh · x:/abc', '无 command 字段时兜底最长字符串')
-    // 两次命令：只显示次数，不显示详情
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithArgs('c3', 300, JSON.stringify({ command: 'cd x:/abc' })),
-      toolWithArgs('c4', 301, JSON.stringify({ command: 'git status' })),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('c3'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '运行了2条命令', '多次命令不显示详情')
-  })
-
-  it('段闭合：仅读取工具——同一文件显示文件名 · 多个文件显示数量', () => {
-    const toolWithPath = (key, seq, name, path) =>
-      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: JSON.stringify({ path }), isError: false } } })
-    // 同一文件读取两次
-    let nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('r1', 300, 'read', 'C:\\proj\\client.js'),
-      toolWithPath('r2', 301, 'read', 'C:\\proj\\client.js'),
-      asNode('as2', 400),
-    ]
-    let s = buildSnapshot(nodes, { turnEnds: new Map() })
-    let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了client.js', '同一文件显示文件名')
-    // 两个不同文件
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('r1', 300, 'read', 'C:\\proj\\a.js'),
-      toolWithPath('r2', 301, 'read', 'C:\\proj\\b.js'),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了2份文件', '多个文件显示数量+份')
-  })
-
-  it('段闭合：混合 读取+命令 —— 读取在前、命令在最后；单命令显示工具名', () => {
-    const toolWithPath = (key, seq, name, path) =>
-      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: path ? JSON.stringify({ path }) : '{}', isError: false } } })
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('r1', 300, 'read', 'C:\\proj\\client.js'),
-      toolWithPath('c1', 301, 'pwsh', null),
-      asNode('as2', 400),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了client.js 运行了Pwsh', '读取在前、命令在最后')
-  })
-
-  it('段闭合：混合 读取+编辑+命令 —— 读取、编辑按序 · 命令始终最后', () => {
-    const toolWithPath = (key, seq, name, path) =>
-      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: path ? JSON.stringify({ path }) : '{}', isError: false } } })
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('r1', 300, 'read', 'C:\\proj\\a.js'),
-      toolWithPath('e1', 301, 'edit', 'C:\\proj\\b.js'),
-      toolWithPath('c1', 302, 'pwsh', null),
-      toolWithPath('c2', 303, 'pwsh', null),
-      asNode('as2', 400),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('r1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '读取了a.js 编辑了b.js 运行了2条命令')
-  })
-
-  it('段闭合：仅编辑工具——同一文件显示文件名 · 单文件时附加行数变更（+xx —xx）', () => {
-    const toolWithPath = (key, seq, name, path, extra) =>
-      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: JSON.stringify(Object.assign({ path }, extra)), isError: false } } })
-    // 单文件编辑：附加 +12 —3
-    let nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('e1', 300, 'edit', 'C:\\proj\\index.js', { insertions: 12, deletions: 3 }),
-      asNode('as2', 400),
-    ]
-    let s = buildSnapshot(nodes, { turnEnds: new Map() })
-    let g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了index.js [ +12 -3 ]', '单文件编辑附加行数变更')
-    // 无显式字段时从 newStr/oldStr 行数差计算（edit/write 工具的真实 argsRaw 形态）
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('e2', 300, 'edit', 'C:\\proj\\a.js', { file_path: 'C:\\proj\\a.js', oldStr: 'line1\nline2', newStr: 'line1\nline2\nline3\nline4' }),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e2'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了a.js [ +4 -2 ]', '从 newStr/oldStr 行数差计算（仅新增）')
-    // str-replace-editor 用 snake_case：old_str / new_str
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('e3', 300, 'str-replace-editor', 'C:\\proj\\b.js', { file_path: 'C:\\proj\\b.js', old_str: 'a\nb\nc', new_str: 'a\nb' }),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e3'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了b.js [ +2 -3 ]', 'snake_case old_str/new_str 行数差计算（仅删除）')
-    // DSH edit 工具全拼：old_string / new_string
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('e4', 300, 'edit', 'C:\\proj\\c.js', { file_path: 'C:\\proj\\c.js', old_string: 'x\ny', new_string: 'x\ny\nz\nw' }),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e4'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了c.js [ +4 -2 ]', 'DSH edit 工具 old_string/new_string 行数差计算')
-    // 同一文件编辑两次（行数变更不同）→ 汇总显示
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('e5', 300, 'edit', 'C:\\proj\\d.js', { file_path: 'C:\\proj\\d.js', old_string: 'x\ny\nz', new_string: 'x\ny\nz\nw\nv\nu' }),
-      toolWithPath('e6', 301, 'edit', 'C:\\proj\\d.js', { file_path: 'C:\\proj\\d.js', old_string: 'a\nb\nc\nd\ne', new_string: 'a\nb\nc' }),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e5'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了d.js [ +9 -8 ]', '同一文件多次编辑汇总行数变更（块级：+6-3 与 +3-5 → +9 -8）')
-    // 行数相同但内容不同：替换 N 行 → +N -N（行数差为 0 也能显示）
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('e7', 300, 'edit', 'C:\\proj\\e.js', { file_path: 'C:\\proj\\e.js', old_string: 'a\nb\nc\nd\ne\nf\ng', new_string: 'A\nB\nC\nD\nE\nF\nG' }),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e7'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了e.js [ +7 -7 ]', '行数相同但内容不同 → 替换 7 行 +7 -7')
-    // 官方 diffs 数据源（call.diffs 的 oldText/newText）优先于 argsRaw
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      makeNode('e8', 'tool-call', 300, { data: { root: { kind: 'tool-result', callId: 'e8', name: 'edit', argsRaw: JSON.stringify({ file_path: 'C:\\proj\\f.js', old_string: 'x', new_string: 'y' }), diffs: [{ path: 'C:\\proj\\f.js', oldText: 'a\nb\nc\nd\ne\nf\ng', newText: 'A\nB\nC\nD\nE\nF\nG' }], isError: false } } }),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e8'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了f.js [ +7 -7 ]', '官方 diffs 数据优先（与官方 diff 视图一致）')
-    // 多个文件编辑：只显示数量+份 · 不附加行数
-    nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('e1', 300, 'edit', 'C:\\proj\\a.js', { insertions: 12, deletions: 3 }),
-      toolWithPath('e2', 301, 'edit', 'C:\\proj\\b.js', { insertions: 1, deletions: 0 }),
-      asNode('as2', 400),
-    ]
-    s = buildSnapshot(nodes, { turnEnds: new Map() })
-    g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('e1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '编辑了2份文件')
-  })
-
-  it('段闭合：仅搜索工具——显示搜索次数', () => {
-    const toolWithPath = (key, seq, name) =>
-      makeNode(key, 'tool-call', seq, { data: { root: { kind: 'tool-result', callId: key, name, argsRaw: '{}', isError: false } } })
-    const nodes = [
-      userNode('u', 100),
-      asNode('as', 200),
-      toolWithPath('g1', 300, 'grep'),
-      toolWithPath('g2', 301, 'grep'),
-      asNode('as2', 400),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('g1'))
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '搜索了2次')
-  })
-
-  it('纯 think 段闭合：标题 = 思考了N次（不显示"运行了 0 条命令"）', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || 'text' }] } })
-    const nodes = [
-      userNode('u', 100),
-      thinkOnly('th', 200, '思考'),
-      textNode('as2', 300, '正文'),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('th'))
-    assert.equal(g.toolCount, 0)
-    assert.equal(g.thinkCount, 1, '段内 think 数 = 1')
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '思考了1次')
-  })
-
-  it('纯 think 段含多个 think 节点：标题 = 思考了N次（N = 段内 think 数）', () => {
-    const textNode = (k, s, t) => makeNode(k, 'assistant-step', s, { data: { blocks: [{ kind: 'text', text: t || 'text' }] } })
-    const nodes = [
-      userNode('u', 100),
-      thinkOnly('th1', 200, '思考一'),
-      thinkOnly('th2', 250, '思考二'),
-      textNode('as2', 300, '正文'),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('th1'))
-    assert.equal(g.toolCount, 0)
-    assert.equal(g.thinkCount, 2, '段内 think 数 = 2')
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '思考了2次')
-  })
-
-  it('纯 think 段闭合边界为 think+text 节点：该节点的 think 计入次数', () => {
-    const nodes = [
-      userNode('u', 100),
-      thinkOnly('th', 200, '思考'),
-      asNode('as2', 300), // 默认 blocks 含 reasoning + text（think+text 收尾节点）
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const g = T.computeGroup(s.chat.order, s.chat.nodes, s.chat.nodes.get('th'))
-    assert.equal(g.toolCount, 0)
-    assert.equal(g.thinkCount, 2, 'th + as2 的 think 部分 = 2')
-    assert.equal(T.segmentLabel(g, s.chat.nodes), '思考了2次')
-  })
-})
-
-// ─────────────────────────── computeTurnFold ───────────────────────────
-describe('computeTurnFold（整回合折叠）', () => {
-  it('运行中：finalAssistantKey 为 null · 第一条中间节点即折叠栏 · foldable=true', () => {
-    // 回合进行中（turnEnds 为空）：回合折叠栏应从回复开始就出现——
-    // 当前流式 assistant-step 不作为"最终总结"豁免 · 第一条中间节点就是折叠栏。
-    const nodes = [
-      userNode('u-run', 100),
-      asNode('as-run-1', 200, { status: 'running' }),
-      toolNode('tc-run', 300, { running: true }),
-      asNode('as-run-2', 400, { status: 'running' }),
-    ]
-    const s = buildSnapshot(nodes, {
-      turnEnds: new Map(),
-      turnTimings: new Map([[13, { startTime: 100000 }]]),
-    })
-    const h = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-run-1'))
-    assert.equal(h.closed, false)
-    assert.equal(h.finalAssistantKey, null, '运行中没有最终总结')
-    assert.equal(h.headerKey, 'as-run-1')
-    assert.equal(h.isTurnHeader, true)
-    assert.equal(h.foldable, true, '运行中只要存在作用域内中间节点即可折叠')
-    // 其余节点都是成员（非折叠栏、非最终）
-    for (const key of ['tc-run', 'as-run-2']) {
-      const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get(key))
-      assert.equal(f.isTurnHeader, false, `${key} 不是折叠栏`)
-      assert.equal(f.isFinalAssistant, false, `${key} 不是最终消息`)
-      assert.equal(f.foldable, true, `${key} 参与折叠`)
-    }
-  })
-
-  it('运行中单条消息：该消息自身即折叠栏（回复开始即出现回合折叠栏）', () => {
-    const nodes = [userNode('u-solo', 100), asNode('as-solo', 200, { status: 'running' })]
-    const s = buildSnapshot(nodes, { turnEnds: new Map() })
-    const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-solo'))
-    assert.equal(f.closed, false)
-    assert.equal(f.isTurnHeader, true)
-    assert.equal(f.foldable, true)
-  })
-
-  it('回合结束后：单条消息回合也生成回合折叠栏（headerKey 兜底自 finalAssistantKey）', () => {
-    const nodes = [userNode('u-solo', 100), asNode('as-solo', 200)]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 300]]) })
-    const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-solo'))
-    assert.equal(f.closed, true)
-    assert.equal(f.finalAssistantKey, 'as-solo')
-    assert.equal(f.isFinalAssistant, true)
-    assert.equal(f.isTurnHeader, true, '单节点回合：唯一 assistant-step 兜底为 headerKey')
-    assert.equal(f.headerKey, 'as-solo')
-    assert.equal(f.foldable, true, '单条消息回合也应生成回合折叠栏')
-  })
-
-
-  it('turnNumber：step/turn 定位返回回合号；unresolved/session 返回 undefined', () => {
-    const s = buildSnapshot([userNode('u', 1)], { turnEnds: new Map([[13, 2]]) })
-    assert.equal(T.turnNumber(s.chat.nodes.get('u')), 13)
-    const unresolved = makeNode('x', 'tool-call', 1, { location: { kind: 'unresolved' } })
-    assert.equal(T.turnNumber(unresolved), undefined)
-    const sessionLoc = makeNode('y', 'tool-call', 1, { location: { kind: 'session' } })
-    assert.equal(T.turnNumber(sessionLoc), undefined)
-  })
-
-  it('closed：turnEnds 有该回合 → true；无 → false', () => {
-    const s = buildSnapshot([userNode('u', 1), asNode('as', 2)], { turnEnds: new Map() })
-    const fold = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as'))
-    assert.equal(fold.closed, false)
-    s.turnEnds.set(13, 10)
-    const fold2 = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as'))
-    assert.equal(fold2.closed, true)
-  })
-
-  it('回归 verify-fix 场景 1：新会话上下文注入在用户消息之前 → headerKey 取用户消息之后第一条', () => {
-    const nodes = [
-      contextNode('ctx-approval', 15, 'text'),
-      userNode('user-main', 16),
-      asNode('as-step1', 130),
-      toolNode('tool-1', 131),
-      contextNode('ctx-skills', 135, 'text'),
-      asNode('as-step2', 383),
-      asNode('as-final', 4444),
-      tailNode('turn-tail', 4445),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 4445]]) })
-    const fold = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-step1'))
-    assert.equal(fold.headerKey, 'as-step1')
-    assert.equal(fold.outsideScope, false)
-    // ctx-approval 在作用域外：绝不作折叠栏
-    const ctxFold = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('ctx-approval'))
-    assert.equal(ctxFold.outsideScope, true)
-    assert.equal(ctxFold.isTurnHeader, false)
-  })
-
-  it('回归 verify-fix 场景 2：上下文注入在用户消息之后 → 作为 headerKey', () => {
-    const nodes = [
-      userNode('user-cont', 4458),
-      contextNode('ctx-vision', 4460, 'text'),
-      asNode('as-t3s1', 4461),
-      toolNode('tool-3-1', 4465),
-      asNode('as-t3-final', 14497),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 14498]]) })
-    const fold = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('ctx-vision'))
-    assert.equal(fold.headerKey, 'ctx-vision')
-    assert.equal(fold.isTurnHeader, true)
-  })
-
-  it('回归 verify-fix 场景 3：无 user 节点的回合 → 回退到第一条中间节点', () => {
-    const nodes = [
-      contextNode('ctx-a', 100, 'text'),
-      asNode('as-1', 101),
-      toolNode('tool-a', 102),
-      asNode('as-final', 103),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 104]]) })
-    const fold = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('ctx-a'))
-    assert.equal(fold.headerKey, 'ctx-a')
-    assert.equal(fold.isTurnHeader, true)
-  })
-
-  it('回归 verify-fix 场景 4：两个用户消息 + 中间上下文 → headerKey 取最后一个 user 之后', () => {
-    const nodes = [
-      userNode('user-a', 200),
-      contextNode('ctx-mid', 201, 'text'),
-      userNode('user-b', 202),
-      asNode('as-1', 203),
-      toolNode('tool-a', 204),
-      asNode('as-final', 205),
-    ]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 206]]) })
-    const fold = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('as-1'))
-    assert.equal(fold.headerKey, 'as-1')
-    // ctx-mid 锚定在最后一个 user 之前 → 作用域外
-    const mid = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('ctx-mid'))
-    assert.equal(mid.outsideScope, true)
-  })
-
-  it('真实数据 TURN13：as-1 为折叠栏、as-5 为最终消息、其余全部成员且 foldable', () => {
-    for (const n of TURN13_NODES) {
-      if (n.kind === 'user' || n.kind === 'turn-tail') continue
-      const fold = T.computeTurnFold(TURN13.chat.order, TURN13.chat.nodes, TURN13.chat.locations, TURN13.turnEnds, n)
-      assert.ok(fold, `${n.key} 应有 fold`)
-      assert.equal(fold.closed, true, `${n.key} closed`)
-      assert.equal(fold.foldable, true, `${n.key} foldable`)
-      assert.equal(fold.outsideScope, false, `${n.key} 应在折叠作用域内`)
-      assert.equal(fold.turn, 13)
-    }
-    const header = T.computeTurnFold(TURN13.chat.order, TURN13.chat.nodes, TURN13.chat.locations, TURN13.turnEnds, TURN13.chat.nodes.get('as-1'))
-    assert.equal(header.isTurnHeader, true)
-    const final = T.computeTurnFold(TURN13.chat.order, TURN13.chat.nodes, TURN13.chat.locations, TURN13.turnEnds, TURN13.chat.nodes.get('as-5'))
-    assert.equal(final.isFinalAssistant, true)
-    for (const key of ['tc-revert', 'tc-check', 'tc-restore', 'tc-verify', 'as-2', 'as-3', 'as-4']) {
-      const f = T.computeTurnFold(TURN13.chat.order, TURN13.chat.nodes, TURN13.chat.locations, TURN13.turnEnds, TURN13.chat.nodes.get(key))
-      assert.equal(f.isTurnHeader, false, `${key} 不是折叠栏`)
-      assert.equal(f.isFinalAssistant, false, `${key} 不是最终消息`)
-    }
-  })
-
-  it('回归 Bug1（fold 侧）：store 节点对象替换后 ourKey 仍能按 key 定位', () => {
-    const s = buildSnapshot(
-      [userNode('u', 100), asNode('as', 200), toolNode('tc', 300), asNode('final', 400)],
-      { turnEnds: new Map([[13, 500]]) },
-    )
-    const staleProp = s.chat.nodes.get('tc')
-    s.chat.nodes.set('tc', toolNode('tc', 300)) // 替换对象
-    const fold = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, staleProp)
-    assert.equal(fold.ourKey, 'tc')
-    assert.equal(fold.foldable, true)
-  })
-
-  it('OUTSIDE_SCOPE fixture：作用域外节点不参与折叠', () => {
-    const ctx = T.computeTurnFold(OUTSIDE_SCOPE.chat.order, OUTSIDE_SCOPE.chat.nodes, OUTSIDE_SCOPE.chat.locations, OUTSIDE_SCOPE.turnEnds, OUTSIDE_SCOPE.chat.nodes.get('ctx-approval'))
-    assert.equal(ctx.outsideScope, true)
-    assert.equal(ctx.isTurnHeader, false)
-    const as = T.computeTurnFold(OUTSIDE_SCOPE.chat.order, OUTSIDE_SCOPE.chat.nodes, OUTSIDE_SCOPE.chat.locations, OUTSIDE_SCOPE.turnEnds, OUTSIDE_SCOPE.chat.nodes.get('as-o-1'))
-    assert.equal(as.headerKey, 'as-o-1')
-  })
-
-  it('TWO_USERS fixture：ctx-mid 在作用域外 · as-1 是折叠栏', () => {
-    const mid = T.computeTurnFold(TWO_USERS.chat.order, TWO_USERS.chat.nodes, TWO_USERS.chat.locations, TWO_USERS.turnEnds, TWO_USERS.chat.nodes.get('ctx-mid'))
-    assert.equal(mid.outsideScope, true)
-    const as = T.computeTurnFold(TWO_USERS.chat.order, TWO_USERS.chat.nodes, TWO_USERS.chat.locations, TWO_USERS.turnEnds, TWO_USERS.chat.nodes.get('as-2u-1'))
-    assert.equal(as.isTurnHeader, true)
-    assert.equal(as.headerKey, 'as-2u-1')
-  })
-})
-
-// ─────────────────────────── 指标与文案 ───────────────────────────
-describe('computeTurnMetrics / turnHeaderLabel / 格式化', () => {
-  it('TURN13 指标核算与真实会话一致', () => {
-    const m = T.computeTurnMetrics(13, TURN13.chat.nodes, TURN13.chat.locations, TURN13.turnTimings)
-    assert.deepEqual(m, TURN13_METRICS)
-  })
-
-  it('TURN13 回合折叠栏文案与真实会话一致', () => {
-    const m = T.computeTurnMetrics(13, TURN13.chat.nodes, TURN13.chat.locations, TURN13.turnTimings)
-    assert.equal(T.turnHeaderLabel(m), TURN13_LABEL)
-  })
-
-  it('无任何指标 → 返回空字符串（回退"运行了 N 条命令"由调用方决定）', () => {
-    assert.equal(T.turnHeaderLabel(null), '')
-    assert.equal(T.turnHeaderLabel(undefined), '')
-    const empty = T.computeTurnMetrics(99, new Map(), { getTurn: () => [] }, new Map())
-    assert.equal(empty, null)
-  })
-
-  it('运行中（liveNow）：耗时按 now-startTime 实时计算、token 累计、tok/s 实时估算、缓存命中实时', () => {
-    // 回合进行中：turnTimings 只有 startTime（无 endTime） · liveNow 由每秒秒表提供。
-    const nodes = [
-      userNode('u-live', 100),
-      asNode('as-live-1', 200, { status: 'running', usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 } }),
-      toolNode('tc-live', 300, { running: true }),
-      asNode('as-live-2', 400, { status: 'running', usage: { inputTokens: 30, outputTokens: 10, cacheReadTokens: 60 } }),
-    ]
-    const s = buildSnapshot(nodes, {
-      turnEnds: new Map(),
-      turnTimings: new Map([[13, { startTime: 100000 }]]),
-    })
-    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 105000)
-    // 耗时 = 105000 - 100000 = 5000ms；token = (100+30) + (200+60) + (50+10) = 450
-    // tok/s = 60 / 5 = 12；缓存命中 = 官方精度算法（260/390 → 67% · 字符串）
-    assert.equal(m.durationMs, 5000)
-    assert.equal(m.tokens, 450)
-    assert.equal(m.tokensPerSecond, 12)
-    assert.equal(m.cacheHitPercent, '66.67')
-    assert.equal(m.ttftMs, undefined, '运行中且无 settle step（无 finalNode.timing）→ 无官方 TTFT')
-    assert.equal(T.turnHeaderLabel(m), '耗时5秒 · 消耗450token · 12tok/s · 缓存命中66.67%')
-  })
-
-  it('运行中：第一个 step settle 后即显示官方 TTFT（finalNode.timing 实时读取）', () => {
-    // 回合未结束（turnEnds 空）但第一个 step 已 settle：官方在 assistant/message 后
-    // 把 timing 写入 finalNode——插件应实时读到官方值（firstTokenTime - stepStartTime），
-    // 不再等回合结束的 turn-tail。
-    const nodes = [
-      userNode('u-ttft', 100),
-      asNode('as-ttft-1', 200, {
-        status: 'settled',
-        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 },
-        timing: { stepStartTime: 200000, firstTokenTime: 204900, completedTime: 210000 },
-      }),
-      toolNode('tc-ttft', 300, { running: true }),
-    ]
-    const s = buildSnapshot(nodes, {
-      turnEnds: new Map(), // 回合未结束
-      turnTimings: new Map([[13, { startTime: 200000 }]]),
-    })
-    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 300000)
-    assert.equal(m.ttftMs, 4900, 'step settle 后实时读到官方 TTFT（204900 - 200000 = 4900ms）')
-    // token = 100 + 200 + 50 = 350；tok/s = 50 / (100000ms/1000) = 0.5
-    assert.equal(T.turnHeaderLabel(m), '耗时1分40秒 · 首字4.9s · 消耗350token · 0.5tok/s · 缓存命中66.67%')
-  })
-
-  it('运行中：多个 settle step 取 step 最小者（官方 deriveTurnMetrics 语义）', () => {
-    const nodes = [
-      userNode('u-ttft2', 100),
-      asNode('as-ttft2-1', 200, {
-        status: 'settled',
-        timing: { stepStartTime: 200000, firstTokenTime: 204900, completedTime: 210000 },
-      }),
-      asNode('as-ttft2-2', 300, {
-        status: 'settled',
-        step: 2,
-        timing: { stepStartTime: 210000, firstTokenTime: 216500, completedTime: 220000 },
-      }),
-    ]
-    const s = buildSnapshot(nodes, {
-      turnEnds: new Map(),
-      turnTimings: new Map([[13, { startTime: 200000 }]]),
-    })
-    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 300000)
-    assert.equal(m.ttftMs, 4900, '取 step 1 的 TTFT（204900-200000=4900），不用 step 2 的 6500')
-  })
-
-  it('回合结束：turn-tail 聚合值优先于 finalNode.timing（官方权威值）', () => {
-    const nodes = [
-      userNode('u-ttft3', 100),
-      asNode('as-ttft3-1', 200, {
-        status: 'settled',
-        timing: { stepStartTime: 200000, firstTokenTime: 204900, completedTime: 210000 },
-      }),
-      tailNode('tail-ttft3', 300, { tokensPerSecond: 12, ttftMs: 5100 }),
-    ]
-    const s = buildSnapshot(nodes, {
-      turnEnds: new Map([[13, 300]]),
-      turnTimings: new Map([[13, { startTime: 200000, endTime: 220000 }]]),
-    })
-    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings)
-    assert.equal(m.ttftMs, 5100, 'turn-tail 的官方聚合值优先')
-  })
-
-  it('运行中：无 liveNow（回合已结束）时耗时取 endTime · 不产生实时 tok/s', () => {
-    const nodes = [
-      userNode('u-settled', 100),
-      asNode('as-s-1', 200, { usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 } }),
-      asNode('as-s-2', 400, { usage: { inputTokens: 30, outputTokens: 10, cacheReadTokens: 60 } }),
-    ]
-    const s = buildSnapshot(nodes, {
-      turnEnds: new Map([[13, 500]]),
-      turnTimings: new Map([[13, { startTime: 100000, endTime: 105000 }]]),
-    })
-    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, undefined)
-    assert.equal(m.durationMs, 5000)
-    assert.equal(m.tokens, 450)
-    // 无 turn-tail 且未传 liveNow → 不估算 tok/s（保持既有行为）
-    assert.equal(m.tokensPerSecond, undefined)
-  })
-
-  it('运行中：耗时不足 1 秒或尚无输出时不显示实时 tok/s（避免瞬时巨大速率）', () => {
-    const nodes = [userNode('u-fast', 100), asNode('as-fast', 200, { status: 'running', usage: { inputTokens: 10, outputTokens: 0, cacheReadTokens: 0 } })]
-    const s = buildSnapshot(nodes, { turnEnds: new Map(), turnTimings: new Map([[13, { startTime: 100000 }]]) })
-    const m = T.computeTurnMetrics(13, s.chat.nodes, s.chat.locations, s.turnTimings, 100500)
-    assert.equal(m.durationMs, 500)
-    assert.equal(m.tokens, 10)
-    assert.equal(m.tokensPerSecond, undefined)
-    assert.equal(T.turnHeaderLabel(m), '耗时0秒 · 消耗10token · 缓存命中0.00%')
-  })
-
-  it('缺耗时但有 token → 文案省略耗时项', () => {
-    assert.equal(T.turnHeaderLabel({ tokens: 100 }), '消耗100token')
-  })
-
-  it('缓存命中精度：固定两位小数（不依赖是否接近 100%）', () => {
-    // 完全命中（无未命中输入）："100.00"
-    assert.equal(T.cacheHitPercent(0, 500, 0), '100.00')
-    // 普通命中：两位小数
-    assert.equal(T.cacheHitPercent(130, 260, 0), '66.67')
-    // 接近 100%：同样两位小数（官方算法此处才会提精度 · 插件固定两位）
-    assert.equal(T.cacheHitPercent(1, 9990, 0), '99.99')
-    // 无计费输入：null
-    assert.equal(T.cacheHitPercent(0, 0, 0), null)
-  })
-
-  it('formatTurnDuration：秒 / 分秒 / 时分秒', () => {
-    assert.equal(T.formatTurnDuration(45000), '45秒')
-    assert.equal(T.formatTurnDuration(90000), '1分30秒')
-    assert.equal(T.formatTurnDuration(1354551), '22分34秒')
-    assert.equal(T.formatTurnDuration(3661000), '1时1分1秒')
-    assert.equal(T.formatTurnDuration(0), '0秒')
-  })
-
-  it('formatTokPerSec：>=10 取整 · <10 保留一位小数', () => {
-    assert.equal(T.formatTokPerSec(144), '144')
-    assert.equal(T.formatTokPerSec(9.5), '9.5')
-    assert.equal(T.formatTokPerSec(0), '0')
-    assert.equal(T.formatTokPerSec(-5), '0')
-  })
-
-  it('CONFIG 兜底文案与失败追加', () => {
-    assert.equal(`${T.CONFIG.headerPrefix} 4 ${T.CONFIG.headerSuffix}`, '运行了 4 条命令')
-    assert.equal(`${T.CONFIG.headerPrefix} 6 ${T.CONFIG.headerSuffix}——2${T.CONFIG.failureSuffix}`, '运行了 6 条命令——2条执行失败')
-  })
-})
-
-// ─────────────────────────── 回合结束状态（timeline reason） ───────────────────────────
-// DSH 快照的 s.chat.timeline.turns 里 · turn.end 是完整 turn/end 事件 · 
-// 其 data.reason.kind 由 agent-loop 写入（completed / aborted / error / max-tokens / blocked）。
-describe('回合结束状态（timeline reason）', () => {
-  function turnWithReason(kind) {
-    const nodes = [userNode('u', 100), asNode('as', 200), asNode('final', 500)]
-    const s = buildSnapshot(nodes, {
-      turnEnds: new Map([[13, 600]]),
-      timeline: {
-        turns: new Map([[13, {
+describe('turnClockOf（官方 TurnLocation 读取）', () => {
+  it('提取 start/end/status/reason 与 data store', () => {
+    const node = {
+      kind: 'turn-process',
+      data: { turn: 13 },
+      location: {
+        kind: 'turn',
+        turn: {
           turn: 13,
-          start: { seq: 100 },
-          end: { seq: 600, data: { turn: 13, reason: { kind } } },
           status: 'closed',
-        }]]),
+          start: { time: T0 },
+          end: { time: T1, data: { reason: { kind: 'completed' } } },
+          steps: [],
+          data: { get: () => undefined },
+        },
       },
-    })
-    return T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('final'), s.chat.timeline)
-  }
-
-  it('正常完成 reason.kind=completed → 无状态标签（completed）', () => {
-    assert.equal(turnWithReason('completed').turnStatus, 'completed')
-  })
-
-  it('用户停止 reason.kind=aborted → stopped', () => {
-    assert.equal(turnWithReason('aborted').turnStatus, 'stopped')
-  })
-
-  it('出错 reason.kind=error → interrupted', () => {
-    assert.equal(turnWithReason('error').turnStatus, 'interrupted')
-  })
-
-  it('max-tokens → interrupted', () => {
-    assert.equal(turnWithReason('max-tokens').turnStatus, 'interrupted')
-  })
-
-  it('blocked（输入被拒绝）→ 按正常完成处理 · 不误报', () => {
-    assert.equal(turnWithReason('blocked').turnStatus, 'completed')
-  })
-
-  it('无 timeline → 默认 completed（不误报）', () => {
-    const nodes = [userNode('u', 100), asNode('as', 200), asNode('final', 500)]
-    const s = buildSnapshot(nodes, { turnEnds: new Map([[13, 600]]) })
-    const f = T.computeTurnFold(s.chat.order, s.chat.nodes, s.chat.locations, s.turnEnds, s.chat.nodes.get('final'))
-    assert.equal(f.turnStatus, 'completed')
-  })
-})
-
-// ─────────────────────────── 英文界面（en） ───────────────────────────
-// 重新加载一个 factory 实例（LOCALE 在 factory 顶层按 navigator 计算） · 
-// 验证英语适配：耗时/token/tok/s/缓存命中的英文格式。
-describe('英文界面（en）', () => {
-  it('formatTurnDuration / turnHeaderLabel 输出英文格式', () => {
-    Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US', languages: ['en-US'] }, configurable: true })
-    const { test: T2 } = loadPlugin()
-    assert.equal(T2.formatTurnDuration(45000), '45s')
-    assert.equal(T2.formatTurnDuration(90000), '1m 30s')
-    assert.equal(T2.formatTurnDuration(1354551), '22m 34s')
-    assert.equal(T2.formatTurnDuration(3661000), '1h 1m 1s')
-    assert.equal(T2.turnHeaderLabel(TURN13_METRICS), '22m 34s · TTFT 4.9s · 370202 tokens · 144 tok/s · cache hit 93.99%')
-    assert.equal(T2.turnHeaderLabel({ tokens: 100 }), '100 tokens')
-    // 恢复中文 navigator（动态语言读取下，否则会污染同进程后续测试）
-    Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
-  })
-})
-
-// ─────────────────────────── projectLiveTokens / turnDisplayMetrics ───────────────────────────
-// 运行中"消耗token"动画增长：真实 usage 只在请求完成时到达 · 两次之间在真实基线之上
-// 叠加动画偏移——偏移按实际 tick 次数推进（+1/+11 交替：个位每 tick +1、十位每 2
-// tick +1；tick 间隔 = liveTickMs × 随机数 0.5~1 · 节奏不规律）；新数据到达只校正
-// 基线、偏移继续累计（数字只增不减）。缓存按 turn 记忆 · 测试间需清理。
-describe('projectLiveTokens / turnDisplayMetrics（消耗token 动画增长）', () => {
-  // 缓存按 key（sessionId::turn）记忆 · 测试间需清理
-  const k = (n) => `sess::${n}`
-  // 动画偏移 = tickCount%10 + floor(tickCount/2)*10（+1/+11 交替）
-  const offset = (t) => (t % 10) + Math.floor(t / 2) * 10
-
-  it('首次调用：初始化缓存并返回真实值（动画偏移从 0 起算 · 且不推进 tick）', () => {
-    T.liveTokenCache.clear()
-    const base = T.liveTickState.index
-    assert.equal(T.projectLiveTokens(k(21), 450, 60, 100000, 12), 450)
-    assert.equal(T.liveTickState.index, base, '纯调用不应推进 tick')
-  })
-
-  it('无新数据：按 +1/+11 交替节奏持续增长（个位每 tick +1、十位每 2 tick +1）', () => {
-    T.liveTokenCache.clear()
-    const base = T.liveTickState.index
-    T.projectLiveTokens(k(22), 450, 60, 100000, undefined) // 初始化：动画偏移从 0 起
-    // 1 个 tick → +1；5 个 tick → +25（十位已动 2 次）
-    T.liveTickState.index = base + 1
-    assert.equal(T.projectLiveTokens(k(22), 450, 60, 100000, undefined), 450 + offset(1))
-    T.liveTickState.index = base + 5
-    assert.equal(T.projectLiveTokens(k(22), 450, 60, 100000, undefined), 450 + offset(5))
-    // 10 个 tick → +50（十位动了 5 次、个位回到 0）
-    T.liveTickState.index = base + 10
-    assert.equal(T.projectLiveTokens(k(22), 450, 60, 100000, undefined), 450 + offset(10))
-  })
-
-  it('动画偏移封顶：真实基线的 10% 与 500 取大者（长时间工具执行不再堆出万级虚构数字）', () => {
-    T.liveTokenCache.clear()
-    const base = T.liveTickState.index
-    // 小基线：上限取绝对下限 500（450 × 10% = 45 < 500）
-    T.projectLiveTokens(k(31), 450, 60, 100000, 30) // 初始化：animBaseTick = base
-    T.liveTickState.index = base + 2000              // 原始偏移 offset(2000) = 10000 ≫ 上限
-    assert.equal(T.projectLiveTokens(k(31), 450, 60, 100000, 30), 450 + 500, '小基线走 500 下限')
-    // 无 usage 兜底（基线 0）：同样 500 封顶（原始偏移 10000）
-    T.projectLiveTokens(k(32) + ':pending', 0, undefined, 100000, undefined) // 初始化于 base+2000
-    T.liveTickState.index = base + 4000
-    assert.equal(T.projectLiveTokens(k(32) + ':pending', 0, undefined, 100000, undefined), 500, 'pending 基线 0 走 500 下限')
-    // 大基线：上限 = 100000 × 10% = 10000（原始偏移 offset(4000) = 20000）
-    T.projectLiveTokens(k(33), 100000, 60, 100000, 30) // 初始化于 base+4000
-    T.liveTickState.index = base + 8000
-    assert.equal(T.projectLiveTokens(k(33), 100000, 60, 100000, 30), 100000 + 10000, '大基线按 10% 封顶')
-    // 上限可调：比例与下限都置 0 → 只显示真实值（关闭动画增长）
-    const ratio = T.CONFIG.liveTokenAnimMaxRatio
-    const floor = T.CONFIG.liveTokenAnimMaxFloor
-    try {
-      T.CONFIG.liveTokenAnimMaxRatio = 0
-      T.CONFIG.liveTokenAnimMaxFloor = 0
-      T.liveTokenCache.clear()
-      T.projectLiveTokens(k(34), 450, 60, 100000, 30) // 初始化于 base+8000
-      T.liveTickState.index = base + 12000
-      assert.equal(T.projectLiveTokens(k(34), 450, 60, 100000, 30), 450, '比例与下限为 0 时偏移为 0')
-    } finally {
-      T.CONFIG.liveTokenAnimMaxRatio = ratio
-      T.CONFIG.liveTokenAnimMaxFloor = floor
-      T.liveTokenCache.clear()
     }
+    const clock = T.turnClockOf(node)
+    assert.equal(clock.number, 13)
+    assert.equal(clock.startMs, T0)
+    assert.equal(clock.endMs, T1)
+    assert.equal(clock.status, 'closed')
+    assert.equal(clock.reason, 'completed')
+    assert.equal(typeof clock.data.get, 'function')
   })
 
-  it('新数据到达：校正基线为真实值 · 动画偏移继续累计不回退', () => {
-    T.liveTokenCache.clear()
-    const base = T.liveTickState.index
-    T.projectLiveTokens(k(24), 450, 60, 100000, 30) // 初始化：animBaseTick = base
-    // 5 个 tick 后真实值到达：基线校正为 1000 · 偏移照常累计 → 1000 + 25
-    T.liveTickState.index = base + 5
-    assert.equal(T.projectLiveTokens(k(24), 1000, 110, 100000, 30), 1000 + offset(5))
-    // 再 2 个 tick（无新数据）：1000 + 37
-    T.liveTickState.index = base + 7
-    assert.equal(T.projectLiveTokens(k(24), 1000, 110, 100000, 30), 1000 + offset(7))
-  })
-
-  it('缓存 key 含 sessionId：不同会话同 turn 号互不串扰', () => {
-    T.liveTokenCache.clear()
-    const base = T.liveTickState.index
-    T.projectLiveTokens('sA::13', 450, 60, 100000, 30)
-    T.projectLiveTokens('sB::13', 100, 10, 100000, 30)
-    // 各按自己的基线 + 偏移增长
-    T.liveTickState.index = base + 3
-    assert.equal(T.projectLiveTokens('sA::13', 450, 60, 100000, 30), 450 + offset(3))
-    assert.equal(T.projectLiveTokens('sB::13', 100, 10, 100000, 30), 100 + offset(3))
-  })
-
-  it('turnDisplayMetrics：运行中且 liveNow 存在才增长；closed / 无 liveNow / 无 tokens 原样返回', () => {
-    T.liveTokenCache.clear()
-    const base = T.liveTickState.index
-    const m = { durationMs: 5000, tokens: 450, outputTokens: 60, tokensPerSecond: 12, cacheHitPercent: 67 }
-    // 首次调用：初始化缓存 · 返回原对象
-    assert.equal(T.turnDisplayMetrics('sess', 26, m, false, 100000), m)
-    // 3 个 tick 后无新数据：tokens 增长为 450 + 13 = 463 · 其余字段不变
-    T.liveTickState.index = base + 3
-    const second = T.turnDisplayMetrics('sess', 26, m, false, 100000)
-    assert.notEqual(second, m)
-    assert.equal(second.tokens, 450 + offset(3))
-    assert.equal(second.durationMs, 5000)
-    assert.equal(second.outputTokens, 60)
-    assert.equal(second.tokensPerSecond, 12)
-    assert.equal(second.cacheHitPercent, 67)
-    // closed：原样返回（不再增长）
-    assert.equal(T.turnDisplayMetrics('sess', 26, m, true, 100000), m)
-    // liveNow undefined：原样返回
-    assert.equal(T.turnDisplayMetrics('sess', 26, m, false, undefined), m)
-    // 无 tokens：首次调用初始化 pending 缓存 · 仍原样返回（从下一 tick 起兜底增长）
-    const noTokens = { durationMs: 1000 }
-    assert.equal(T.turnDisplayMetrics('sess', 26, noTokens, false, 100000), noTokens)
-    // metrics 为空：原样返回
-    assert.equal(T.turnDisplayMetrics('sess', 26, null, false, 100000), null)
-  })
-
-  it('turnDisplayMetrics：无 usage 兜底——token 从 0 动画增长；真实值到达切回正常基线', () => {
-    T.liveTokenCache.clear()
-    const base = T.liveTickState.index
-    const noTokens = { durationMs: 1000 }
-    // 首次：初始化 pending 缓存 · 返回原对象
-    assert.equal(T.turnDisplayMetrics('sess', 27, noTokens, false, 100000), noTokens)
-    // 3 个 tick 后：tokens 从 0 增长为 offset(3)
-    T.liveTickState.index = base + 3
-    const grown = T.turnDisplayMetrics('sess', 27, noTokens, false, 100000)
-    assert.notEqual(grown, noTokens)
-    assert.equal(grown.tokens, offset(3))
-    assert.equal(grown.durationMs, 1000)
-    assert.equal(grown.outputTokens, undefined)
-    assert.equal(grown.tokensPerSecond, undefined)
-    // 真实 usage 到达：切回正常 key · 直接以真实值 450 为基线（pending 偏移不继承）
-    const real = { durationMs: 5000, tokens: 450, outputTokens: 60, tokensPerSecond: 12, cacheHitPercent: 67 }
-    assert.equal(T.turnDisplayMetrics('sess', 27, real, false, 100000).tokens, 450, '真实值到达直接显示真实值')
-    // 再 2 个 tick：按正常节奏增长（正常 key 的 animBaseTick 从真实值到达时起算）
-    T.liveTickState.index = base + 5
-    assert.equal(T.turnDisplayMetrics('sess', 27, real, false, 100000).tokens, 450 + offset(2))
-    // 回合闭合：不再兜底（原样返回）
-    assert.equal(T.turnDisplayMetrics('sess', 27, noTokens, true, 100000), noTokens)
+  it('非回合定位返回 null；aborted reason 原样带出', () => {
+    assert.equal(T.turnClockOf({ kind: 'turn-process', data: {}, location: { kind: 'session' } }), null)
+    assert.equal(T.turnClockOf(undefined), null)
+    const aborted = T.turnClockOf({
+      kind: 'turn-process', data: {},
+      location: { kind: 'turn', turn: { turn: 1, status: 'closed', start: { time: 1 }, end: { time: 2, data: { reason: { kind: 'aborted' } } }, steps: [], data: { get: () => undefined } } },
+    })
+    assert.equal(aborted.reason, 'aborted')
   })
 })
 
-// ─────────────────────── trackSession（会话切换清理） ───────────────────────
-// trackSession 是闭包内模块级状态，测试无法直接重置：每个用例先归位到哨兵会话，
-// 保证后续"切换"必然发生（哨兵会话本身无缓存条目，清理无副作用）。
-describe('trackSession（会话切换清理）', () => {
-  const RESET = '__reset__'
+describe('computeTurnMetrics（官方真实数据，无伪造增长）', () => {
+  const steps13 = TURN13_USAGE_STEPS.map((usage, i) => makeStepData(i + 1, {
+    usage,
+    // 第 1 步 TTFT = 4.9s（官方 finalNode.timing 语义）
+    timing: i === 0 ? { stepStartTime: T0 + 100, firstTokenTime: T0 + 5000 } : undefined,
+  }))
 
-  it('切换会话：清理 segmentLabelCache / liveTokenCache / 手动状态 · 保留 ttftCache', () => {
-    T.trackSession(RESET)
-    T.segmentLabelCache.clear()
-    T.ttftCache.clear()
-    T.liveTokenCache.clear()
-    T.turnOverrides.clear()
-    T.overrides.clear()
-    T.trackSession('sess-a') // 从 RESET 切换 → 清理（此时全空）
-    // 填充旧会话缓存
-    T.segmentLabelCache.set('zh|k1|k2', '标题')
-    T.ttftCache.set('sess-a::13', 120)
-    T.ttftCache.set('sess-b::13', 340)
-    T.liveTokenCache.set('sess-a::13', { lastTokens: 100, animBaseTick: 0 })
-    T.liveTokenCache.set('sess-a::13:pending', { lastTokens: 0, animBaseTick: 0 })
-    T.turnOverrides.set('sess-a::turn:13', true)
-    T.overrides.set('sess-a::k1', false)
-    // 切到新会话
-    T.trackSession('sess-b')
-    // 计算缓存与手动状态清理
-    assert.equal(T.segmentLabelCache.size, 0, '段标题缓存整体清空')
-    assert.equal(T.liveTokenCache.has('sess-a::13'), false, '动画基线按前缀清理')
-    assert.equal(T.liveTokenCache.has('sess-a::13:pending'), false, 'pending key 一并清理')
-    assert.equal(T.turnOverrides.has('sess-a::turn:13'), false, '回合手动状态回到自动规则')
-    assert.equal(T.overrides.has('sess-a::k1'), false, '组手动状态回到自动规则')
-    // ttftCache 保留（每回合一个数字，量级可忽略）
-    assert.ok(T.ttftCache.has('sess-a::13'), 'TTFT 缓存保留')
-    assert.ok(T.ttftCache.has('sess-b::13'), '其他会话 TTFT 不受影响')
+  it('官方聚合 tokenUsage 优先（turn-tail），数值与手工核算一致', () => {
+    const clock = {
+      number: 13, startMs: T0, endMs: T1, status: 'closed', reason: 'completed',
+      data: null, steps: [],
+    }
+    const metrics = T.computeTurnMetrics(clock, [], { tokenUsage: OFFICIAL_TOKEN_USAGE }, undefined)
+    assert.equal(metrics.durationMs, TURN13_EXPECT.durationMs)
+    assert.equal(metrics.tokens, TURN13_EXPECT.tokens)
+    assert.equal(metrics.outputTokens, TURN13_EXPECT.outputTokens)
+    assert.equal(metrics.cacheHitPercent, TURN13_EXPECT.cacheHitPercent)
+    assert.equal(metrics.ttftMs, undefined) // 无 step 数据 → 无 TTFT
   })
 
-  it('同一会话重复调用不清理', () => {
-    T.trackSession(RESET)
-    T.ttftCache.clear()
-    T.liveTokenCache.clear()
-    T.segmentLabelCache.clear()
-    T.turnOverrides.clear()
-    T.overrides.clear()
-    T.trackSession('sess-c')
-    T.segmentLabelCache.set('zh|a', 'x')
-    T.liveTokenCache.set('sess-c::1', { lastTokens: 5, animBaseTick: 0 })
-    T.overrides.set('sess-c::k1', false)
-    T.trackSession('sess-c') // 同一会话：无操作
-    assert.equal(T.segmentLabelCache.size, 1, '同会话不清段标题缓存')
-    assert.ok(T.liveTokenCache.has('sess-c::1'), '同会话不清动画基线')
-    assert.ok(T.overrides.has('sess-c::k1'), '同会话不清手动状态')
+  it('无官方聚合时按 step usage 累加（step data 与节点可见性无关，隐藏步骤同样计入）', () => {
+    const clock = {
+      number: 13, startMs: T0, endMs: T1, status: 'closed', reason: 'completed',
+      data: null, steps: [],
+    }
+    const metrics = T.computeTurnMetrics(clock, steps13, undefined, undefined)
+    assert.equal(metrics.durationMs, TURN13_EXPECT.durationMs)
+    assert.equal(metrics.tokens, TURN13_EXPECT.tokens)
+    assert.equal(metrics.outputTokens, TURN13_EXPECT.outputTokens)
+    assert.equal(metrics.cacheHitPercent, TURN13_EXPECT.cacheHitPercent)
+    assert.equal(metrics.ttftMs, 4900)
+    // tok/s = 真实输出 / 真实耗时 = 3273 / 1354.551s ≈ 2.4
+    assert.equal(T.formatTokPerSec(metrics.tokensPerSecond), '2.4')
+  })
+
+  it('同一输入两次计算结果逐字段相等（确定性，无随机增长）', () => {
+    const clock = {
+      number: 13, startMs: T0, endMs: T1, status: 'closed', reason: 'completed',
+      data: null, steps: [],
+    }
+    const a = T.computeTurnMetrics(clock, steps13, undefined, undefined)
+    const b = T.computeTurnMetrics(clock, steps13, undefined, undefined)
+    assert.deepEqual(a, b)
+  })
+
+  it('运行中：耗时用 liveNow 实时补足；tok/s 仅在耗时 ≥1s 且已有输出时出现', () => {
+    const clock = {
+      number: 3, startMs: 1000, endMs: undefined, status: 'open', reason: undefined,
+      data: null, steps: [],
+    }
+    const live = T.computeTurnMetrics(clock, [makeStepData(1, { usage: { inputTokens: 1000, outputTokens: 3214, cacheReadTokens: 2000 } })], undefined, 14000)
+    assert.equal(live.durationMs, 13000)
+    assert.equal(live.tokens, 6214)
+    assert.equal(live.outputTokens, 3214)
+    assert.equal(live.cacheHitPercent, '66.67')
+    assert.ok(live.tokensPerSecond > 0)
+
+    const early = T.computeTurnMetrics({ ...clock, startMs: 13000 }, [makeStepData(1, { usage: { outputTokens: 10 } })], undefined, 13500)
+    assert.equal(early.durationMs, 500)
+    assert.equal(early.tokensPerSecond, undefined) // <1s 不显示瞬时速率
+  })
+
+  it('同一数据对象重复出现只累加一次（引用去重）', () => {
+    const acc = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false, ttft: null, ttftStep: Infinity, counted: new Set() }
+    const data = makeStepData(1, { usage: { inputTokens: 100, outputTokens: 10 } })
+    T.readStepUsage(data, acc)
+    T.readStepUsage(data, acc)
+    assert.equal(acc.input, 100)
+    assert.equal(acc.output, 10)
+  })
+
+  it('无任何数据返回 null', () => {
+    assert.equal(T.computeTurnMetrics({ number: 1, startMs: undefined, endMs: undefined, status: 'closed', data: null, steps: [] }, [], undefined, undefined), null)
+  })
+})
+
+describe('格式化（中英文）', () => {
+  it('formatTurnDuration：秒 / 分秒 / 时分秒', () => {
+    setLang('zh-CN')
+    assert.equal(T.formatTurnDuration(0), '0秒')
+    assert.equal(T.formatTurnDuration(49000), '49秒')
+    assert.equal(T.formatTurnDuration(92000), '1分32秒')
+    assert.equal(T.formatTurnDuration(4932000), '1时22分12秒')
+    setLang('en')
+    assert.equal(T.formatTurnDuration(92000), '1m 32s')
+    assert.equal(T.formatTurnDuration(4932000), '1h 22m 12s')
+  })
+
+  it('formatTokPerSec / formatTokenCount', () => {
+    assert.equal(T.formatTokPerSec(34.2), '34')
+    assert.equal(T.formatTokPerSec(7.64), '7.6')
+    assert.equal(T.formatTokenCount(12345), '12,345')
+    assert.equal(T.formatTokenCount(370202), '370,202')
+    assert.equal(T.formatTokenCount(999), '999')
+  })
+
+  it('turnHeaderLabel：目标样式（zh / en）', () => {
+    setLang('zh-CN')
+    assert.equal(
+      T.turnHeaderLabel({ durationMs: 92000, ttftMs: 1200, tokens: 12345, tokensPerSecond: 34.2, cacheHitPercent: '80.00' }),
+      '耗时1分32秒 · 首字1.2s · 12,345 token · 34tok/s · 缓存80.00%',
+    )
+    setLang('en')
+    assert.equal(
+      T.turnHeaderLabel({ durationMs: 92000, ttftMs: 1200, tokens: 12345, tokensPerSecond: 34.2, cacheHitPercent: '80.00' }),
+      '1m 32s · TTFT 1.2s · 12,345 tokens · 34 tok/s · Cache 80.00%',
+    )
+    assert.equal(T.turnHeaderLabel(null), '')
+    assert.equal(T.turnHeaderLabel({}), '')
+  })
+
+  it('turnStatusLabel：aborted→已停止 / error→运行失败 / max-tokens→已中断 / completed→无词', () => {
+    setLang('zh-CN')
+    assert.equal(T.turnStatusLabel('aborted'), '已停止')
+    assert.equal(T.turnStatusLabel('error'), '运行失败')
+    assert.equal(T.turnStatusLabel('max-tokens'), '已中断')
+    assert.equal(T.turnStatusLabel('completed'), null)
+    assert.equal(T.turnStatusLabel(undefined), null)
+    setLang('en')
+    assert.equal(T.turnStatusLabel('aborted'), 'Stopped')
+    assert.equal(T.turnStatusLabel('error'), 'Failed')
+  })
+
+  it('turnRoundLabel', () => {
+    setLang('zh-CN')
+    assert.equal(T.turnRoundLabel(13), '第13轮')
+    setLang('en')
+    assert.equal(T.turnRoundLabel(13), 'Turn 13')
+    assert.equal(T.turnRoundLabel(undefined), '')
+  })
+})
+
+describe('字段显隐（filterVisibleMetrics + 持久化）', () => {
+  it('隐藏字段被剔除；outputTokens（tok/s 计算用）始终保留', () => {
+    T.setFieldVisible('tokens', false)
+    const filtered = T.filterVisibleMetrics({ durationMs: 1000, tokens: 500, outputTokens: 100, cacheHitPercent: '50.00' })
+    assert.equal(filtered.tokens, undefined)
+    assert.equal(filtered.outputTokens, 100)
+    assert.equal(filtered.durationMs, 1000)
+    assert.equal(filtered.cacheHitPercent, '50.00')
+  })
+
+  it('全部隐藏时返回原对象（文案兜底）', () => {
+    for (const key of T.FIELD_KEYS) T.setFieldVisible(key, false)
+    const metrics = { durationMs: 1000 }
+    assert.equal(T.filterVisibleMetrics(metrics), metrics)
+    for (const key of T.FIELD_KEYS) T.setFieldVisible(key, true)
+  })
+
+  it('设置写入 localStorage（dsh-turn-fold:settings）', () => {
+    T.setFieldVisible('tokens', false)
+    T.setFoldIconStyle('native')
+    const raw = window.localStorage.getItem(T.SETTINGS_KEY)
+    assert.ok(raw)
+    const parsed = JSON.parse(raw)
+    assert.equal(parsed.fields.tokens, false)
+    assert.equal(parsed.foldIcon, 'native')
+  })
+
+  it('重新加载插件时从 localStorage 恢复', () => {
+    T.setFieldVisible('tokens', false)
+    T.setStepSkin('native')
+    const { test: T2, window: win2 } = loadPlugin({ window })
+    assert.equal(T2.settings.fields.tokens, false)
+    assert.equal(T2.settings.stepSkin, 'native')
+    assert.equal(T2.settings.fields.duration, true)
+    assert.equal(win2, window)
+    // 还原（后续测试依赖默认态）
+    T2.setFieldVisible('tokens', true)
+    T2.setStepSkin('poker')
+    T2.setFoldIconStyle('poker')
   })
 })
