@@ -19,11 +19,11 @@
   "sideEffects": true,
   "engines": {
     "node": ">=20.3",
-    "dsh": ">=0.1.1-rc.2 <=0.1.7-rc.2"
+    "dsh": ">=0.1.7-rc.1 <=0.1.7-rc.2"
   },
   "scripts": {
     "check": "node --check client.js && node --check index.js",
-    "test": "node --test --test-isolation=none \"tests/*.test.mjs\"",
+    "test": "node --max-old-space-size=4096 --max-semi-space-size=64 --test --test-isolation=none --test-force-exit \"tests/*.test.mjs\"",
     "sync:icons": "node scripts/sync-icons.mjs --inject",
     "icons:check": "node scripts/sync-icons.mjs"
   },

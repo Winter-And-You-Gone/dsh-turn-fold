@@ -25,19 +25,27 @@ const TEST_EXPORTS = [
   'setStepSkin',
   'getStepSkin',
   'useStepSkin',
-  'applyStepSkinAttr',
-  'STEP_SKIN_ATTR',
+  'applyStepSkin',
+  'SKIN_CSS_ID',
+  'CSS_ID',
   'saveSettings',
+  // 设置面板共享状态（面板由打开者栏内渲染，无 body portal）
+  'popupState',
+  'setPopupOpen',
+  'getPopupState',
+  'subscribePopup',
+  'SettingsDialog',
   // Step Poker Skin
   'ACTIVITY_SUIT',
   'activitySuitOf',
   'buildStepSkinCss',
   'suitMaskImage',
-  // 直播时钟
+  // 运行中秒表时钟（固定 1000ms）
   'useLiveNow',
   'subscribeTicks',
   'getTickVersion',
   'tickListeners',
+  'liveTickMs',
   // 指标（全部来自官方真实数据）
   'turnClockOf',
   'readStepUsage',
@@ -71,21 +79,14 @@ const TEST_EXPORTS = [
   'AnimatedLabel',
   'TurnBarView',
   'EnhancedTurnProcessView',
+  'NativeChevronIcon',
   'specCardCountFromSpec',
-  // 齿轮弹窗 / Toast / 注册管道
-  'GearIcon',
-  'FieldVisibilityPopup',
+  'selectTurnNodeSource',
+  // 齿轮 / 注册管道
+  'GearIconSvg',
+  'GearOptionSelector',
   'FoldIconSelector',
   'StepSkinSelector',
-  'GearOptionSelector',
-  'DefaultChevronIcon',
-  'setPopupVisible',
-  'getPopupVisible',
-  'subscribePopup',
-  'showToast',
-  'getToast',
-  'clearToast',
-  'TurnFoldToast',
   'noteSlotDegradation',
   'safeRegisterSlot',
   'resolveSlotPriority',
@@ -115,10 +116,13 @@ export function loadPlugin(options = {}) {
   )
 
   const { JSDOM } = require('jsdom')
-  const win = options.window ?? new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
-    pretendToBeVisual: true,
-    url: 'http://localhost/',
-  }).window
+  // 默认复用模块级单例 JSDOM（--test-isolation=none 下 7 份 factory 共存，
+  // 每次调用新建 JSDOM 会撞环境进程内存上限）。
+  const defaultWin = globalThis.__tfSharedWindow ??= new JSDOM(
+    '<!DOCTYPE html><html><head></head><body></body></html>',
+    { pretendToBeVisual: true, url: 'http://localhost/' },
+  ).window
+  const win = options.window ?? defaultWin
   const doc = win.document
 
   const registrations = []
@@ -130,13 +134,8 @@ export function loadPlugin(options = {}) {
     },
   }
 
-  const uiPrimitives = options.uiPrimitives
   const mockRequire = (id) => {
     if (id === 'react') return React
-    if (id === '@deepseek-ai/dsh-client-ui-primitives') {
-      if (uiPrimitives === undefined) throw new Error('ui-primitives missing (fallback path)')
-      return uiPrimitives
-    }
     throw new Error(`unexpected require: ${id}`)
   }
 

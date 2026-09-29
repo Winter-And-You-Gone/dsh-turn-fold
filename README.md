@@ -87,8 +87,9 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
   未登记活动回退 ♥；
-- **软依赖**：全部选择器挂在官方 DOM 钩子上并由 `<body data-tf-step-skin>` 总闸控制——
-  DSH 改掉钩子时**最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。
+- **软依赖**：全部选择器挂在官方 DOM 钩子上，总闸 = 皮肤 `<style>` 元素的
+  `disabled` 属性（插件不写任何 `document.body` 全局状态）——DSH 改掉钩子时
+  **最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。
 
 ## 安装
 
@@ -263,11 +264,12 @@ git push --follow-tags
 ## 注意事项
 
 - 兼容性目标：**DSH 0.1.7-rc.1 / rc.2 的 `conversation.chat.node` + `turn-process`
-  owner state 契约**（0.1.7-rc.1 真机验证、rc.2 逐包契约 diff 复核）。本重构后插件
-  不再携带旧版（≤0.1.6）快照适配层——在不投影 `turn-process` 节点/owner state 的
-  更老宿主上，插件条目自然休眠（官方渲染原样、插件无副作用），属预期降级。
-  DSH 升级若改变上述契约，本插件可能需要随版本小改（属插件维护，非改源码）。
-- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.1-rc.2 <=0.1.7-rc.2`
+  owner state 契约**。0.1.7-rc.1 起官方才提供完整契约面（`TurnProcessOwnerProps`、
+  `useTurnData` reactive hook、`ChatNodeStore.turnDataSource`——已核对 rc.1 源码），
+  且 rc.1 为真机验证版本、rc.2 经逐包契约 diff 复核；**更早版本不再声明兼容**——
+  "安装后自然休眠"不计入兼容，兼容 = 插件核心功能真正工作。DSH 升级若改变上述
+  契约，本插件可能需要随版本小改（属插件维护，非改源码）。
+- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1 <=0.1.7-rc.2`
   —— 插件市场（dshmarket）读 npm `latest` manifest 的这个字段，在插件卡片上显示
   宿主要求，并在**更新**前拦下确定不满足的版本（DSH 本体不读该字段，不影响加载）。
   区间是**闭区间**、锁到已核验的宿主版本：每次 DSH 升级后重新核对契约，再抬上限
@@ -279,12 +281,23 @@ git push --follow-tags
     （`turn-tail` / `turn-process`）——均来自官方 `dsh-client-ui-chat` /
     `dsh-client-ui-conversation` 契约；
   - **Soft visual dependency**：`data-step-process-icon` / `data-process-activity`
-    （仅 Step 皮；失效 = 皮消失，官方图标与折叠原样保留）。
+    （仅 Step 皮；失效 = 皮消失，官方图标与折叠原样保留）；
+  - **Soft style injection（非理想软兼容点，已如实记录）**：插件向 `document.head`
+    注入两个最小 `<style>`（基础样式 + Step 皮）。截至当前 DSH master（21638c5631）
+    官方没有给 plain-JS client plugin 提供样式注册 API（全宿主唯一 `createElement('style')`
+    在 web 自身代码里），而 Step 皮必须作用在官方 Header 的官方 DOM 上、无法收敛进
+    插件 React 子树——故保留此软兼容点。注入失败的最坏退化 = 无 Turn 栏样式与无
+    Step 皮，官方折叠行为不受影响；宿主未来提供样式注册面时迁移。
 - 相比上一代（≤0.5.x）的行为变化：
   - 步骤分组/标题完全交还官方——插件自研的「运行了N条命令 / 读取了… / 思考了N次」
     段标题、段内文件链接复制、[ +N -M ] 行数统计、标题缓存已删除（官方标题语义为准）；
   - 「待折叠/已折叠 N 步」字段删除（折叠成员归属由官方决定，插件不再自行统计步数）；
   - **假 token 增长删除**——运行中两次 usage 之间数字保持真实值不动（不再 +1/+11）；
+  - **零宿主包运行时依赖**——chevron / 通知全部自有实现，不 require 任何
+    `@deepseek-ai/*` client 包（官方 practices：不要运行时 require Harness Client
+    package）；设置面板由打开它的 Turn 栏自身 React 树渲染，无 body portal / 独立
+    root；指标订阅走官方最小切片（`useTurnData('turn-tail')` +
+    `turnDataSource(turn, 'assistant-step')`），不再订阅整份快照；
   - 「Turn-Fold」transcript 模式与 shadow 官方设置行删除——官方四档照常工作，
     插件设置改为纯 UI 增强（见职责边界）；
   - 0 秒占位条从「user 消息正下方」改为挂在官方 `turn-process` 节点上：回合开始

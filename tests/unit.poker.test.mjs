@@ -10,16 +10,8 @@ import { act } from 'react'
 import { loadPlugin } from './helpers/loader.mjs'
 
 const require = createRequire(import.meta.url)
-const { JSDOM } = require('jsdom')
 
-const dom = new JSDOM('<!DOCTYPE html><html><head></head><body><div id="root"></div></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/',
-})
-globalThis.window = dom.window
-globalThis.document = dom.window.document
-Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
-globalThis.IS_REACT_ACT_ENVIRONMENT = true
+import dom, { sharedWindow, sharedDocument } from './helpers/dom.mjs'
 
 // 官方 UI 原语桩：chevron 图标 / Toast（组件身份稳定即可，渲染为空元素）
 const PRIMITIVES_STUB = {
@@ -27,20 +19,20 @@ const PRIMITIVES_STUB = {
   IconChevronRightOutline14: function IconChevronRightStub() { return null },
   Toast: function ToastStub() { return null },
 }
-const { test: T } = loadPlugin({ window: dom.window, uiPrimitives: PRIMITIVES_STUB })
+const { test: T } = loadPlugin({ window: sharedWindow })
 const react = require('react')
 
 let container = null
 let root = null
 function mount(el) {
-  container = dom.window.document.createElement('div')
-  dom.window.document.body.appendChild(container)
+  container = sharedDocument.createElement('div')
+  sharedDocument.body.appendChild(container)
   root = createRoot(container)
   act(() => { root.render(el) })
 }
 
 beforeEach(() => {
-  dom.window.localStorage.clear()
+  sharedWindow.localStorage.clear()
   T.setFoldIconStyle('poker')
 })
 

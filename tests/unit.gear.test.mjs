@@ -1,53 +1,65 @@
-// 齿轮弹窗测试（插件设置 UI：字段显隐 / 图标风格 / Step 皮）：
-//   - 弹窗开合 + 字段 checkbox 双向绑定
-//   - 设置项即时生效并持久化（localStorage）
-//   - hooks 顺序守卫（隐藏态也必须调用全部 hooks —— FieldVisibilityPopup 前车之鉴）
+// 齿轮弹窗测试（收尾版）：面板由打开者 Turn 栏自身 React 树渲染（无 body portal）。
+//   - 字段 checkbox 双向绑定 + 持久化
+//   - 图标风格 / Step 皮选择器（含皮肤 disabled 同步）
+//   - 打开/关闭与 aria 状态
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { loadPlugin } from './helpers/loader.mjs'
+import {
+  T0, T1, makeTurnNode, makeTurnProcessOwner, makeUseTurnData, makeStepsSource, makeUseChat,
+} from './helpers/fixtures.mjs'
 
 const require = createRequire(import.meta.url)
-const { JSDOM } = require('jsdom')
 
-const dom = new JSDOM('<!DOCTYPE html><html><head></head><body><div id="root"></div></body></html>', {
-  pretendToBeVisual: true,
-  url: 'http://localhost/',
-})
-globalThis.window = dom.window
-globalThis.document = dom.window.document
-Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN', languages: ['zh-CN'] }, configurable: true })
-globalThis.IS_REACT_ACT_ENVIRONMENT = true
+import dom, { sharedWindow, sharedDocument } from './helpers/dom.mjs'
 
-// 官方 UI 原语桩：chevron 图标 / Toast（组件身份稳定即可，渲染为空元素）
-const PRIMITIVES_STUB = {
-  IconChevronDownOutline14: function IconChevronDownStub() { return null },
-  IconChevronRightOutline14: function IconChevronRightStub() { return null },
-  Toast: function ToastStub() { return null },
-}
-const { test: T } = loadPlugin({ window: dom.window, uiPrimitives: PRIMITIVES_STUB })
+const { test: T } = loadPlugin({ window: sharedWindow })
 const react = require('react')
 
 let container = null
 let root = null
-function mountPopup() {
-  container = dom.window.document.createElement('div')
-  dom.window.document.body.appendChild(container)
-  root = createRoot(container)
-  act(() => { root.render(react.createElement(T.FieldVisibilityPopup, null)) })
+
+const usageStep = {
+  turn: 13, step: 1, status: 'settled',
+  usage: { inputTokens: 1000, outputTokens: 10 },
+}
+
+function mountBar() {
+  act(() => {
+    root.render(react.createElement(T.EnhancedTurnProcessView, {
+      node: makeTurnNode({ status: 'closed', startTime: T0, endTime: T1, steps: [usageStep] }),
+      turnProcess: makeTurnProcessOwner(),
+      useTurnData: makeUseTurnData({}),
+      useChat: makeUseChat(makeStepsSource([usageStep])),
+    }))
+  })
+}
+
+function gear() {
+  return container.querySelector('button.ccg-gear-button')
+}
+
+function openPopup() {
+  act(() => { gear().click() })
 }
 
 beforeEach(() => {
-  dom.window.localStorage.clear()
+  sharedWindow.localStorage.clear()
   for (const key of T.FIELD_KEYS) T.setFieldVisible(key, true)
   T.setFoldIconStyle('poker')
   T.setStepSkin('poker')
+  act(() => { T.setPopupOpen(false, null) })
+  container = sharedDocument.createElement('div')
+  sharedDocument.body.appendChild(container)
+  root = createRoot(container)
+  mountBar()
 })
 
 afterEach(() => {
-  T.setPopupVisible(false)
+  act(() => { T.setPopupOpen(false, null) })
   if (root) {
     act(() => { root.unmount() })
     root = null
@@ -58,86 +70,87 @@ afterEach(() => {
   }
 })
 
-describe('字段设置弹窗', () => {
-  it('隐藏态渲染 null 但不崩（hooks 顺序守卫）', () => {
-    mountPopup()
-    assert.equal(container.querySelector('.ccg-gear-overlay'), null)
-  })
-
-  it('打开后列出全部字段 checkbox + 两个选择器', () => {
-    T.setPopupVisible(true)
-    mountPopup()
+describe('设置面板（Turn 栏自身 React 树内）', () => {
+  it('默认关闭；gear 点击打开；字段与双选择器齐全', () => {
+    assert.equal(container.querySelector('.ccg-gear-overlay'), null, '默认无面板')
+    openPopup()
     const overlay = container.querySelector('.ccg-gear-overlay')
-    assert.ok(overlay, '弹窗打开')
+    assert.ok(overlay, '面板打开（在组件树内）')
     const boxes = container.querySelectorAll('input[type=checkbox]')
     assert.equal(boxes.length, T.FIELD_KEYS.length)
-    assert.ok(container.querySelector('.ccg-gear-icon-selector'), '图标风格选择器')
-    assert.ok(container.querySelectorAll('.ccg-gear-icon-selector').length >= 2, 'Step 皮选择器也在')
+    const selectors = [...container.querySelectorAll('.ccg-gear-icon-selector-label')].map((l) => l.textContent)
+    assert.ok(selectors.includes('回合栏图标') && selectors.includes('步骤栏皮肤'))
+    assert.equal(gear().getAttribute('aria-expanded'), 'true')
   })
 
   it('checkbox 切换 → setFieldVisible 即时生效并持久化', () => {
-    T.setPopupVisible(true)
-    mountPopup()
+    openPopup()
     const box = container.querySelector('input#ccg-field-tokens')
     assert.equal(box.checked, true)
-    act(() => {
-      // HTMLElement.click()：同步触发 activation behavior + click 事件，React onChange 跟随
-      box.click()
-    })
-    const saved = JSON.parse(dom.window.localStorage.getItem(T.SETTINGS_KEY))
+    act(() => { box.click() })
+    const saved = JSON.parse(sharedWindow.localStorage.getItem(T.SETTINGS_KEY))
     assert.equal(saved.fields.tokens, false)
     assert.equal(T.settings.fields.tokens, false)
-    // 恢复
-    T.setFieldVisible('tokens', true)
+    act(() => { T.setFieldVisible('tokens', true) })
   })
 
-  it('遮罩点击关闭；Done 按钮关闭', () => {
-    T.setPopupVisible(true)
-    mountPopup()
-    const overlay = container.querySelector('.ccg-gear-overlay')
+  it('Escape 关闭并把焦点还给齿轮；aria-expanded 复位', () => {
+    openPopup()
     act(() => {
-      overlay.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      document.dispatchEvent(new sharedWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    assert.equal(container.querySelector('.ccg-gear-overlay'), null, '遮罩空白处点击关闭')
-    T.setPopupVisible(true)
-    mountPopup()
-    const done = container.querySelector('.ccg-gear-popup-btn')
+    assert.equal(container.querySelector('.ccg-gear-overlay'), null)
+    assert.equal(document.activeElement, gear())
+    assert.equal(gear().getAttribute('aria-expanded'), 'false')
+  })
+
+  it('遮罩空白处点击 / Done 按钮均可关闭', () => {
+    openPopup()
     act(() => {
-      done.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      container.querySelector('.ccg-gear-overlay')
+        .dispatchEvent(new sharedWindow.MouseEvent('click', { bubbles: true }))
     })
-    assert.equal(container.querySelector('.ccg-gear-overlay'), null, 'Done 关闭')
+    assert.equal(container.querySelector('.ccg-gear-overlay'), null)
+    openPopup()
+    act(() => {
+      container.querySelector('.ccg-gear-popup-btn')
+        .dispatchEvent(new sharedWindow.MouseEvent('click', { bubbles: true }))
+    })
+    assert.equal(container.querySelector('.ccg-gear-overlay'), null)
+  })
+
+  it('gear 再点一次（toggle）关闭面板', () => {
+    openPopup()
+    assert.ok(container.querySelector('.ccg-gear-overlay'))
+    act(() => { gear().click() })
+    assert.equal(container.querySelector('.ccg-gear-overlay'), null)
   })
 })
 
 describe('图标风格 / Step 皮选择器', () => {
   it('点击选项行切换 foldIcon 并持久化', () => {
-    T.setPopupVisible(true)
-    mountPopup()
+    openPopup()
     const options = container.querySelectorAll('.ccg-gear-icon-option')
     assert.ok(options.length >= 4, '两个选择器各两项')
-    // FoldIconSelector 是第一个：第二项 = native
-    act(() => {
-      options[1].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
-    })
+    act(() => { options[1].dispatchEvent(new sharedWindow.MouseEvent('click', { bubbles: true })) })
     assert.equal(T.getFoldIconStyle(), 'native')
-    const saved = JSON.parse(dom.window.localStorage.getItem(T.SETTINGS_KEY))
+    const saved = JSON.parse(sharedWindow.localStorage.getItem(T.SETTINGS_KEY))
     assert.equal(saved.foldIcon, 'native')
-    T.setFoldIconStyle('poker')
+    act(() => { T.setFoldIconStyle('poker') })
   })
 
-  it('点击 Step 皮选项切换 stepSkin 并同步 body 属性', () => {
-    T.setPopupVisible(true)
-    mountPopup()
+  it('点击 Step 皮选项切换 stepSkin 并同步皮肤元素 disabled', () => {
+    const skinEl = document.querySelector('style[data-plugin-css="' + T.SKIN_CSS_ID + '"]')
+    openPopup()
     const selectors = container.querySelectorAll('.ccg-gear-icon-selector')
     const stepSelector = selectors[selectors.length - 1]
     const options = stepSelector.querySelectorAll('.ccg-gear-icon-option')
-    act(() => {
-      options[1].dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
-    })
+    act(() => { options[1].dispatchEvent(new sharedWindow.MouseEvent('click', { bubbles: true })) })
     assert.equal(T.getStepSkin(), 'native')
-    assert.equal(dom.window.document.body.getAttribute(T.STEP_SKIN_ATTR), null)
-    T.setStepSkin('poker')
-    assert.equal(dom.window.document.body.getAttribute(T.STEP_SKIN_ATTR), 'poker')
+    assert.equal(skinEl.disabled, true, '皮肤元素被禁用（总闸）')
+    assert.equal(container.querySelector('[data-tf-step-skin]'), null, '不再使用 body 属性总闸')
+    act(() => { T.setStepSkin('poker') })
+    assert.equal(skinEl.disabled, false)
   })
 
   it('非法值被忽略（不抛错、不改状态）', () => {
@@ -145,14 +158,5 @@ describe('图标风格 / Step 皮选择器', () => {
     T.setStepSkin('neon')
     assert.equal(T.getFoldIconStyle(), 'poker')
     assert.equal(T.getStepSkin(), 'poker')
-  })
-})
-
-describe('Toast（注册降级提示的宿主）', () => {
-  it('showToast → 快照更新；clearToast → 清除', () => {
-    T.showToast('test-msg')
-    assert.equal(T.getToast().text, 'test-msg')
-    T.clearToast()
-    assert.equal(T.getToast().text, null)
   })
 })

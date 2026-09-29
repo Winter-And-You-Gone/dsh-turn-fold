@@ -77,8 +77,9 @@ and search reveal) works untouched; the plugin only reskins it:
   source generating the CSS): thinking/questions → ♥, read/readImage/search/webSearch/
   webFetch → ♠, edit/write → ♦, commands/code → ♣, subagents/plan/tools → 🐋whale
   (DeepSeek logo); unregistered activities fall back to ♥;
-- **Soft dependency**: every selector is gated by `<body data-tf-step-skin>` and pinned
-  to the official DOM hooks — if DSH renames them, the **worst degradation is the skin
+- **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
+  the skin `<style>` element's `disabled` property (the plugin never writes global
+  `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
   disappearing and the official icon showing as-is**; official folding is unaffected.
 
 ## Install
@@ -248,14 +249,15 @@ git push --follow-tags
 ## Notes
 
 - Compatibility target: the **DSH 0.1.7-rc.1 / rc.2 `conversation.chat.node` +
-  `turn-process` owner-state contract** (rc.1 verified on a live host; rc.2 re-verified
-  by per-package contract diff). After this refactor the plugin no longer ships the
-  legacy (≤0.1.6) snapshot adapters — on older hosts that do not project the
-  `turn-process` node/owner state, the plugin entry simply stays dormant (official
-  rendering as-is, no side effects), which is the intended degradation. If a DSH upgrade
-  changes the contract above, this plugin may need a matching maintenance release
-  (plugin maintenance, never source patches).
-- **Declared host requirement**: `engines.dsh` = `>=0.1.1-rc.2 <=0.1.7-rc.2` in
+  `turn-process` owner-state contract**. The full contract surface exists from
+  0.1.7-rc.1 onward (`TurnProcessOwnerProps`, the reactive `useTurnData` hook,
+  `ChatNodeStore.turnDataSource` — verified against the rc.1 sources); rc.1 is the
+  live-host-verified floor and rc.2 was re-verified by per-package contract diff.
+  **Older versions are no longer declared compatible** — a dormant install does not
+  count as compatibility; compatibility means the plugin's core features really work.
+  If a DSH upgrade changes the contract above, this plugin may need a matching
+  maintenance release (plugin maintenance, never source patches).
+- **Declared host requirement**: `engines.dsh` = `>=0.1.7-rc.1 <=0.1.7-rc.2` in
   `package.json`. The plugin marketplace (dshmarket) reads this field from the npm
   `latest` manifest to show the badge and to block updates that certainly cannot
   satisfy it (the DSH host itself does not read it). The range is **closed** and locked
@@ -268,7 +270,15 @@ git push --follow-tags
     (`turn-tail` / `turn-process`) — all from the official `dsh-client-ui-chat` /
     `dsh-client-ui-conversation` contracts;
   - **Soft visual dependency**: `data-step-process-icon` / `data-process-activity`
-    (step skin only; failure = skin disappears, official icons and folding stay intact).
+    (step skin only; failure = skin disappears, official icons and folding stay intact);
+  - **Soft style injection (non-ideal, recorded as-is)**: the plugin injects two minimal
+    `<style>` elements into `document.head` (base styles + the step skin). As of the
+    current DSH master (21638c5631) there is no style-registration API for plain-JS
+    client plugins (the only `createElement('style')` in the tree belongs to the web app
+    itself), while the step skin must target the official DOM inside the official header
+    and cannot live in the plugin's React subtree. Worst-case failure = missing turn-bar
+    styling and no step skin; official folding is unaffected. The plugin will migrate
+    once an official style extension point exists.
 - Behavior changes compared to the previous generation (≤0.5.x):
   - Step grouping/titles are fully returned to the official engine — the plugin-made
     "Ran N commands / Read … / Thought N times" segment titles, in-title file-link
@@ -278,6 +288,12 @@ git push --follow-tags
     longer counts steps);
   - **Fake token growth is deleted** — digits hold the real value between usage arrivals
     (no more +1/+11);
+  - **Zero runtime dependency on host client packages** — chevron / notifications are
+    plugin-owned (official practices: do not require Harness Client packages at
+    runtime); the settings panel renders inside the opening turn bar's own React tree
+    (no body portal / standalone root); metrics subscribe via the official smallest
+    slices (`useTurnData('turn-tail')` + `turnDataSource(turn, 'assistant-step')`)
+    instead of the whole snapshot;
   - The "Turn-Fold" transcript mode and the shadowed official settings row are deleted —
     the four official modes keep working and plugin settings are pure UI enhancements;
   - The 0s placeholder moved from "right below the user message" onto the official

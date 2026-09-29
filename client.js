@@ -26,6 +26,12 @@
 //   - 设置完全独立于官方 transcriptView（插件绝不读、更不写该字段）：
 //     localStorage `dsh-turn-fold:settings`——Turn 栏字段显隐、图标风格、
 //     Step 皮开关。官方 Compact / Standard / Detailed / Verbose 四档照常工作。
+//   - 规范收尾（practices 对齐）：零宿主包运行时依赖（chevron/通知全自有，
+//     不 require 任何 @deepseek-ai/* client 包）；设置面板由打开它的 Turn 栏
+//     自身 React 树渲染（无 body portal / 独立 root）；订阅走官方最小切片
+//     （useTurnData('turn-tail') + turnDataSource(turn,'assistant-step')，不订阅
+//     整份快照）；唯一记录在案的软兼容点 = 最小 <style> 注入（官方尚无插件样式
+//     注册 API，见 README「软依赖」）。
 //
 // 实现方式：
 //   - priority:-1 覆盖（shadow）官方 conversation.chat.node 的 key "turn-process"
@@ -95,10 +101,6 @@ window.__ModuleLoader__.load({
 				stepSkinPokerDesc: "按活动类型映射花色（♥ 思考 · ♠ 读取 · ♦ 编辑 · ♣ 命令 · 鲸鱼 编排）",
 				stepSkinNative: "官方图标",
 				stepSkinNativeDesc: "官方活动图标原样显示",
-				// 注册降级 Toast（一次性，页面加载内只提示一次）。措辞中性：降级原因
-				// 不止"与其他插件冲突"——还有旧版 DSH 未声明 slot 的版本缺口、宿主注册
-				// 抛错等，一律不指涉冲突方。
-				slotDegradedToast: "渲染位注册异常，本插件部分功能已降级（详见控制台）"
 			},
 			en: {
 				ariaTurn: "Expand turn",
@@ -132,8 +134,6 @@ window.__ModuleLoader__.load({
 				stepSkinPokerDesc: "Activity-to-suit mapping (♥ think · ♠ read · ♦ edit · ♣ command · whale orchestration)",
 				stepSkinNative: "Native icons",
 				stepSkinNativeDesc: "Show official activity icons as-is",
-				// Slot degradation toast (one-shot per page load)
-				slotDegradedToast: "A renderer-slot registration issue was detected; parts of this plugin have been degraded (see console)"
 			}
 		};
 		/** 取当前语言下的文案；缺失键回退英文，再缺失返回键名本身。 */
@@ -146,11 +146,9 @@ window.__ModuleLoader__.load({
 		var react = require("react");
 		var useSyncExternalStore = react.useSyncExternalStore;
 
-		// ---- react-dom（独立 React 根用） ----
-		// 用于把字段设置弹窗 / Toast 挂到 <body> 上的独立 React 根；极简宿主
-		// / 测试 loader（mockRequire 不提供 react-dom）下静默跳过，不影响插件主体。
-		var ReactDOM = null;
-		try { ReactDOM = require("react-dom"); } catch (e) { /* 无 react-dom 的宿主 */ }
+		// ---- 独立 React 根：不再使用 ----
+		// 设置面板已改由打开它的 Turn 栏自身 React 树渲染（无 body portal / 独立 root），
+		// 插件不再引入任何宿主侧渲染器包，也不再往 document.body 写任何节点。
 
 		// ---- 插件版本号 ----
 		// 仅用于图标包兼容校验：loadIconConfig 读取 localStorage 图标包时，其 meta.compat
@@ -158,25 +156,28 @@ window.__ModuleLoader__.load({
 		// package.json 的 version 同步更新。
 		var NOTICE_VERSION = "0.5.4";
 
-		// ---- 官方 UI 原语（可选依赖） ----
-		// Turn 栏 native 风格与选择器预览用官方 chevron 图标；Toast 用官方通知原语。
-		// @deepseek-ai/dsh-client-ui-primitives 是平台 seed 模块，插件工厂可直接 require；
-		// 若某版本缺失则回退到自带兜底样式，保证插件仍可用。
-		var IconChevronDownOutline14 = null;
-		var IconChevronRightOutline14 = null;
-		var Toast = null;
-		try {
-			var uiPrimitives = require("@deepseek-ai/dsh-client-ui-primitives");
-			// DSH 0.1.7-rc.1 图标 API 改名：尺寸后缀（IconXxxOutline16/14）→ 粗细后缀
-			// （IconXxxOutlineRegular/Medium，尺寸改走 size prop）。新旧命名都探测：
-			// 旧宿主命中前者，新宿主命中后者；缺失时必须归一为 null —— 直接赋值会得到
-			// undefined，绕过 `!== null`/真值守卫渲染 createElement(undefined)，
-			// 即 React #130（composer 识图选择器同类崩溃的根源）。
-			IconChevronDownOutline14 = uiPrimitives.IconChevronDownOutline14 || uiPrimitives.IconChevronDownOutlineRegular || null;
-			IconChevronRightOutline14 = uiPrimitives.IconChevronRightOutline14 || uiPrimitives.IconChevronRightOutlineRegular || null;
-			Toast = uiPrimitives.Toast || null;
-		} catch (e) {
-			/* 平台模块缺失：走自带兜底样式 */
+		// ---- 自有 UI 原语（零宿主包依赖） ----
+		// 官方插件实践（cordis-plugin-development/references/practices.md）：不要运行时
+		// require 任何 Harness Client 包。Turn 栏 native 风格的 chevron 用插件自己的
+		// SVG（外观对齐官方 IconChevronDownOutline 的描边折线）；通知只用 console.warn。
+		// SVG 属性必须用 React 驼峰命名（strokeWidth/strokeLinecap/strokeLinejoin）：
+		// 连字符形式 React 会逐条报 "Invalid DOM property"。
+		/** 自有 chevron（14×14 描边折线）：points 区分方向——
+		 *  下箭头 "3 5.5 7 9.5 11 5.5" / 右箭头 "5.5 3 9.5 7 5.5 11"。 */
+		function NativeChevronIcon(props) {
+			return react.createElement("svg", {
+				viewBox: "0 0 14 14",
+				width: props.size || 14,
+				height: props.size || 14,
+				fill: "none",
+				stroke: "currentColor",
+				strokeWidth: "1.6",
+				strokeLinecap: "round",
+				strokeLinejoin: "round",
+				"aria-hidden": "true"
+			},
+				react.createElement("polyline", { points: props.points || "3 5.5 7 9.5 11 5.5" })
+			);
 		}
 
 		// ---- 插件设置（独立于官方 transcriptView；localStorage 持久化） ----
@@ -301,8 +302,7 @@ window.__ModuleLoader__.load({
 			return settings.foldIcon;
 		}
 
-		// -- Step 分组栏皮肤（poker / native；纯 CSS，挂在 body 属性上） --
-		var STEP_SKIN_ATTR = "data-tf-step-skin";
+		// -- Step 分组栏皮肤（poker / native；纯 CSS，经皮肤样式元素的 disabled 总闸切换） --
 		var stepSkinListeners = new Set();
 		var stepSkinVersion = 0;
 		function subscribeStepSkin(fn) {
@@ -321,7 +321,7 @@ window.__ModuleLoader__.load({
 			if (settings.stepSkin === skin) return;
 			settings.stepSkin = skin;
 			saveSettings();
-			applyStepSkinAttr();
+			applyStepSkin();
 			notifyStepSkin();
 		}
 		function getStepSkin() { return settings.stepSkin; }
@@ -330,13 +330,12 @@ window.__ModuleLoader__.load({
 			useSyncExternalStore(subscribeStepSkin, getStepSkinVersion);
 			return settings.stepSkin;
 		}
-		/** 把皮肤开关同步到 <body data-tf-step-skin>——CSS 皮的唯一开关。
-		 *  skin=native（或任何异常值）时移除属性，官方图标原样显示。 */
-		function applyStepSkinAttr() {
+		/** 把皮肤开关同步到皮肤样式元素的 disabled 属性——CSS 皮的唯一开关
+		 *  （不写 document.body：官方实践禁止在组件外写 DOM；skinStyleEl 由 CSS
+		 *  注入段创建并持有，native 时 disabled=true 官方图标原样显示）。 */
+		function applyStepSkin() {
 			try {
-				if (typeof document === "undefined" || !document.body) return;
-				if (settings.stepSkin === "poker") document.body.setAttribute(STEP_SKIN_ATTR, "poker");
-				else document.body.removeAttribute(STEP_SKIN_ATTR);
+				if (skinStyleEl !== null) skinStyleEl.disabled = settings.stepSkin !== "poker";
 			} catch (e) { /* 忽略 */ }
 		}
 
@@ -347,6 +346,7 @@ window.__ModuleLoader__.load({
 		// 未设置/损坏时回退 ICON_DEFAULTS 内置默认。图标包结构 = default.json。
 		var ICONS_STORAGE_KEY = "dsh-turn-fold:icons";
 		var ICON_DEFAULTS = /*__ICON_DEFAULTS__*/ 
+
 {
   "meta": {
     "version": 1,
@@ -515,16 +515,16 @@ window.__ModuleLoader__.load({
 			return markup ? suitCardMask(String(markup)) : "";
 		}
 		/** 生成 Step Poker Skin 的 CSS（依赖注入的图标数据，只能在 ICON_DEFAULTS 就绪后调用）。
-		 *  结构：body[data-tf-step-skin="poker"] 总闸 → 官方图标内容隐藏 → ::before 卡牌；
-		 *  每个官方 activity 一条 --tf-suit 变量规则（未登记活动回退默认 heart）。 */
+		 *  规则不带任何 body 前缀——总闸是皮肤样式元素自身的 disabled（applyStepSkin）。
+		 *  结构：官方图标内容隐藏 → ::before 卡牌；每个官方 activity 一条 --tf-suit
+		 *  变量规则（未登记活动回退默认 heart）。 */
 		function buildStepSkinCss() {
-			var gate = 'body[' + STEP_SKIN_ATTR + '="poker"]';
 			var rules = [];
 			// 官方活动图标内容隐藏 + 卡牌渲染位（::before 用当前色 mask 出牌形）
-			rules.push(gate + ' [data-step-process] [data-step-process-icon] > *{display:none}');
-			rules.push(gate + ' [data-step-process] [data-step-process-icon]::before{content:"";display:block;width:14px;height:20px;background-color:currentColor;-webkit-mask:var(--tf-suit) center/contain no-repeat;mask:var(--tf-suit) center/contain no-repeat}');
+			rules.push('[data-step-process] [data-step-process-icon] > *{display:none}');
+			rules.push('[data-step-process] [data-step-process-icon]::before{content:"";display:block;width:14px;height:20px;background-color:currentColor;-webkit-mask:var(--tf-suit) center/contain no-repeat;mask:var(--tf-suit) center/contain no-repeat}');
 			// 默认花色（未知/未登记活动）：heart（官方默认 activity=thinking 同款）
-			rules.push(gate + ' [data-step-process] [data-step-process-icon]{--tf-suit:' + suitMaskImage("heart") + '}');
+			rules.push('[data-step-process] [data-step-process-icon]{--tf-suit:' + suitMaskImage("heart") + '}');
 			// 按官方 activity 值逐条映射（自定义属性挂在图标 span 上，::before 读取）
 			var seen = {};
 			for (var activity in ACTIVITY_SUIT) {
@@ -541,7 +541,7 @@ window.__ModuleLoader__.load({
 				}
 				var selectors = [];
 				for (var ai = 0; ai < acts.length; ai++) {
-					selectors.push(gate + ' [data-process-activity="' + acts[ai] + '"] [data-step-process-icon]');
+					selectors.push('[data-process-activity="' + acts[ai] + '"] [data-step-process-icon]');
 				}
 				rules.push(selectors.join(",") + '{--tf-suit:' + image + '}');
 			}
@@ -549,25 +549,46 @@ window.__ModuleLoader__.load({
 		}
 
 
-		// ---- 注入样式 ----
+		// ---- 注入样式（记录在案的软兼容点） ----
+		// 官方插件实践禁止在组件外写 DOM；但截至当前 master（21638c5631）DSH 没有给
+		// plain-JS client plugin 提供样式注册 API（全宿主唯一的 createElement('style')
+		// 在 web 自身的 apply-injections 里），而 Step 皮必须作用在"官方 Header 的官方
+		// DOM"上——无法收敛进插件 React 子树。因此保留最小 <style> 注入并在 README
+		// 明确标注为非理想软依赖：宿主未来提供样式注册面时迁过去；若注入失败，最坏
+		// 退化 = 无 Turn 栏样式与无 Step 皮，官方折叠行为不受任何影响。
+		// 拆成两个元素：base（Turn 栏/弹窗/滚轮，常开）+ skin（Step 扑克皮，
+		// disabled 属性即皮肤总闸——不再写 document.body attribute）。
 		var CSS_ID = "dsh-turn-fold/style";
-		if (typeof document !== "undefined" && document.querySelector('style[data-plugin-css="' + CSS_ID + '"]') === null) {
+		var SKIN_CSS_ID = "dsh-turn-fold/style-skin";
+		var skinStyleEl = null;
+		if (typeof document !== "undefined") {
+			if (document.querySelector('style[data-plugin-css="' + CSS_ID + '"]') === null) {
 			var tag = document.createElement("style");
 			tag.dataset.plugin = "@winteries/dsh-turn-fold";
 			tag.dataset.pluginCss = CSS_ID;
 			tag.textContent = [
 				/* ── Turn 栏（插件渲染器；官方 turn-process 栏的增强替换） ── */
-				/* 布局对齐官方 24px 折叠行：整行按钮、指标在左、轮次/齿轮/箭头在右 */
-				".ccg-turn-bar{display:flex;align-items:center;gap:6px;width:100%;min-width:0;background:none;border:none;padding:0;margin:0;font:inherit;font-size:14px;line-height:24px;color:var(--dsw-alias-label-secondary,#9ca3af);cursor:pointer;text-align:left}",
-				".ccg-turn-bar:hover:not([disabled]):not([data-tf-static]){color:var(--dsw-alias-label-primary,#1f2328)}",
-				".ccg-turn-bar[disabled],.ccg-turn-bar[data-tf-static]{cursor:default}",
+				/* 兄弟交互结构：.ccg-turn-row = 主按钮（fold toggle）+ 齿轮按钮（设置），
+				   视觉上仍是一根栏；交互不再依赖 stopPropagation */
+				".ccg-turn-wrap{display:flex;flex-direction:column;min-width:0}",
+				".ccg-turn-row{display:flex;align-items:center;gap:2px;width:100%;min-width:0}",
+				".ccg-turn-bar-main{flex:1 1 auto;display:flex;align-items:center;gap:6px;min-width:0;background:none;border:none;padding:0;margin:0;font:inherit;font-size:14px;line-height:24px;color:var(--dsw-alias-label-secondary,#9ca3af);cursor:pointer;text-align:left}",
+				".ccg-turn-bar-main:hover:not([data-tf-static]):not([data-tf-running]){color:var(--dsw-alias-label-primary,#1f2328)}",
+				".ccg-turn-bar-main[data-tf-static],.ccg-turn-bar-main[data-tf-running]{cursor:default}",
 				".ccg-turn-bar-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
 				".ccg-turn-bar-status{flex:none;color:inherit}",
 				/* 失败态：状态词标红（与官方错误色 token 一致） */
 				".ccg-turn-bar-status.ccg-turn-status-failed{color:var(--dsw-alias-state-error-primary,#ef4444)}",
 				".ccg-turn-bar-right{flex:none;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}",
 				".ccg-turn-bar-chevron{display:inline-flex;align-items:center;flex:none;color:var(--dsw-alias-label-tertiary,#6b7280);transition:transform .12s ease}",
-				".ccg-turn-bar[data-open] .ccg-turn-bar-chevron{transform:rotate(90deg)}",
+				".ccg-turn-bar-main[data-open] .ccg-turn-bar-chevron{transform:rotate(90deg)}",
+				/* 齿轮：独立 <button>，与主按钮兄弟——只负责设置，Tab 次序紧随主按钮 */
+				".ccg-gear-button{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:24px;background:none;border:none;padding:0;margin:0;cursor:pointer;color:var(--dsw-alias-label-tertiary,#9ca3af);border-radius:4px;transition:color .15s ease}",
+				".ccg-gear-button:hover{color:var(--dsw-alias-label-primary,#1f2328)}",
+				".ccg-gear-button svg{transition:transform .45s cubic-bezier(.22,1,.36,1)}",
+				".ccg-gear-button:hover svg{transform:rotate(90deg)}",
+				".ccg-gear-button:focus-visible{outline:1px solid var(--dsw-alias-brand-primary,#4f6ef7)}",
+				"@media (prefers-reduced-motion:reduce){.ccg-gear-button svg{transition:none!important}}",
 				/* 回合栏下常驻分隔线（收起/展开/运行中都显示）：--dsw-alias-line-secondary
 				   在部分版本无定义（官方自身也有悬空引用），链式兜底到 border-l1 与字面量 */
 				".ccg-turn-divider{height:1px;flex:none;background:var(--dsw-alias-line-secondary,var(--dsw-alias-border-l1,#d1d5db));margin:4px 0 8px}",
@@ -592,15 +613,11 @@ window.__ModuleLoader__.load({
 				".ccg-roll-strip .ccg-roll-d{flex:none;width:1ch;height:1em;line-height:1em;text-align:center}",
 				".ccg-roll-text{display:inline}",
 				".ccg-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}",
-				/* ── 字段设置齿轮 + 弹窗 ── */
-				".ccg-gear-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:16px;cursor:pointer;color:var(--dsw-alias-label-tertiary,#9ca3af);border-radius:4px;transition:color .15s ease}",
-				".ccg-gear-icon:hover{color:var(--dsw-alias-label-primary,#1f2328)}",
-				".ccg-gear-icon svg{transition:transform .45s cubic-bezier(.22,1,.36,1)}",
-				".ccg-gear-icon:hover svg{transform:rotate(90deg)}",
-				"@media (prefers-reduced-motion:reduce){.ccg-gear-icon svg{transition:none!important}}",
-				/* 弹窗：半透明遮罩 + 居中卡片，checkbox 逐字段开关 */
+				/* ── 字段设置弹窗（由打开它的 Turn 栏自身 React 树渲染，无 body portal） ── */
 				".ccg-gear-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.32);animation:ccg-gear-fade .15s ease-out}",
 				".ccg-gear-popup{background:var(--dsw-alias-bg-layer-2,#ffffff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:16px 18px;min-width:320px;max-width:400px;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-primary,#1f2328)}",
+				".ccg-gear-popup:focus{outline:none}",
+				".ccg-gear-popup:focus-visible{outline:1px solid var(--dsw-alias-brand-primary,#4f6ef7)}",
 				".ccg-gear-popup-title{font-weight:600;font-size:14px;margin-bottom:4px}",
 				".ccg-gear-popup-hint{font-size:12px;color:var(--dsw-alias-label-tertiary,#9ca3af);margin-bottom:10px}",
 				".ccg-gear-popup-fields{display:flex;flex-direction:column;gap:2px}",
@@ -639,15 +656,29 @@ window.__ModuleLoader__.load({
 				"@media (prefers-reduced-motion:reduce){.ccg-gear-overlay{animation:none!important}}",
 				/* 运行中数字动画尊重系统减弱动效设置 */
 				"@media (prefers-reduced-motion:reduce){.ccg-roll-strip{transition:none!important}}"
-			].join("\n") + "\n" + buildStepSkinCss();
+			].join("\n");
 			document.head.appendChild(tag);
+			// 皮肤样式元素：Step 扑克皮（规则不带 body 前缀——总闸是本元素的 disabled）
+			var skinTag = document.createElement("style");
+			skinTag.dataset.plugin = "@winteries/dsh-turn-fold";
+			skinTag.dataset.pluginCss = SKIN_CSS_ID;
+			skinTag.textContent = buildStepSkinCss();
+			document.head.appendChild(skinTag);
+			skinStyleEl = skinTag;
+		} else {
+			// 已存在（热重载/测试重复加载）：重新持有皮肤元素引用
+			skinStyleEl = document.querySelector('style[data-plugin-css="' + SKIN_CSS_ID + '"]');
 		}
+		applyStepSkin();
+	}
 
-		// ---- 实时直播时钟（运行中 Turn 栏的耗时秒表） ----
+		// ---- 运行中秒表时钟（Running Turn Bar 的耗时刷新） ----
 		// 运行中回合的 TurnLocation 只有 start 没有 end：耗时需要时钟驱动刷新。
-		// 间隔 = liveTickMs × 随机数（0.5 ~ 1），节奏不规律。共享一个模块级定时器
-		//（递归 setTimeout）：有组件订阅才启动，全部退订即停止。
-		var liveTickMs = 250;
+		// 固定 1000ms 一次（无随机抖动）：假 token 增长删除后，秒表只显示整数秒、
+		// usage 更新由真实数据事件驱动（turn-tail / assistant-step 订阅），没有理由
+		// 每秒刷新 4-8 次。共享一个模块级定时器（递归 setTimeout）：有组件订阅才启动，
+		// 全部退订即停止。
+		var liveTickMs = 1000;
 		var tickListeners = new Set();
 		var tickVersion = 0;
 		var tickTimer = null;
@@ -656,13 +687,12 @@ window.__ModuleLoader__.load({
 		//   ① 回调里若无条件 scheduleTick()——最后一个订阅者在回调栈内退订（React 对
 		//      uSES 通知做同步重渲染时，组件切到 subscribeNothing 的清理就跑在这里）时，
 		//      退订分支看到 tickTimer===null 什么也不做，回调末尾又续上一只表 →
-		//      留下一只永远空转、没人停的定时器（每 ~250ms 一次，直到页面关闭）。
+		//      留下一只永远空转、没人停的定时器。
 		//   ② 回调期间若有新订阅者进来，subscribeTicks 看到 tickTimer===null 会再起
 		//      一条链 → 两条链并行，tick 速率翻倍且其中一条无人持有。回调期间不新起
 		//      链，由末尾按订阅者数量统一续订即可。
 		var tickRunning = false;
 		function scheduleTick() {
-			var delay = liveTickMs * (0.5 + 0.5 * Math.random());
 			tickTimer = setTimeout(function () {
 				tickTimer = null;
 				tickRunning = true;
@@ -687,7 +717,7 @@ window.__ModuleLoader__.load({
 					// 回调期间无人持有新链，这里按"是否还有订阅者"决定续订——无订阅者即停表。
 					if (tickListeners.size > 0 && tickTimer === null) scheduleTick();
 				}
-			}, delay);
+			}, liveTickMs);
 		}
 		function subscribeTicks(fn) {
 			tickListeners.add(fn);
@@ -1148,8 +1178,9 @@ window.__ModuleLoader__.load({
 		 *  poker 风格运行中返回翻牌动画、结束后返回牌堆/扇形。 */
 		function turnPokerIcon(cardCount, running, open, turn) {
 			if (getFoldIconStyle() !== "poker") return undefined;
-			if (running) return react.createElement(PokerSpinIcon, null);
-			return react.createElement(PokerIcon, { count: cardCount, suit: foldSuitFor("turn:" + turn), open: open });
+			// 元素带 key（进 TurnBarView 的 kids 数组）——React 数组子元素必须有 key
+			if (running) return react.createElement(PokerSpinIcon, { key: "poker" });
+			return react.createElement(PokerIcon, { key: "poker", count: cardCount, suit: foldSuitFor("turn:" + turn), open: open });
 		}
 
 		// ---- 滚轮数字（真实数据变化的逐位滚动动画） ----
@@ -1256,13 +1287,39 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		// ---- 设置面板共享状态（模块级；全局同时最多一个面板） ----
+		// 不再有 <body> 上的独立 React root：面板由"打开它的那根 Turn 栏"在自己的
+		// React 树里渲染（open + openerId 记录打开者），其余栏只订阅状态不渲染。
+		var popupState = { open: false, openerId: null };
+		var popupListeners = new Set();
+		var popupVersion = 0;
+		function subscribePopup(fn) { popupListeners.add(fn); return function () { popupListeners.delete(fn); }; }
+		function notifyPopup() {
+			popupVersion++;
+			var fns = [];
+			popupListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) fns[i]();
+		}
+		function getPopupState() { return popupState; }
+		/** 打开/关闭设置面板。open=true 时必须带 openerId（哪根栏打开的）；
+		 *  关闭时 openerId 置空。 */
+		function setPopupOpen(open, openerId) {
+			var nextOpen = open === true && openerId !== undefined && openerId !== null;
+			var nextOpener = nextOpen ? openerId : null;
+			if (popupState.open === nextOpen && popupState.openerId === nextOpener) return;
+			popupState = { open: nextOpen, openerId: nextOpener };
+			notifyPopup();
+		}
+
+		var turnBarSeq = 0;
 		// ---- Turn 栏（插件渲染器的 UI 核心） ----
 		// TurnBarView 是运行中（running）与结束态（closed）共用的单根视觉：
-		//   [扑克图标] [状态词?] [指标文案（运行中滚轮/结束静态）] ...... [齿轮] [第N轮] [箭头?]
+		//   [扑克图标] [状态词?] [指标文案（运行中滚轮/结束静态）] ...... [第N轮] [箭头?] | [⚙]
+		// 兄弟交互结构：主按钮只负责 Fold toggle、齿轮 <button> 只负责设置——
+		// 不嵌套交互控件、不依赖 stopPropagation，Tab 次序 = 主按钮 → 齿轮。
 		// 折叠语义全部来自外部：canCollapse/open/onToggle 由 EnhancedTurnProcessView
-		// 从官方 turnProcess 派生，本组件绝不自持 Fold 状态。运行中渲染为
-		// 非交互 div（data-tf-running，点击无动作——运行中没有任何可折叠对象，
-		// 官方 liveProcess 阶段成员本来就展开显示）。
+		// 从官方 turnProcess 派生，本组件绝不自持 Fold 状态。运行中主区域渲染为
+		// 非交互 div（data-tf-running，点击无动作），齿轮仍可用。
 		function TurnBarView(props) {
 			var running = props.running === true;
 			var open = props.open === true;
@@ -1272,9 +1329,22 @@ window.__ModuleLoader__.load({
 			var statusText = props.statusText;
 			var statusFailed = props.statusFailed === true;
 			var poker = props.poker;
-			var gear = props.gear;
 			var round = props.round;
 			var ariaLabel = (open ? _T("ariaTurnExpanded") : _T("ariaTurn")) + (label ? "：" + label : "");
+			// 面板共享状态订阅 + 本栏身份：只有"打开者"渲染面板
+			var popup = useSyncExternalStore(subscribePopup, getPopupState);
+			var uidRef = react.useRef(null);
+			if (uidRef.current === null) uidRef.current = "tf-bar-" + (++turnBarSeq);
+			var gearRef = react.useRef(null);
+			var isOpener = popup.open && popup.openerId === uidRef.current;
+			// 卸载时若面板由本栏打开 → 关闭（会话切换不留僵尸 open 状态）
+			react.useEffect(function () {
+				var uid = uidRef.current;
+				return function () {
+					var s = getPopupState();
+					if (s.open && s.openerId === uid) setPopupOpen(false, uid);
+				};
+			}, []);
 			var titleContent = running ? react.createElement(AnimatedLabel, { label: label }) : label;
 			var kids = [];
 			if (poker) kids.push(poker);
@@ -1288,22 +1358,19 @@ window.__ModuleLoader__.load({
 			}
 			kids.push(react.createElement("span", { key: "label", className: "ccg-turn-bar-label" }, titleContent));
 			var rightKids = [];
-			if (gear) rightKids.push(react.createElement(react.Fragment, { key: "gear" }, gear));
 			if (round) rightKids.push(react.createElement("span", { key: "round" }, round));
-			if (canToggle && IconChevronDownOutline14) {
+			if (canToggle) {
 				rightKids.push(react.createElement("span", { key: "chevron", className: "ccg-turn-bar-chevron" },
-					react.createElement(IconChevronDownOutline14, { size: 14 })));
+					react.createElement(NativeChevronIcon, { size: 14, points: "3 5.5 7 9.5 11 5.5" })));
 			}
 			if (rightKids.length > 0) {
 				kids.push(react.createElement("span", { key: "right", className: "ccg-turn-bar-right" }, rightKids));
 			}
-			var bar = react.createElement(running ? "div" : "button", {
-				key: "bar",
-				className: "ccg-turn-bar",
-				// 非按钮分支：type 无效属性不传；按钮分支带 type=button。
-				// 不用 disabled 属性——disabled 按钮会吞掉子元素（齿轮）的点击；
-				// 不可折叠时用 data-tf-static（样式回退默认光标）+ aria-disabled，
-				// onClick 只在 canToggle 时挂载，点击天然无效果。
+			// 主区域：closed → button（fold toggle）；running / 不可折叠 → div（静态）。
+			// 不用 disabled 属性——用 data-tf-static（样式回退默认光标）+ aria-disabled，
+			// onClick 只在 canToggle 时挂载，点击天然无效果。
+			var main = react.createElement(running ? "div" : "button", {
+				className: "ccg-turn-bar-main",
 				type: running ? undefined : "button",
 				"data-tf-turn-bar": running ? "running" : "closed",
 				"data-tf-running": running ? "true" : undefined,
@@ -1318,86 +1385,46 @@ window.__ModuleLoader__.load({
 					if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); }
 				} : undefined
 			}, kids);
+			// 齿轮：独立 <button>（主按钮的兄弟节点），只负责设置面板
+			var gear = react.createElement("button", {
+				ref: gearRef,
+				type: "button",
+				className: "ccg-gear-button",
+				title: _T("fieldSettings"),
+				"aria-label": _T("fieldSettings"),
+				"aria-haspopup": "dialog",
+				"aria-expanded": isOpener ? "true" : "false",
+				onClick: function () {
+					var s = getPopupState();
+					var mine = s.open && s.openerId === uidRef.current;
+					setPopupOpen(!mine, uidRef.current);
+				}
+			}, GearIconSvg());
 			return react.createElement(
 				"div",
 				{ className: "ccg-turn-wrap", "data-tf-turn": props.turnNumber !== undefined ? String(props.turnNumber) : undefined },
-				bar,
+				react.createElement("div", { className: "ccg-turn-row" }, main, gear),
+				isOpener ? react.createElement(SettingsDialog, { openerRef: gearRef }) : null,
 				react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" })
 			);
 		}
 
-		// ---- 齿轮图标（字段设置弹窗触发器） ----
-		// Material 风格齿轮 ⚙，14×14，悬停向右旋转 90°（.45s 缓动）。
-		function GearIcon() {
-			// 齿轮在 Turn 栏（整行可点击）内：点击/键盘必须 stopPropagation，
-			// 否则会冒泡成"展开/折叠回合"，把"弹窗"误触成 toggle。
-			function openPopup(e) {
-				if (e) {
-					if (e.stopPropagation) e.stopPropagation();
-					if (e.preventDefault) e.preventDefault();
-				}
-				setPopupVisible(true);
-			}
-			return react.createElement("span", {
-				className: "ccg-gear-icon",
-				onClick: openPopup,
-				title: _T("fieldSettings"),
-				role: "button",
-				tabIndex: 0,
-				"aria-label": _T("fieldSettings"),
-				onKeyDown: function (e) {
-					if (e.key === "Enter" || e.key === " ") { openPopup(e); }
-				}
-			},
-				react.createElement("svg", { viewBox: "0 0 24 24", width: "14", height: "14", fill: "currentColor" },
-					react.createElement("path", { d: "M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z" })
-				)
+		// ---- 齿轮图标（纯 SVG；交互在宿主 <button class="ccg-gear-button"> 上） ----
+		// Material 风格齿轮 ⚙，14×14，悬停向右旋转 90°（.45s 缓动，CSS 驱动）。
+		function GearIconSvg() {
+			return react.createElement("svg", { viewBox: "0 0 24 24", width: "14", height: "14", fill: "currentColor", "aria-hidden": "true" },
+				react.createElement("path", { d: "M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z" })
 			);
 		}
 
-		// ---- 全局 Toast 消息通知（共享官方 Toast 组件） ----
-		// 模块级状态 + useSyncExternalStore 驱动，单例 TurnFoldToast 组件常驻渲染。
-		// 不受 FieldVisibilityPopup 弹窗显隐影响，始终可用。
-		var toastSnapshot = { seq: 0, text: null };
-		var toastListeners = new Set();
-		function subscribeToast(fn) { toastListeners.add(fn); return function () { toastListeners.delete(fn); }; }
-		function notifyToast() {
-			var fns = [];
-			toastListeners.forEach(function (fn) { fns.push(fn); });
-			for (var i = 0; i < fns.length; i++) fns[i]();
-		}
-		function getToast() { return toastSnapshot; }
-		/** 触发 Toast 通知（文案自动消失，时长由官方 Toast 组件控制）。 */
-		function showToast(text) {
-			toastSnapshot = { seq: toastSnapshot.seq + 1, text: text };
-			notifyToast();
-		}
-		/** 清除当前 Toast（官方 Toast 自动消失后调用）。 */
-		function clearToast() {
-			if (toastSnapshot.text === null) return;
-			toastSnapshot = { seq: toastSnapshot.seq, text: null };
-			notifyToast();
-		}
-		/** 全局 Toast 宿主：订阅 toastSnapshot，官方 Toast 组件渲染；平台缺失时静默返回 null。 */
-		function TurnFoldToast() {
-			var t = useSyncExternalStore(subscribeToast, getToast);
-			if (Toast === null || !t || !t.text) return null;
-			return react.createElement(Toast, {
-				key: String(t.seq),
-				text: t.text,
-				onDone: function () { clearToast(); }
-			});
-		}
-		// ---- 注册异常软降级（防启动崩溃 + 用户可见提示） ----
+		// ---- 注册异常软降级（防启动崩溃） ----
 		// slots.inject 的回调若让异常外泄，延迟执行路径（目标 slot 声明晚于插件加载时，
 		// 回调在官方声明者的 register 栈里跑 / 声明订阅里 queueMicrotask re-throw）会
 		// 打断官方 UI 激活 → web 整页无法启动。两层都必须兜：register 的异常 catch 在
 		// 回调内（返回 undefined 即"无可清理资源"，官方 cachedSlotInject 对 falsy 返回
 		// 无害）；slots.inject 本身同步抛（声明等待 setup 失败等）也 catch 在调用点。
-		// 降级时 console.warn 留排查线索，并弹一次 Toast 告知用户（齿轮根在 apply 时已
-		// 常驻挂载，宿主尚未挂载时 Toast 快照会在挂载后显示）。以下两个函数只在 catch
-		// 块里调用，自身任何异常都必须吞掉。
-		var slotDegradedToasted = false;
+		// 降级提示 = console.warn（官方实践不建 body portal，Toast 原语不再使用）。
+		// 以下函数只在 catch 块里调用，自身任何异常都必须吞掉。
 		function noteSlotDegradation(slot, cell, err) {
 			try {
 				var detail = err && typeof err.message === "string" ? err.message : String(err);
@@ -1406,10 +1433,6 @@ window.__ModuleLoader__.load({
 						console.warn("[dsh-turn-fold] 渲染位注册失败（" + slot + " → " + cell + "）：" + detail + " —— 该条目已跳过，插件其余功能不受影响，DSH 启动不受影响");
 					}
 				} catch (e) { /* 忽略 */ }
-				if (!slotDegradedToasted) {
-					slotDegradedToasted = true;
-					showToast(_T("slotDegradedToast"));
-				}
 			} catch (e) { /* 通知路径绝不外泄 */ }
 		}
 		/** 统一的注册管道：inject 声明等待 + 回调内 register 各自兜异常，单个条目降级
@@ -1464,24 +1487,6 @@ window.__ModuleLoader__.load({
 			{ key: "tokensPerSecond", labelKey: "fieldTps", descKey: "fieldTpsDesc" },
 			{ key: "cacheHit", labelKey: "fieldCacheHit", descKey: "fieldCacheHitDesc" }
 		];
-		/** 默认图标预览：官方 outline chevron（描边折线，非实心三角形）。
-		 *  用 points 区分方向：右箭头 "5.5 3 9.5 7 5.5 11" / 下箭头 "3 5.5 7 9.5 11 5.5"。 */
-		function DefaultChevronIcon(props) {
-			// SVG 属性必须用 React 的驼峰命名（strokeWidth/strokeLinecap/strokeLinejoin）：
-			// 写成连字符形式 React 会逐条报 "Invalid DOM property"。
-			return react.createElement("svg", {
-				viewBox: "0 0 14 14",
-				width: "14",
-				height: "14",
-				fill: "none",
-				stroke: "currentColor",
-				strokeWidth: "1.6",
-				strokeLinecap: "round",
-				strokeLinejoin: "round"
-			},
-				react.createElement("polyline", { points: props.points })
-			);
-		}
 		/** 通用选项行选择器（radio 语义）：options = [{value,labelKey,descKey,previews(fn)}]。 */
 		function GearOptionSelector(props) {
 			var current = props.current;
@@ -1559,8 +1564,8 @@ window.__ModuleLoader__.load({
 						value: "native", labelKey: "foldIconNative", descKey: "foldIconNativeDesc",
 						previews: function () {
 							return [
-								react.createElement(DefaultChevronIcon, { key: "right", points: "5.5 3 9.5 7 5.5 11" }),
-								react.createElement(DefaultChevronIcon, { key: "down", points: "3 5.5 7 9.5 11 5.5" })
+								react.createElement(NativeChevronIcon, { key: "right", size: 14, points: "5.5 3 9.5 7 5.5 11" }),
+								react.createElement(NativeChevronIcon, { key: "down", size: 14, points: "3 5.5 7 9.5 11 5.5" })
 							];
 						}
 					}
@@ -1590,18 +1595,54 @@ window.__ModuleLoader__.load({
 					{ value: "poker", labelKey: "stepSkinPoker", descKey: "stepSkinPokerDesc", previews: function () { return stepSkinPreviews("heart").concat(stepSkinPreviews("club")); } },
 					{
 						value: "native", labelKey: "stepSkinNative", descKey: "stepSkinNativeDesc",
-						previews: function () { return [react.createElement(DefaultChevronIcon, { key: "n", points: "3 5.5 7 9.5 11 5.5" })]; }
+						previews: function () { return [react.createElement(NativeChevronIcon, { key: "n", size: 14, points: "3 5.5 7 9.5 11 5.5" })]; }
 					}
 				]
 			});
 		}
-		function FieldVisibilityPopup() {
-			// 注意 Hooks 顺序：useFieldVisibility() 必须在条件 return 之前调用——
-			// 若放在 `if (!visible) return null;` 之后，首次渲染（隐藏）只调 1 个 hook，
-			// 弹窗显示时调 2 个 hook，React 报 "Rendered more hooks..." 导致弹窗根崩溃。
-			var visible = useSyncExternalStore(subscribePopup, getPopupVisible);
+		/** 设置面板（由打开它的 Turn 栏自身 React 树渲染——无 body portal、无独立 root）。
+		 *  无障碍：role=dialog + aria-modal；打开时焦点移入面板；Escape / 遮罩点击 /
+		 *  Done 关闭；关闭后焦点还给齿轮；Tab 在面板内圈定（轻量自实现，无外部依赖）。 */
+		function SettingsDialog(props) {
+			var openerRef = props.openerRef;
+			// 注意 Hooks 顺序：useFieldVisibility() 等必须在条件 return 之前调用——
+			// 本组件只在打开时挂载、关闭即卸载，hooks 数量恒定。
 			var visibility = useFieldVisibility();
-			if (!visible) return null;
+			var dialogRef = react.useRef(null);
+			// 焦点往返：挂载时焦点移入面板；卸载（关闭）时焦点还给齿轮按钮
+			react.useEffect(function () {
+				var el = dialogRef.current;
+				if (el && typeof el.focus === "function") { try { el.focus(); } catch (e) { /* 忽略 */ } }
+				return function () {
+					var opener = openerRef && openerRef.current;
+					if (opener && typeof opener.focus === "function") { try { opener.focus(); } catch (e) { /* 忽略 */ } }
+				};
+			}, []);
+			// Escape 关闭 + Tab 圈定：document 级捕获监听（监听器不是 DOM 写入，卸载即移除）
+			react.useEffect(function () {
+				function onKeyDown(e) {
+					if (e.key === "Escape") {
+						e.preventDefault();
+						setPopupOpen(false, null);
+						return;
+					}
+					if (e.key !== "Tab") return;
+					var overlay = dialogRef.current ? dialogRef.current.parentNode : null;
+					if (!overlay) return;
+					var focusables = overlay.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+					if (focusables.length === 0) { e.preventDefault(); return; }
+					var first = focusables[0];
+					var last = focusables[focusables.length - 1];
+					var active = document.activeElement;
+					if (e.shiftKey && (active === first || !overlay.contains(active))) {
+						e.preventDefault(); last.focus();
+					} else if (!e.shiftKey && (active === last || !overlay.contains(active))) {
+						e.preventDefault(); first.focus();
+					}
+				}
+				document.addEventListener("keydown", onKeyDown, true);
+				return function () { document.removeEventListener("keydown", onKeyDown, true); };
+			}, []);
 			var fields = [];
 			for (var fi = 0; fi < FIELD_CONFIG.length; fi++) {
 				var cfg = FIELD_CONFIG[fi];
@@ -1620,12 +1661,17 @@ window.__ModuleLoader__.load({
 			}
 			return react.createElement("div", {
 				className: "ccg-gear-overlay",
-				onClick: function (e) { if (e.target === e.currentTarget) setPopupVisible(false); },
-				role: "dialog",
-				"aria-modal": "true",
-				"aria-label": _T("fieldSettings")
+				onClick: function (e) { if (e.target === e.currentTarget) setPopupOpen(false, null); },
+				onKeyDown: function (e) { if (e.key === "Escape") { e.preventDefault(); setPopupOpen(false, null); } }
 			},
-				react.createElement("div", { className: "ccg-gear-popup" },
+				react.createElement("div", {
+					ref: dialogRef,
+					className: "ccg-gear-popup",
+					role: "dialog",
+					"aria-modal": "true",
+					"aria-label": _T("fieldSettings"),
+					tabIndex: -1
+				},
 					react.createElement("div", { className: "ccg-gear-popup-title" }, _T("fieldSettings")),
 					react.createElement("div", { className: "ccg-gear-popup-hint" }, _T("fieldSettingsHint")),
 					react.createElement("div", { className: "ccg-gear-popup-fields" }, fields),
@@ -1636,28 +1682,12 @@ window.__ModuleLoader__.load({
 						react.createElement("button", {
 							className: "ccg-gear-popup-btn",
 							type: "button",
-							onClick: function () { setPopupVisible(false); }
+							onClick: function () { setPopupOpen(false, null); }
 						}, _T("fieldSettingsDone"))
 					)
 				)
 			);
 		}
-
-		// ---- 弹窗可见状态（模块级；全局一个弹窗） ----
-		var popupVisible = false;
-		var popupListeners = new Set();
-		function subscribePopup(fn) { popupListeners.add(fn); return function () { popupListeners.delete(fn); }; }
-		function notifyPopup() {
-			var fns = [];
-			popupListeners.forEach(function (fn) { fns.push(fn); });
-			for (var i = 0; i < fns.length; i++) fns[i]();
-		}
-		function setPopupVisible(v) {
-			if (popupVisible === v) return;
-			popupVisible = v;
-			notifyPopup();
-		}
-		function getPopupVisible() { return popupVisible; }
 
 		// ---- Enhanced Turn Process View（官方 turn-process 渲染器的插件替换） ----
 		// 官方 props 契约（ui-chat contract/slots.ts）：node / turnProcess / t (+ 标准-kit)。
@@ -1669,19 +1699,49 @@ window.__ModuleLoader__.load({
 		//     turnProcess.setOpen()；
 		//   - turnProcess 缺失（极旧宿主/异常）→ 降级渲染非交互栏（数据取自 node.data 与
 		//     location），绝不抛错——UI 增强可以坏，官方 Fold 不被插件拖坏。
+		// 订阅面（官方"最小切片"实践，整快照订阅已废除）：
+		//   ① turn-tail（官方聚合 tokenUsage）→ slot 注入面自动绑定的 useTurnData(key)
+		//      （uSES over turn.data.source(key)，官方 AssistantNodeView 同款）；
+		//   ② assistant-step usage/timing 数组 → 官方 ChatNodeStore.turnDataSource(turn, kind)
+		//      （增量发布：仅本 Turn 本 kind 的成员/成员数据变化才通知；经 useChat 取
+		//      identity-stable source——selector 只返回 source 本身，快照再怎么发布也
+		//      不会触发本组件重渲染，数据变化由 source 自己的 uSES 驱动）；
+		//   ③ TurnLocation 计时/状态（start/end/reason）→ 不订阅：node prop 由 turn-process
+		//      定义在 turn/start、assistant/message、tool/call、turn/end 等事件上重发布，
+		//      天然是这些变化的信号。
 		function EnhancedTurnProcessView(props) {
 			var node = props.node;
 			var turnProcess = props.turnProcess;
-			// 快照订阅：运行中指标（step usage / tokenUsage）随官方快照发布而更新——
-			// 订阅整份快照（与旧版一致的读取面），re-render 后从 step data store 重读最新值。
-			// hook 顺序恒定：useChat 由宿主版本决定、进程内恒定。
+			var clock = turnClockOf(node);
+			var running = !!clock && clock.status !== "closed" && typeof clock.startMs === "number";
+			// ① turn-tail：官方 useTurnData（hook 顺序恒定：宿主是否提供该 prop 进程内恒定）
+			var useTurnData = props.useTurnData;
+			var tail = typeof useTurnData === "function" ? useTurnData("turn-tail")
+				: (clock && clock.data && typeof clock.data.get === "function" ? clock.data.get("turn-tail") : undefined);
+			// ② assistant-step 数组：turnDataSource（identity-stable source）+ 自己的 uSES
+			//    useChat 无条件调用（hooks 顺序安全；turn 未定位时 selector 返回 null）。
 			var useChat = props.useChat;
-			var chat = useChat ? useChat(function (s) { return s; }) : undefined;
+			var number = clock ? clock.number : undefined;
+			var stepsSource = null;
+			if (useChat) {
+				stepsSource = useChat(selectTurnNodeSource(number, "assistant-step"));
+			}
+			var stepDataList = useSyncExternalStore(
+				stepsSource && typeof stepsSource.subscribe === "function" ? stepsSource.subscribe : subscribeNothing,
+				stepsSource && typeof stepsSource.getSnapshot === "function" ? stepsSource.getSnapshot : getUndefinedSnapshot
+			);
+			if (!stepDataList && clock) {
+				// 无 turnDataSource（极简宿主/测试）：回退逐 step 直读（node prop 驱动重算）
+				stepDataList = [];
+				for (var si = 0; si < clock.steps.length; si++) {
+					var stepLoc = clock.steps[si];
+					stepDataList.push(stepLoc && stepLoc.data && typeof stepLoc.data.get === "function"
+						? stepLoc.data.get("assistant-step") : undefined);
+				}
+			}
 			// 设置订阅（字段显隐/图标风格变化 → 所有栏立即重渲染）
 			useFieldVisibility();
 			useFoldIconStyle();
-			var clock = turnClockOf(node);
-			var running = !!clock && clock.status !== "closed" && typeof clock.startMs === "number";
 			var liveNow = useLiveNow(running);
 			if (!clock) {
 				// 无法定位回合（异常数据）：渲染最小占位栏（仅官方 data 字段），不可折叠。
@@ -1693,20 +1753,10 @@ window.__ModuleLoader__.load({
 					round: turnRoundLabel(data && data.turn)
 				});
 			}
-			var turn = clock.turn;
-			var tail = clock.data && typeof clock.data.get === "function" ? clock.data.get("turn-tail") : undefined;
-			var stepDataList = [];
-			for (var si = 0; si < clock.steps.length; si++) {
-				var stepLoc = clock.steps[si];
-				stepDataList.push(stepLoc && stepLoc.data && typeof stepLoc.data.get === "function"
-					? stepLoc.data.get("assistant-step") : undefined);
-			}
 			var metrics = computeTurnMetrics(clock, stepDataList, tail, running ? liveNow : undefined);
-			void chat; // 订阅本身即目的（见上）；chat 值仅作依赖信号
 			var filtered = filterVisibleMetrics(metrics);
 			var label = turnHeaderLabel(filtered);
 			var round = turnRoundLabel(clock.number);
-			var gear = react.createElement(GearIcon, null);
 			if (running) {
 				// 运行中：状态表面（非交互）。无 Fold 状态、不隐藏任何成员、
 				// 不调用任何 setOpen——官方 liveProcess 阶段成员本来就展开显示。
@@ -1716,7 +1766,6 @@ window.__ModuleLoader__.load({
 					turnNumber: clock.number,
 					label: label || (currentLocale() === "zh" ? "0秒" : "0s"),
 					poker: turnPokerIcon(cardCountRunning, true, false, clock.number),
-					gear: gear,
 					round: round
 				});
 			}
@@ -1726,7 +1775,11 @@ window.__ModuleLoader__.load({
 			// live（不可能，已在 running 分支）、aborted、error 的回合不可折叠。
 			var alwaysOpen = clock.status === "open" || clock.reason === "aborted" || clock.reason === "error";
 			var canCollapse = !!(turnProcess && turnProcess.foldable && turnProcess.hasContent) && !alwaysOpen;
-			var open = !!(turnProcess && turnProcess.foldable && turnProcess.open);
+			// 官方 TurnProcessNodeView 语义：open = !foldable || open——foldable=false
+			//（如 Verbose，官方 foldCompletedTurns=false）时内容实际始终展开，
+			// Poker 必须呈扇形/展开态；turnProcess 缺失（降级）同理按展开态处理。
+			var foldable = !!(turnProcess && turnProcess.foldable);
+			var open = !foldable || (turnProcess && turnProcess.open === true);
 			var statusText = turnStatusLabel(clock.reason);
 			return react.createElement(TurnBarView, {
 				running: false,
@@ -1737,7 +1790,6 @@ window.__ModuleLoader__.load({
 				statusText: statusText,
 				statusFailed: clock.reason === "error",
 				poker: turnPokerIcon(specCardCountFromSpec(spec), false, open, clock.number),
-				gear: gear,
 				round: round,
 				onToggle: function () {
 					// 唯一合法的折叠通道：官方 owner state 的 setOpen。
@@ -1745,6 +1797,22 @@ window.__ModuleLoader__.load({
 				}
 			});
 		}
+		/** useChat 的 selector：只取本 (turn, kind) 的 identity-stable 增量数据源——
+		 *  绝不返回整个 snapshot（架构守卫测试禁止内联 selector）。
+		 *  turn 未定位（异常数据）时返回 null → 上层 uSES 走空源，不订阅。 */
+		function selectTurnNodeSource(turn, kind) {
+			return function (s) {
+				if (turn === undefined) return null;
+				try {
+					if (s && s.nodes && typeof s.nodes.turnDataSource === "function") {
+						return s.nodes.turnDataSource(turn, kind);
+					}
+				} catch (e) { /* 存储未就绪 */ }
+				return null;
+			};
+		}
+		/** uSES 空源兜底（stepsSource 缺失时恒 undefined，不订阅任何东西）。 */
+		function getUndefinedSnapshot() { return undefined; }
 		/** 回合栏牌堆张数：官方 TurnProcessSpec 的 toolCallCount + subagentCount
 		 *  （spec 不可用时取回合数据 store 里的官方 spec，再兜底 0）。 */
 		function specCardCountFromSpec(spec) {
@@ -1766,32 +1834,9 @@ window.__ModuleLoader__.load({
 		// 永久停在 PENDING —— 0.1.7 的 assertEntriesActive 把 pending 条目当启动失败。
 		exports.inject = ["slots"];
 		exports.apply = function (ctx) {
-			// Step 皮开关同步到 body 属性（CSS 皮的总闸；设置变化时 setStepSkin 也会调用）
-			applyStepSkinAttr();
-			// 字段设置弹窗 + 全局 Toast：独立 React 根挂在 <body> 上，与折叠渲染无关。
-			// 特性检测（document / react-dom createRoot / ctx.effect）让极简宿主与
-			// 测试环境（mock ctx 无 effect、loader 不提供 react-dom）静默跳过。
-			if (typeof document !== "undefined" && ReactDOM !== null && typeof ReactDOM.createRoot === "function" && typeof ctx.effect === "function") {
-				ctx.effect(function () {
-					applyStepSkinAttr(); // body 就绪后再同步一次（宿主挂载时序兜底）
-					var host = document.getElementById("__dsh-turn-fold-gear");
-					if (!host && document.body && typeof document.createElement === "function") {
-						host = document.createElement("div");
-						host.id = "__dsh-turn-fold-gear";
-						document.body.appendChild(host);
-					}
-					if (!host) return undefined;
-					var root = ReactDOM.createRoot(host);
-					root.render(react.createElement(react.Fragment, null,
-						react.createElement(FieldVisibilityPopup, null),
-						react.createElement(TurnFoldToast, null)
-					));
-					return function () {
-						try { root.unmount(); } catch (e) { /* already gone */ }
-						if (host.parentNode) host.parentNode.removeChild(host);
-					};
-				});
-			}
+			// Step 皮总闸：皮肤样式元素的 disabled（幂等；模块初始化时已同步过一次，
+			// 此处兜底宿主时序）。不写 document.body attribute——官方实践禁止组件外 DOM 写入。
+			applyStepSkin();
 			ctx.inject(["slots"], function (scope) {
 				var slotsSvc = scope.slots;
 				safeRegisterSlot(slotsSvc, {

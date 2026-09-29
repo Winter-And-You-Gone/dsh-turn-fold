@@ -131,15 +131,50 @@ export function makeTurnProcessOwner(overrides = {}) {
   }
 }
 
-/** useChat mock：SessionStandardProps 的 useChat（selector 直读快照）。 */
-export function makeUseChat(snapshot = {}) {
-  return (selector) => selector(snapshot)
-}
-
 /** 官方聚合 tokenUsage（turn-tail 携带，deriveTurnTokenUsage 形状）。 */
 export const OFFICIAL_TOKEN_USAGE = {
   uncachedInputTokens: 22065,
   outputTokens: 3273,
   totalTokens: 370202,
   cacheReadTokens: 344864,
+}
+
+// ── 订阅最小切片的测试 mocks（对齐官方 hook 形状） ──
+
+/** useTurnData mock：官方 slot 注入面 hook（uSES over turn.data.source(key)）。
+ *  测试只需要按 key 直读——tail 在挂载前给定。 */
+export function makeUseTurnData({ tail } = {}) {
+  return (key) => (key === 'turn-tail' ? tail : undefined)
+}
+
+const EMPTY_SOURCE = { getSnapshot: () => undefined, subscribe: () => () => {} }
+
+/** assistant-step 数组的可变源（对齐官方 turnDataSource 的 ObservableSnapshot 形状：
+ *  identity-stable source + 订阅通知）。set(list) 模拟官方增量发布（成员/成员数据
+ *  变化 → 新数组）。 */
+export function makeStepsSource(initial = []) {
+  const holder = { value: initial, listeners: new Set() }
+  return {
+    holder,
+    source: {
+      getSnapshot: () => holder.value,
+      subscribe(fn) { holder.listeners.add(fn); return () => holder.listeners.delete(fn) },
+    },
+    set(list) {
+      holder.value = list
+      for (const fn of [...holder.listeners]) fn()
+    },
+  }
+}
+
+/** useChat mock：selector 只被用于取 (turn, kind) 的数据源——返回 identity-stable
+ *  source（快照发布不触发重渲染，数据变化由 source 自己的订阅驱动）。 */
+export function makeUseChat(stepsHolder, turnNumber = 13) {
+  return (selector) => selector({
+    nodes: {
+      turnDataSource: (turn, kind) => (turn === turnNumber && kind === 'assistant-step' && stepsHolder
+        ? stepsHolder.source
+        : EMPTY_SOURCE),
+    },
+  })
 }
