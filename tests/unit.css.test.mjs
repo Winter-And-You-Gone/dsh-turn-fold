@@ -83,11 +83,11 @@ describe('Step Poker Skin（官方结构 + 软 DOM 依赖 + style.disabled 总�
   })
 })
 
-describe('Step Poker Running Animation（官方 data-text-shimmer 识别）', () => {
-  it('running 识别规则存在且挂在官方 data-text-shimmer 上（软依赖）', () => {
+describe('Step Poker Running Animation（官方 data-shimmer 识别）', () => {
+  it('running 识别规则存在且挂在官方 data-shimmer 上（软依赖）', () => {
     const skin = skinEl().textContent
     assert.ok(
-      skin.includes('[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before{animation:'),
+      skin.includes('[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{animation:'),
       'running 动画规则缺失',
     )
   })
@@ -128,7 +128,7 @@ describe('Step Poker Running Animation（官方 data-text-shimmer 识别）', ()
   it('reduced-motion：running 动画禁用 → 回落静态 activity 牌', () => {
     const skin = skinEl().textContent
     assert.ok(
-      skin.includes('@media (prefers-reduced-motion:reduce){[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before{animation:none}}'),
+      skin.includes('@media (prefers-reduced-motion:reduce){[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{animation:none}}'),
       'reduced-motion 关闭 running 动画的规则缺失',
     )
   })
@@ -138,23 +138,53 @@ describe('Step Poker Running Animation（官方 data-text-shimmer 识别）', ()
     // running 规则只追加 animation、不改静态声明——移除 :has() 规则后静态皮完整
     const withoutRunning = skin
       .split('\n')
-      .filter((l) => !l.includes('[data-text-shimmer'))
+      .filter((l) => !l.includes('[data-shimmer'))
       .join('\n')
     assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::before{'), '静态牌渲染位仍在')
     assert.ok(withoutRunning.includes('--tf-suit:'), '静态花色映射仍在')
     // 动画"应用"随钩子退场（@keyframes 定义留存为无引用的死代码，不产生任何动画）
     assert.ok(!withoutRunning.includes('animation:tf-flip'), '动画应用规则随钩子一起退场')
   })
+
+  it('历史错误属性 data-text-shimmer 不得出现在皮肤 CSS 中（不得触发 running 动画）', () => {
+    // 上一轮误把官方属性写成 data-text-shimmer——若它悄悄回来，
+    // 规则永远无法命中真实 running DOM（官方渲染的是 data-shimmer）
+    const skin = skinEl().textContent
+    assert.ok(!skin.includes('data-text-shimmer'), '皮肤 CSS 不得引用 data-text-shimmer')
+  })
+
+  it('官方源码契约守卫：TextShimmer 渲染 data-shimmer、ChatGroupSeat 按 !data.closed 激活', async () => {
+    // 直接读本地 DSH checkout 的官方源码核对属性名契约——属性名错误正是上一轮
+    // 事故的根因。checkout 不存在（如 CI）则跳过，本地开发必然命中。
+    const { access, readFile } = await import('node:fs/promises')
+    const checkout = process.env.DSH_CHECKOUT || 'X:/DeepSeek Harness/deepseek-harness'
+    const shimmerPath = checkout + '/packages/client/ui-primitives/src/TextShimmer.tsx'
+    const seatPath = checkout + '/packages/client/ui-chat/src/client/chat/ChatGroupSeat.tsx'
+    try {
+      await access(shimmerPath)
+      await access(seatPath)
+    } catch {
+      return // 无本地 checkout：跳过（CSS 文本契约用例已覆盖插件侧）
+    }
+    const shimmerSrc = await readFile(shimmerPath, 'utf8')
+    const seatSrc = await readFile(seatPath, 'utf8')
+    assert.ok(
+      shimmerSrc.includes('data-shimmer={active || undefined}'),
+      '官方 TextShimmer 契约变更：data-shimmer 属性不再匹配——需要同步更新本插件的运行态选择器',
+    )
+    assert.ok(!shimmerSrc.includes('data-text-shimmer'), '官方 TextShimmer 出现 data-text-shimmer——插件选择器需改回')
+    assert.ok(seatSrc.includes('<TextShimmer active={!data.closed}>'), '官方 ChatGroupSeat 激活条件变更：需要同步核对')
+  })
 })
 
 describe('架构守卫：旧折叠引擎 CSS 必须消失', () => {
   it('无 :has() 成员隐藏、无 hidden 标记选择器、无旧折叠容器', () => {
     const css = baseCss() + '\n' + skinEl().textContent
-    // :has() 唯一合法用途 = 运行态识别（官方 data-text-shimmer）；
+    // :has() 唯一合法用途 = 运行态识别（官方 data-shimmer）；
     // 旧折叠引擎用 :has() 隐藏成员 flowItem——那是被删除的 Fold Engine 行为。
     const hasLines = css.split('\n').filter((l) => l.includes(':has('))
     for (const line of hasLines) {
-      assert.ok(line.includes('[data-text-shimmer="true"]'), ':has() 仅允许用于 data-text-shimmer 运行态识别：' + line)
+      assert.ok(line.includes('[data-shimmer="true"]'), ':has() 仅允许用于 data-shimmer 运行态识别：' + line)
     }
     assert.ok(!css.includes('data-ccg-hidden'), '隐藏标记选择器必须删除')
     assert.ok(!css.includes('ccg-fold-clip'), '旧 FoldClip 容器样式必须删除')

@@ -547,8 +547,8 @@ window.__ModuleLoader__.load({
 			}
 			// ── 运行态动态翻牌（运行状态完全由官方 DOM 识别，插件零 JS 判定） ──
 			// 官方 ProcessGroupHeader 的标题用 <TextShimmer active={!data.closed}>：
-			// active 时最终 DOM 出现 data-text-shimmer="true"，回合结束属性消失。
-			// running 识别 = [data-step-process]:has([data-text-shimmer="true"])（软依赖：
+			// active 时最终 DOM 出现 data-shimmer="true"，回合结束属性消失。
+			// running 识别 = [data-step-process]:has([data-shimmer="true"])（软依赖：
 			// 钩子失效 → :has() 不命中 → 回落静态 activity 牌，官方折叠不受影响）。
 			// 动画 = 双动画叠加，跳变点严格对齐：
 			//   tf-flip（transform scaleX，0.8s 循环）：0.4s/1.2s/… 时牌侧对观众（scaleX(0)）；
@@ -573,9 +573,9 @@ window.__ModuleLoader__.load({
 			cycle.push('100%{-webkit-mask:' + suitMaskImage("spade") + suitTail + ';mask:' + suitMaskImage("spade") + suitTail + '}');
 			rules.push('@keyframes tf-flip{' + flip + '}');
 			rules.push('@keyframes tf-cycle{' + cycle.join("") + '}');
-			rules.push('[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before{animation:tf-flip .8s linear infinite,tf-cycle 4s linear infinite}');
+			rules.push('[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{animation:tf-flip .8s linear infinite,tf-cycle 4s linear infinite}');
 			// reduced-motion：禁翻牌，running 直接显示静态 activity 牌（mask 回落 var(--tf-suit)）
-			rules.push('@media (prefers-reduced-motion:reduce){[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before{animation:none}}');
+			rules.push('@media (prefers-reduced-motion:reduce){[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{animation:none}}');
 			return rules.join("\n");
 		}
 

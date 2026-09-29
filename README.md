@@ -88,14 +88,14 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
   未登记活动回退 ♥；
 - **运行态动态翻牌**：运行中的 Step（官方标题带 shimmer，即
-  `data-text-shimmer="true"`）改为**循环翻牌**——♠→♥→♦→♣→🐋 每 0.8s 在牌侧面
+  `data-shimmer="true"`）改为**循环翻牌**——♠→♥→♦→♣→🐋 每 0.8s 在牌侧面
   （scaleX=0）瞬间换花色、4s 一轮；回合结束自动定格为该 Step activity 的静态花色
   （edit → ♦、thinking → ♥……），全程纯 CSS、零 JS 状态。系统「减少动态效果」
   开启时运行中直接显示静态牌；
 - **软依赖**：全部选择器挂在官方 DOM 钩子上，总闸 = 皮肤 `<style>` 元素的
   `disabled` 属性（插件不写任何 `document.body` 全局状态）——DSH 改掉钩子时
   **最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。
-  运行态识别额外依赖官方 `data-text-shimmer`（见集成依赖清单），失效时运行中
+  运行态识别额外依赖官方 `data-shimmer`（见集成依赖清单），失效时运行中
   Step 自动退化为静态 Poker。
 
 ## 安装
@@ -290,8 +290,8 @@ git push --follow-tags
   - **Soft visual dependency**：`data-step-process-icon` / `data-process-activity`
     （仅 Step 皮；失效 = 皮消失，官方图标与折叠原样保留）；
   - **Soft visual dependency（运行态）**：官方 `TextShimmer` 渲染的
-    `data-text-shimmer="true"`（`ChatGroupSeat` 标题在 `!data.closed` 时携带）。
-    **仅用于运行中 Step 的扑克翻牌动画识别**——运行态 = `:has([data-text-shimmer="true"])`
+    `data-shimmer="true"`（`ChatGroupSeat` 标题在 `!data.closed` 时携带）。
+    **仅用于运行中 Step 的扑克翻牌动画识别**——运行态 = `:has([data-shimmer="true"])`
     时叠加纯 CSS 翻牌（♠→♥→♦→♣→🐋 每 0.8s 侧面换牌，4s 一轮）；官方回合结束属性
     消失 → 动画规则不再命中 → 自动回落该 Step activity 对应的静态花色牌，交接零 JS。
     钩子失效的最坏退化 = 运行中 Step 显示静态 Poker，不影响 Fold 行为；

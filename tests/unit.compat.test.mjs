@@ -171,6 +171,10 @@ describe('架构守卫（源码扫描）', () => {
     // 插件只决定该状态长什么样——翻牌动画全在 CSS keyframes 里）
     'MutationObserver',
     'replaceChild',
+    // 运行态属性名的历史错误：官方 TextShimmer 渲染的是 data-shimmer
+    // （master 639ed01539：data-shimmer={active || undefined}），
+    // 不是 data-text-shimmer —— 禁止它再出现在 production source 中
+    'data-text-shimmer',
   ]
   for (const name of FORBIDDEN) {
     it('源码不包含 ' + name, () => {
