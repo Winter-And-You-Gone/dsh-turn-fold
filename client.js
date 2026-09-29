@@ -545,6 +545,37 @@ window.__ModuleLoader__.load({
 				}
 				rules.push(selectors.join(",") + '{--tf-suit:' + image + '}');
 			}
+			// ── 运行态动态翻牌（运行状态完全由官方 DOM 识别，插件零 JS 判定） ──
+			// 官方 ProcessGroupHeader 的标题用 <TextShimmer active={!data.closed}>：
+			// active 时最终 DOM 出现 data-text-shimmer="true"，回合结束属性消失。
+			// running 识别 = [data-step-process]:has([data-text-shimmer="true"])（软依赖：
+			// 钩子失效 → :has() 不命中 → 回落静态 activity 牌，官方折叠不受影响）。
+			// 动画 = 双动画叠加，跳变点严格对齐：
+			//   tf-flip（transform scaleX，0.8s 循环）：0.4s/1.2s/… 时牌侧对观众（scaleX(0)）；
+			//   tf-cycle（mask-image discrete，4s 循环 5 花色）：mask-image 不可平滑插值，
+			//   discrete 规则 = 两关键帧中点跳变 → 跳变点 10%/30%/50%/70%/90% = 0.4/1.2/2.0/2.8/3.6s，
+			//   恰好全部落在 scaleX(0) 的"侧面"时刻——牌在侧面瞬间换花色，展开即新牌。
+			// shimmer 消失 → animation 规则不再命中 → mask 回落 var(--tf-suit) 静态 activity 牌。
+			var flip = [
+				'0%{transform:scaleX(1)}',
+				'50%{transform:scaleX(0)}',
+				'100%{transform:scaleX(1)}'
+			].join("");
+			var suitTail = ' center/contain no-repeat';
+			var cycle = [
+				'0%{-webkit-mask:' + suitMaskImage("spade") + suitTail + ';mask:' + suitMaskImage("spade") + suitTail + '}',
+				'20%{-webkit-mask:' + suitMaskImage("heart") + suitTail + ';mask:' + suitMaskImage("heart") + suitTail + '}',
+				'40%{-webkit-mask:' + suitMaskImage("diamond") + suitTail + ';mask:' + suitMaskImage("diamond") + suitTail + '}',
+				'60%{-webkit-mask:' + suitMaskImage("club") + suitTail + ';mask:' + suitMaskImage("club") + suitTail + '}'
+			];
+			var whale = POKER_SPIN_DEEPSEEK ? suitMaskImage("whale") : suitMaskImage("heart");
+			cycle.push('80%{-webkit-mask:' + whale + suitTail + ';mask:' + whale + suitTail + '}');
+			cycle.push('100%{-webkit-mask:' + suitMaskImage("spade") + suitTail + ';mask:' + suitMaskImage("spade") + suitTail + '}');
+			rules.push('@keyframes tf-flip{' + flip + '}');
+			rules.push('@keyframes tf-cycle{' + cycle.join("") + '}');
+			rules.push('[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before{animation:tf-flip .8s linear infinite,tf-cycle 4s linear infinite}');
+			// reduced-motion：禁翻牌，running 直接显示静态 activity 牌（mask 回落 var(--tf-suit)）
+			rules.push('@media (prefers-reduced-motion:reduce){[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before{animation:none}}');
 			return rules.join("\n");
 		}
 

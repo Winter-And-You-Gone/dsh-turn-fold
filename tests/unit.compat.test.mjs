@@ -167,6 +167,10 @@ describe('架构守卫（源码扫描）', () => {
     'createRoot',
     '__dsh-turn-fold-gear',
     'data-tf-step-skin',
+    // Step 运行态禁止 JS 判定（运行状态完全由官方 DOM 的 data-text-shimmer 呈现，
+    // 插件只决定该状态长什么样——翻牌动画全在 CSS keyframes 里）
+    'MutationObserver',
+    'replaceChild',
   ]
   for (const name of FORBIDDEN) {
     it('源码不包含 ' + name, () => {

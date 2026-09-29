@@ -83,10 +83,79 @@ describe('Step Poker Skin（官方结构 + 软 DOM 依赖 + style.disabled 总�
   })
 })
 
+describe('Step Poker Running Animation（官方 data-text-shimmer 识别）', () => {
+  it('running 识别规则存在且挂在官方 data-text-shimmer 上（软依赖）', () => {
+    const skin = skinEl().textContent
+    assert.ok(
+      skin.includes('[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before{animation:'),
+      'running 动画规则缺失',
+    )
+  })
+
+  it('动画 = 翻牌（scaleX）+ 花色轮换（mask discrete）双 keyframes', () => {
+    const skin = skinEl().textContent
+    assert.ok(skin.includes('@keyframes tf-flip{0%{transform:scaleX(1)}50%{transform:scaleX(0)}100%{transform:scaleX(1)}}'), '翻牌 keyframes 缺失')
+    // 花色轮换：spade → heart → diamond → club → whale → spade（0/20/40/60/80/100%）
+    const cycle = skin.slice(skin.indexOf('@keyframes tf-cycle{'))
+    assert.ok(cycle.includes(T.suitMaskImage('spade')), 'cycle 含 spade')
+    assert.ok(cycle.includes(T.suitMaskImage('heart')), 'cycle 含 heart')
+    assert.ok(cycle.includes(T.suitMaskImage('diamond')), 'cycle 含 diamond')
+    assert.ok(cycle.includes(T.suitMaskImage('club')), 'cycle 含 club')
+    assert.ok(cycle.includes(T.suitMaskImage('whale')), 'cycle 含 whale')
+  })
+
+  it('discrete 跳变点与牌侧面（scaleX=0）对齐：mask 帧间中点 = 10%/30%/50%/70%/90%', () => {
+    // 0.8s flip 循环的 scaleX(0) 时刻 = 0.4/1.2/2.0/2.8/3.6s；4s cycle 的 discrete
+    // 中点跳变 = 0.4/1.2/2.0/2.8/3.6s（帧 0/20/40/60/80/100%）——同一时刻，
+    // 牌在侧面瞬间换花色、展开即新牌（翻牌观感而非 opacity 闪烁）。
+    const skin = skinEl().textContent
+    const cycleStart = skin.indexOf('@keyframes tf-cycle{')
+    const cycle = skin.slice(cycleStart, skin.indexOf('}/**/', cycleStart) > 0 ? skin.indexOf('}/**/', cycleStart) + 1 : skin.length)
+    for (const pct of ['0%', '20%', '40%', '60%', '80%', '100%']) {
+      assert.ok(cycle.includes(pct), 'cycle 缺帧 ' + pct)
+    }
+  })
+
+  it('running 与静态映射共存：动画 keyframes 覆盖静态 mask，静态 --tf-suit 规则不删', () => {
+    const skin = skinEl().textContent
+    // 静态映射（completed 用）保持原样
+    assert.ok(skin.includes('[data-process-activity="edit"] [data-step-process-icon]'), '静态 edit 映射缺失')
+    assert.ok(skin.includes('--tf-suit:'), '静态 mask 变量缺失')
+    const staticCount = (skin.match(/--tf-suit:/g) || []).length
+    assert.ok(staticCount >= 5, '静态映射规则数量异常：' + staticCount)
+  })
+
+  it('reduced-motion：running 动画禁用 → 回落静态 activity 牌', () => {
+    const skin = skinEl().textContent
+    assert.ok(
+      skin.includes('@media (prefers-reduced-motion:reduce){[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before{animation:none}}'),
+      'reduced-motion 关闭 running 动画的规则缺失',
+    )
+  })
+
+  it('data-shimmer 钩子缺失的最坏退化 = 静态牌（CSS 结构守卫）', () => {
+    const skin = skinEl().textContent
+    // running 规则只追加 animation、不改静态声明——移除 :has() 规则后静态皮完整
+    const withoutRunning = skin
+      .split('\n')
+      .filter((l) => !l.includes('[data-text-shimmer'))
+      .join('\n')
+    assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::before{'), '静态牌渲染位仍在')
+    assert.ok(withoutRunning.includes('--tf-suit:'), '静态花色映射仍在')
+    // 动画"应用"随钩子退场（@keyframes 定义留存为无引用的死代码，不产生任何动画）
+    assert.ok(!withoutRunning.includes('animation:tf-flip'), '动画应用规则随钩子一起退场')
+  })
+})
+
 describe('架构守卫：旧折叠引擎 CSS 必须消失', () => {
   it('无 :has() 成员隐藏、无 hidden 标记选择器、无旧折叠容器', () => {
     const css = baseCss() + '\n' + skinEl().textContent
-    assert.ok(!css.includes(':has('), ':has() 隐藏规则必须删除')
+    // :has() 唯一合法用途 = 运行态识别（官方 data-text-shimmer）；
+    // 旧折叠引擎用 :has() 隐藏成员 flowItem——那是被删除的 Fold Engine 行为。
+    const hasLines = css.split('\n').filter((l) => l.includes(':has('))
+    for (const line of hasLines) {
+      assert.ok(line.includes('[data-text-shimmer="true"]'), ':has() 仅允许用于 data-text-shimmer 运行态识别：' + line)
+    }
     assert.ok(!css.includes('data-ccg-hidden'), '隐藏标记选择器必须删除')
     assert.ok(!css.includes('ccg-fold-clip'), '旧 FoldClip 容器样式必须删除')
     assert.ok(!css.includes('ccg-group-root'), '旧组容器样式必须删除')
@@ -102,3 +171,4 @@ describe('架构守卫：旧折叠引擎 CSS 必须消失', () => {
     assert.ok(css.includes('@media (prefers-reduced-motion:reduce)'))
   })
 })
+

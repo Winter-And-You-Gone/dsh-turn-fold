@@ -77,10 +77,18 @@ and search reveal) works untouched; the plugin only reskins it:
   source generating the CSS): thinking/questions → ♥, read/readImage/search/webSearch/
   webFetch → ♠, edit/write → ♦, commands/code → ♣, subagents/plan/tools → 🐋whale
   (DeepSeek logo); unregistered activities fall back to ♥;
+- **Running flip animation**: a running step (official title shimmer, i.e.
+  `data-text-shimmer="true"`) cycles its poker card — ♠→♥→♦→♣→🐋 with the suit
+  swapped at the card's edge (scaleX=0) every 0.8s, one full cycle in 4s; when the
+  step settles the card freezes on that step's activity suit (edit → ♦,
+  thinking → ♥, …). Pure CSS, zero JS state; static cards under reduced motion;
 - **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
   the skin `<style>` element's `disabled` property (the plugin never writes global
   `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
   disappearing and the official icon showing as-is**; official folding is unaffected.
+  The running-state recognition additionally relies on the official
+  `data-text-shimmer` (see the integration dependency list); if it goes away, running
+  steps degrade to a static poker card.
 
 ## Install
 
@@ -271,6 +279,14 @@ git push --follow-tags
     `dsh-client-ui-conversation` contracts;
   - **Soft visual dependency**: `data-step-process-icon` / `data-process-activity`
     (step skin only; failure = skin disappears, official icons and folding stay intact);
+  - **Soft visual dependency (running state)**: the official `TextShimmer`-rendered
+    `data-text-shimmer="true"` (carried by the `ChatGroupSeat` title while
+    `!data.closed`). **Used only to identify running steps for the poker flip
+    animation** — while running, a pure-CSS flip (♠→♥→♦→♣→🐋, side swap every 0.8s,
+    4s per cycle) overrides the static suit; when the official turn/step closes the
+    attribute disappears, the animation rule stops matching, and the card settles on
+    that step's static activity suit with zero JS. If the hook goes away, the worst
+    degradation is a running step showing a static poker card; folding is unaffected;
   - **Soft style injection (non-ideal, recorded as-is)**: the plugin injects two minimal
     `<style>` elements into `document.head` (base styles + the step skin). As of the
     current DSH master (21638c5631) there is no style-registration API for plain-JS
