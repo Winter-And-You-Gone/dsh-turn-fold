@@ -87,16 +87,18 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
   未登记活动回退 ♥；
-- **运行态动态翻牌**：运行中的 Step（官方标题带 shimmer，即
-  `data-shimmer="true"`）改为**循环翻牌**——♠→♥→♦→♣→🐋 每 0.8s 在牌侧面
-  （scaleX=0）瞬间换花色、4s 一轮；回合结束自动定格为该 Step activity 的静态花色
-  （edit → ♦、thinking → ♥……），全程纯 CSS、零 JS 状态。系统「减少动态效果」
-  开启时运行中直接显示静态牌；
+- **运行态动态翻牌**：运行中的 Step（官方标题带 shimmer。Soft running-state
+  dependencies——DSH 0.1.7 输出 `data-text-shimmer`、DSH 0.2.0+ 输出 `data-shimmer`，
+  两者都是官方真实历史契约，插件同时兼容）改为**循环翻牌**——♠→♥→♦→♣→🐋 每 0.8s
+  在牌侧面（scaleX=0）瞬间换花色、4s 一轮；回合结束自动定格为该 Step activity 的
+  静态花色（edit → ♦、thinking → ♥……），全程纯 CSS、零 JS 状态。系统「减少动态
+  效果」开启时运行中直接显示静态牌；
 - **软依赖**：全部选择器挂在官方 DOM 钩子上，总闸 = 皮肤 `<style>` 元素的
   `disabled` 属性（插件不写任何 `document.body` 全局状态）——DSH 改掉钩子时
   **最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。
-  运行态识别额外依赖官方 `data-shimmer`（见集成依赖清单），失效时运行中
-  Step 自动退化为静态 Poker。
+  运行态识别依赖官方 shimmer 属性（两个版本任一存在即触发 Running Step Poker
+  动画；两者都不存在 → 静态 Poker fallback；即使视觉钩子失效，也不影响
+  Step Fold / Tool / Think / Turn Fold 与页面稳定性）。
 
 ## 安装
 
@@ -289,12 +291,20 @@ git push --follow-tags
     `dsh-client-ui-conversation` 契约；
   - **Soft visual dependency**：`data-step-process-icon` / `data-process-activity`
     （仅 Step 皮；失效 = 皮消失，官方图标与折叠原样保留）；
-  - **Soft visual dependency（运行态）**：官方 `TextShimmer` 渲染的
-    `data-shimmer="true"`（`ChatGroupSeat` 标题在 `!data.closed` 时携带）。
-    **仅用于运行中 Step 的扑克翻牌动画识别**——运行态 = `:has([data-shimmer="true"])`
-    时叠加纯 CSS 翻牌（♠→♥→♦→♣→🐋 每 0.8s 侧面换牌，4s 一轮）；官方回合结束属性
-    消失 → 动画规则不再命中 → 自动回落该 Step activity 对应的静态花色牌，交接零 JS。
-    钩子失效的最坏退化 = 运行中 Step 显示静态 Poker，不影响 Fold 行为；
+  - **Soft visual dependency（运行态，双契约）**：官方 `TextShimmer` 渲染的
+    shimmer 属性（`ChatGroupSeat` 标题在 `!data.closed` 时携带）。属性名随官方
+    版本演进，两个都是官方真实历史契约（源码证据）：
+    - DSH 0.1.7（release commit `787b746b807df83776957875683b8853c862ca2c`，
+      `TextShimmer.tsx`：`data-text-shimmer={active || undefined}`）→
+      `data-text-shimmer="true"`；
+    - DSH 0.2.0+（master，`TextShimmer.tsx`：`data-shimmer={active || undefined}`）→
+      `data-shimmer="true"`。
+    插件同时兼容两者，任一存在 → Running Step Poker 动画（`:has()` 命中即叠加
+    纯 CSS 翻牌 ♠→♥→♦→♣→🐋，每 0.8s 侧面换牌，4s 一轮）；两者都不存在 →
+    静态 Poker fallback（该 Step activity 对应花色）。**仅用于运行中 Step 的
+    扑克翻牌动画识别**；官方回合结束属性消失 → 动画规则不再命中 → 自动回落，
+    交接零 JS。无论视觉钩子是否失效，都不影响 Step Fold / Tool / Think /
+    Turn Fold 与页面稳定性；
   - **Soft style injection（非理想软兼容点，已如实记录）**：插件向 `document.head`
     注入两个最小 `<style>`（基础样式 + Step 皮）。截至当前 DSH master（21638c5631）
     官方没有给 plain-JS client plugin 提供样式注册 API（全宿主唯一 `createElement('style')`

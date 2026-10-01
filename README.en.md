@@ -77,8 +77,10 @@ and search reveal) works untouched; the plugin only reskins it:
   source generating the CSS): thinking/questions → ♥, read/readImage/search/webSearch/
   webFetch → ♠, edit/write → ♦, commands/code → ♣, subagents/plan/tools → 🐋whale
   (DeepSeek logo); unregistered activities fall back to ♥;
-- **Running flip animation**: a running step (official title shimmer, i.e.
-  `data-shimmer="true"`) cycles its poker card — ♠→♥→♦→♣→🐋 with the suit
+- **Running flip animation**: a running step (official title shimmer. Soft
+  running-state dependencies — DSH 0.1.7 renders `data-text-shimmer`, DSH 0.2.0+
+  renders `data-shimmer`; both are real official historical contracts and the plugin
+  supports both) cycles its poker card — ♠→♥→♦→♣→🐋 with the suit
   swapped at the card's edge (scaleX=0) every 0.8s, one full cycle in 4s; when the
   step settles the card freezes on that step's activity suit (edit → ♦,
   thinking → ♥, …). Pure CSS, zero JS state; static cards under reduced motion;
@@ -86,9 +88,10 @@ and search reveal) works untouched; the plugin only reskins it:
   the skin `<style>` element's `disabled` property (the plugin never writes global
   `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
   disappearing and the official icon showing as-is**; official folding is unaffected.
-  The running-state recognition additionally relies on the official
-  `data-shimmer` (see the integration dependency list); if it goes away, running
-  steps degrade to a static poker card.
+  The running-state recognition relies on the official shimmer attributes (either
+  one present → Running Step Poker animation; both absent → static Poker fallback;
+  even if the visual hooks fail, Step Fold / Tool / Think / Turn Fold and page
+  stability are never affected).
 
 ## Install
 
@@ -279,14 +282,22 @@ git push --follow-tags
     `dsh-client-ui-conversation` contracts;
   - **Soft visual dependency**: `data-step-process-icon` / `data-process-activity`
     (step skin only; failure = skin disappears, official icons and folding stay intact);
-  - **Soft visual dependency (running state)**: the official `TextShimmer`-rendered
-    `data-shimmer="true"` (carried by the `ChatGroupSeat` title while
-    `!data.closed`). **Used only to identify running steps for the poker flip
-    animation** — while running, a pure-CSS flip (♠→♥→♦→♣→🐋, side swap every 0.8s,
-    4s per cycle) overrides the static suit; when the official turn/step closes the
-    attribute disappears, the animation rule stops matching, and the card settles on
-    that step's static activity suit with zero JS. If the hook goes away, the worst
-    degradation is a running step showing a static poker card; folding is unaffected;
+  - **Soft visual dependency (running state, dual contract)**: the official
+    `TextShimmer`-rendered shimmer attribute (carried by the `ChatGroupSeat` title while
+    `!data.closed`). The attribute name evolved across official versions — both are real
+    official historical contracts (source evidence):
+    - DSH 0.1.7 (release commit `787b746b807df83776957875683b8853c862ca2c`,
+      `TextShimmer.tsx`: `data-text-shimmer={active || undefined}`) →
+      `data-text-shimmer="true"`;
+    - DSH 0.2.0+ (master, `TextShimmer.tsx`: `data-shimmer={active || undefined}`) →
+      `data-shimmer="true"`.
+    The plugin supports both: either one present → Running Step Poker animation
+    (`:has()` matching overlays the pure-CSS flip ♠→♥→♦→♣→🐋, side swap every 0.8s,
+    4s per cycle); both absent → static Poker fallback (that step's activity suit).
+    **Used only to identify running steps for the poker flip animation**; when the
+    official turn/step closes the attribute disappears, the animation rule stops
+    matching, and the card settles with zero JS. Whether or not the visual hooks
+    fail, Step Fold / Tool / Think / Turn Fold and page stability are never affected;
   - **Soft style injection (non-ideal, recorded as-is)**: the plugin injects two minimal
     `<style>` elements into `document.head` (base styles + the step skin). As of the
     current DSH master (21638c5631) there is no style-registration API for plain-JS

@@ -547,9 +547,13 @@ window.__ModuleLoader__.load({
 			}
 			// ── 运行态动态翻牌（运行状态完全由官方 DOM 识别，插件零 JS 判定） ──
 			// 官方 ProcessGroupHeader 的标题用 <TextShimmer active={!data.closed}>：
-			// active 时最终 DOM 出现 data-shimmer="true"，回合结束属性消失。
-			// running 识别 = [data-step-process]:has([data-shimmer="true"])（软依赖：
-			// 钩子失效 → :has() 不命中 → 回落静态 activity 牌，官方折叠不受影响）。
+			// active 时最终 DOM 出现 shimmer 属性，回合结束属性消失。属性名随官方
+			// 版本演进，两个都是官方真实历史契约，插件双契约同时兼容（缺一即只在
+			// 另一个版本上失效）：
+			//   DSH 0.1.7（release 787b746b80）→ data-text-shimmer={active || undefined}
+			//   DSH 0.2.0+（master 639ed01539）→ data-shimmer={active || undefined}
+			// running 识别 = [data-step-process]:has([<任一官方 shimmer 属性>="true"])
+			// （软依赖：钩子失效 → :has() 不命中 → 回落静态 activity 牌，官方折叠不受影响）。
 			// 动画 = 双动画叠加，跳变点严格对齐：
 			//   tf-flip（transform scaleX，0.8s 循环）：0.4s/1.2s/… 时牌侧对观众（scaleX(0)）；
 			//   tf-cycle（mask-image discrete，4s 循环 5 花色）：mask-image 不可平滑插值，
@@ -573,9 +577,14 @@ window.__ModuleLoader__.load({
 			cycle.push('100%{-webkit-mask:' + suitMaskImage("spade") + suitTail + ';mask:' + suitMaskImage("spade") + suitTail + '}');
 			rules.push('@keyframes tf-flip{' + flip + '}');
 			rules.push('@keyframes tf-cycle{' + cycle.join("") + '}');
-			rules.push('[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{animation:tf-flip .8s linear infinite,tf-cycle 4s linear infinite}');
-			// reduced-motion：禁翻牌，running 直接显示静态 activity 牌（mask 回落 var(--tf-suit)）
-			rules.push('@media (prefers-reduced-motion:reduce){[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{animation:none}}');
+			// 双契约 running 选择器：同一规则声明一次动画，任一官方 shimmer 属性命中即
+			// 翻牌；两属性同时出现（官方不会如此输出）也只应用一次声明，不产生两套视觉。
+			var runningSelectors = ['data-text-shimmer', 'data-shimmer'].map(function (attr) {
+				return '[data-step-process]:has([' + attr + '="true"]) [data-step-process-icon]::before';
+			}).join(",");
+			rules.push(runningSelectors + '{animation:tf-flip .8s linear infinite,tf-cycle 4s linear infinite}');
+			// reduced-motion：禁翻牌，running 直接显示静态 activity 牌（mask 回落 var(--tf-suit)）；同样双契约
+			rules.push('@media (prefers-reduced-motion:reduce){' + runningSelectors + '{animation:none}}');
 			return rules.join("\n");
 		}
 

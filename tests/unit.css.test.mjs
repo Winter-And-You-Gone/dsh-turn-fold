@@ -83,13 +83,123 @@ describe('Step Poker Skin（官方结构 + 软 DOM 依赖 + style.disabled 总�
   })
 })
 
-describe('Step Poker Running Animation（官方 data-shimmer 识别）', () => {
-  it('running 识别规则存在且挂在官方 data-shimmer 上（软依赖）', () => {
+describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
+  // 从皮肤 CSS 里提取真实的 running 选择器与动画声明（单一事实来源，测试不复制选择器）。
+  // 注意：nwsapi（jsdom 选择器引擎）对含 :has() 的选择器列表 matches() 会整体返回 false
+  //（单项明明命中）——真实浏览器按列表语义正确应用；因此 fixture 断言按单个选择器逐个做。
+  function runningRuleOf(skin) {
+    const line = skin.split('\n').find((l) => l.includes('{animation:tf-flip'))
+    assert.ok(line, 'running 动画规则缺失')
+    return line
+  }
+  function runningDeclarationOf(skin) {
+    const line = runningRuleOf(skin)
+    return line.slice(line.indexOf('{') + 1, line.lastIndexOf('}'))
+  }
+  function runningSelectorsOf(skin) {
+    return runningRuleOf(skin).slice(0, runningRuleOf(skin).indexOf('{')).split(',')
+  }
+  // matches() 不能带伪元素：running 选择器以 " [data-step-process-icon]::before" 结尾，
+  // 去掉伪元素后剩下的宿主部分（[data-step-process]:has(...)）才是可匹配的元素选择器。
+  function hostSelectorOf(sel) {
+    const marker = ' [data-step-process-icon]::before'
+    const at = sel.lastIndexOf(marker)
+    assert.ok(at > 0, 'running 选择器缺少卡牌渲染位后缀：' + sel)
+    return sel.slice(0, at)
+  }
+  // 构造官方 running DOM 最小结构：[data-step-process] > [data-step-process-icon] + shimmer 标题
+  function stepDom(shimmer) {
+    const host = document.createElement('div')
+    host.setAttribute('data-step-process', '')
+    const icon = document.createElement('span')
+    icon.setAttribute('data-step-process-icon', '')
+    host.appendChild(icon)
+    const title = document.createElement('span')
+    if (shimmer === '0.1.7') title.setAttribute('data-text-shimmer', 'true')
+    else if (shimmer === '0.2.0') title.setAttribute('data-shimmer', 'true')
+    else if (shimmer === 'both') {
+      title.setAttribute('data-text-shimmer', 'true')
+      title.setAttribute('data-shimmer', 'true')
+    }
+    host.appendChild(title)
+    document.body.appendChild(host)
+    return { host, icon, cleanup: () => host.remove() }
+  }
+
+  it('双契约 running 规则存在：0.1.7 data-text-shimmer 与 0.2.0+ data-shimmer 都在', () => {
     const skin = skinEl().textContent
     assert.ok(
-      skin.includes('[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{animation:'),
-      'running 动画规则缺失',
+      skin.includes('[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before'),
+      '0.1.7 官方契约（data-text-shimmer）的 running 选择器缺失',
     )
+    assert.ok(
+      skin.includes('[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before'),
+      '0.2.0+ 官方契约（data-shimmer）的 running 选择器缺失',
+    )
+  })
+
+  it('0.1.7 DOM：data-text-shimmer="true" → running 命中，animationName 含 tf-flip + tf-cycle', () => {
+    const skin = skinEl().textContent
+    const { host, cleanup } = stepDom('0.1.7')
+    try {
+      const sel = runningSelectorsOf(skin).find((s) => s.includes('[data-text-shimmer="true"]'))
+      assert.ok(sel, '0.1.7 契约选择器缺失')
+      assert.ok(host.matches(hostSelectorOf(sel)), '0.1.7 官方 DOM 未命中 running 选择器')
+      const decl = runningDeclarationOf(skin)
+      assert.ok(decl.includes('tf-flip'), '动画声明缺 tf-flip')
+      assert.ok(decl.includes('tf-cycle'), '动画声明缺 tf-cycle')
+    } finally { cleanup() }
+  })
+
+  it('0.2.0+ DOM：data-shimmer="true" → running 命中，同一动画声明', () => {
+    const skin = skinEl().textContent
+    const { host, cleanup } = stepDom('0.2.0')
+    try {
+      const sel = runningSelectorsOf(skin).find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
+      assert.ok(sel, '0.2.0+ 契约选择器缺失')
+      assert.ok(host.matches(hostSelectorOf(sel)), '0.2.0+ 官方 DOM 未命中 running 选择器')
+      const decl = runningDeclarationOf(skin)
+      assert.ok(decl.includes('tf-flip') && decl.includes('tf-cycle'))
+    } finally { cleanup() }
+  })
+
+  it('两属性都不存在 → running 不命中，回落静态 activity 牌', () => {
+    const skin = skinEl().textContent
+    const { host, icon, cleanup } = stepDom(null)
+    try {
+      // 无 shimmer：双契约选择器逐个都不命中（nwsapi 列表匹配限制，见 runningSelectorsOf 注释）
+      for (const sel of runningSelectorsOf(skin)) {
+        assert.ok(!host.matches(hostSelectorOf(sel)), '无 shimmer 时 running 不应命中：' + sel)
+      }
+      // 静态牌：host 标记 activity → icon 命中静态映射（mask = var(--tf-suit)）
+      host.setAttribute('data-process-activity', 'edit')
+      const staticRule = skin.split('\n').find((l) => l.includes('[data-process-activity="edit"] [data-step-process-icon]'))
+      assert.ok(staticRule && staticRule.includes('--tf-suit:'), '静态 activity 花色映射缺失')
+      assert.ok(icon.matches(staticRule.slice(0, staticRule.indexOf('{'))), '静态牌选择器命中官方 DOM')
+    } finally { cleanup() }
+  })
+
+  it('completed 静态花色：thinking → ♥、edit → ♦、commands → ♣（与 JS 映射同源，无动画）', () => {
+    const skin = skinEl().textContent
+    for (const [activity, suit] of [['thinking', 'heart'], ['edit', 'diamond'], ['commands', 'club']]) {
+      const rule = skin.split('\n').find((l) => l.includes('[data-process-activity="' + activity + '"] [data-step-process-icon]'))
+      assert.ok(rule, activity + ' 静态规则缺失')
+      assert.ok(rule.includes('--tf-suit:' + T.suitMaskImage(suit)), activity + ' 静态花色不是 ' + suit)
+      assert.ok(!rule.includes('animation:tf-flip'), activity + ' 静态规则不得携带 running 动画')
+    }
+  })
+
+  it('双属性同时存在 → 正常命中，且只应用一次动画声明（不产生两套视觉）', () => {
+    const skin = skinEl().textContent
+    const { host, cleanup } = stepDom('both')
+    try {
+      // 两个契约选择器对同一 DOM 各自命中（nwsapi 列表匹配限制，逐个断言）
+      for (const sel of runningSelectorsOf(skin)) {
+        assert.ok(host.matches(hostSelectorOf(sel)), '双属性 DOM 未命中选择器：' + sel)
+      }
+      // 两个选择器挂同一规则（选择器列表 + 单个 animation 声明）→ 浏览器只应用一次
+      assert.equal((skin.match(/animation:tf-flip/g) || []).length, 1, 'running 动画声明必须恰好一次')
+    } finally { cleanup() }
   })
 
   it('动画 = 翻牌（scaleX）+ 花色轮换（mask discrete）双 keyframes', () => {
@@ -125,20 +235,20 @@ describe('Step Poker Running Animation（官方 data-shimmer 识别）', () => {
     assert.ok(staticCount >= 5, '静态映射规则数量异常：' + staticCount)
   })
 
-  it('reduced-motion：running 动画禁用 → 回落静态 activity 牌', () => {
+  it('reduced-motion：running 动画禁用（双契约选择器都在）→ 回落静态 activity 牌', () => {
     const skin = skinEl().textContent
-    assert.ok(
-      skin.includes('@media (prefers-reduced-motion:reduce){[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{animation:none}}'),
-      'reduced-motion 关闭 running 动画的规则缺失',
-    )
+    const line = skin.split('\n').find((l) => l.includes('@media (prefers-reduced-motion:reduce)') && l.includes('animation:none'))
+    assert.ok(line, 'reduced-motion 关闭 running 动画的规则缺失')
+    assert.ok(line.includes('[data-text-shimmer="true"]'), 'reduced-motion 缺 0.1.7 契约选择器')
+    assert.ok(line.includes('[data-shimmer="true"]'), 'reduced-motion 缺 0.2.0+ 契约选择器')
   })
 
-  it('data-shimmer 钩子缺失的最坏退化 = 静态牌（CSS 结构守卫）', () => {
+  it('shimmer 钩子缺失的最坏退化 = 静态牌（CSS 结构守卫，双契约属性一并退场）', () => {
     const skin = skinEl().textContent
-    // running 规则只追加 animation、不改静态声明——移除 :has() 规则后静态皮完整
+    // running 规则只追加 animation、不改静态声明——移除任一 shimmer 钩子规则后静态皮完整
     const withoutRunning = skin
       .split('\n')
-      .filter((l) => !l.includes('[data-shimmer'))
+      .filter((l) => !l.includes('[data-shimmer') && !l.includes('[data-text-shimmer'))
       .join('\n')
     assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::before{'), '静态牌渲染位仍在')
     assert.ok(withoutRunning.includes('--tf-suit:'), '静态花色映射仍在')
@@ -146,33 +256,48 @@ describe('Step Poker Running Animation（官方 data-shimmer 识别）', () => {
     assert.ok(!withoutRunning.includes('animation:tf-flip'), '动画应用规则随钩子一起退场')
   })
 
-  it('历史错误属性 data-text-shimmer 不得出现在皮肤 CSS 中（不得触发 running 动画）', () => {
-    // 上一轮误把官方属性写成 data-text-shimmer——若它悄悄回来，
-    // 规则永远无法命中真实 running DOM（官方渲染的是 data-shimmer）
+  it('双契约守卫：皮肤必须同时包含两个官方运行态属性，任一都不是"非法旧属性"', () => {
+    // data-text-shimmer = DSH 0.1.7 正式契约（release 787b746b80）；
+    // data-shimmer      = DSH 0.2.0+ 当前契约（master）。
+    // 上一轮曾错误地禁止 data-text-shimmer 出现——两个都是官方真实历史契约，必须共存。
     const skin = skinEl().textContent
-    assert.ok(!skin.includes('data-text-shimmer'), '皮肤 CSS 不得引用 data-text-shimmer')
+    assert.ok(skin.includes('data-text-shimmer="true"'), '皮肤缺少 0.1.7 官方契约 data-text-shimmer')
+    assert.ok(skin.includes('data-shimmer="true"'), '皮肤缺少 0.2.0+ 官方契约 data-shimmer')
   })
 
-  it('官方源码契约守卫：TextShimmer 渲染 data-shimmer、ChatGroupSeat 按 !data.closed 激活', async () => {
-    // 直接读本地 DSH checkout 的官方源码核对属性名契约——属性名错误正是上一轮
-    // 事故的根因。checkout 不存在（如 CI）则跳过，本地开发必然命中。
+  it('官方源码契约（双版本，条件式）：0.1.7-rc.2 与 master 的 TextShimmer 属性名', async () => {
+    // 直接核对官方源码：0.1.7-rc.2 release commit 与当前 master 工作区各验一次——
+    // 属性名错误正是上一轮事故的根因。无本地 checkout（如 CI）则跳过；
+    // 插件自己的 CSS/fixture 契约用例不依赖 checkout，始终执行。
     const { access, readFile } = await import('node:fs/promises')
-    const checkout = process.env.DSH_CHECKOUT || 'X:/DeepSeek Harness/deepseek-harness'
-    const shimmerPath = checkout + '/packages/client/ui-primitives/src/TextShimmer.tsx'
+    const { execFile } = await import('node:child_process')
+    const checkout = process.env.DSH_CHECKOUT || 'X:/DSH/deepseek-harness'
+    const rel = 'packages/client/ui-primitives/src/TextShimmer.tsx'
+    const shimmerPath = checkout + '/' + rel
     const seatPath = checkout + '/packages/client/ui-chat/src/client/chat/ChatGroupSeat.tsx'
     try {
       await access(shimmerPath)
       await access(seatPath)
     } catch {
-      return // 无本地 checkout：跳过（CSS 文本契约用例已覆盖插件侧）
+      return // 无本地 checkout：跳过
     }
-    const shimmerSrc = await readFile(shimmerPath, 'utf8')
-    const seatSrc = await readFile(seatPath, 'utf8')
+    const gitShow = (rev) => new Promise((resolve, reject) => {
+      execFile('git', ['-C', checkout, 'show', rev + ':' + rel], (err, stdout) => (err ? reject(err) : resolve(stdout)))
+    })
+    // DSH 0.1.7-rc.2 正式 release（官方证据 commit）：data-text-shimmer
+    const legacy = await gitShow('787b746b807df83776957875683b8853c862ca2c')
     assert.ok(
-      shimmerSrc.includes('data-shimmer={active || undefined}'),
-      '官方 TextShimmer 契约变更：data-shimmer 属性不再匹配——需要同步更新本插件的运行态选择器',
+      legacy.includes('data-text-shimmer={active || undefined}'),
+      '0.1.7-rc.2 官方契约变更：data-text-shimmer 不再匹配——请核对插件 0.1.7 选择器',
     )
-    assert.ok(!shimmerSrc.includes('data-text-shimmer'), '官方 TextShimmer 出现 data-text-shimmer——插件选择器需改回')
+    // 当前 master 工作区：data-shimmer
+    const master = await readFile(shimmerPath, 'utf8')
+    assert.ok(
+      master.includes('data-shimmer={active || undefined}'),
+      'master 官方契约变更：data-shimmer 不再匹配——请同步更新插件运行态选择器',
+    )
+    // 两个版本共用同一激活条件：<TextShimmer active={!data.closed}>
+    const seatSrc = await readFile(seatPath, 'utf8')
     assert.ok(seatSrc.includes('<TextShimmer active={!data.closed}>'), '官方 ChatGroupSeat 激活条件变更：需要同步核对')
   })
 })
@@ -180,11 +305,14 @@ describe('Step Poker Running Animation（官方 data-shimmer 识别）', () => {
 describe('架构守卫：旧折叠引擎 CSS 必须消失', () => {
   it('无 :has() 成员隐藏、无 hidden 标记选择器、无旧折叠容器', () => {
     const css = baseCss() + '\n' + skinEl().textContent
-    // :has() 唯一合法用途 = 运行态识别（官方 data-shimmer）；
-    // 旧折叠引擎用 :has() 隐藏成员 flowItem——那是被删除的 Fold Engine 行为。
+    // :has() 唯一合法用途 = shimmer 运行态识别（0.1.7 data-text-shimmer / 0.2.0+ data-shimmer，
+    // 双官方契约）；旧折叠引擎用 :has() 隐藏成员 flowItem——那是被删除的 Fold Engine 行为。
     const hasLines = css.split('\n').filter((l) => l.includes(':has('))
     for (const line of hasLines) {
-      assert.ok(line.includes('[data-shimmer="true"]'), ':has() 仅允许用于 data-shimmer 运行态识别：' + line)
+      assert.ok(
+        line.includes('[data-shimmer="true"]') || line.includes('[data-text-shimmer="true"]'),
+        ':has() 仅允许用于官方 shimmer 运行态识别：' + line,
+      )
     }
     assert.ok(!css.includes('data-ccg-hidden'), '隐藏标记选择器必须删除')
     assert.ok(!css.includes('ccg-fold-clip'), '旧 FoldClip 容器样式必须删除')

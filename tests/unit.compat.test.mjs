@@ -167,20 +167,25 @@ describe('架构守卫（源码扫描）', () => {
     'createRoot',
     '__dsh-turn-fold-gear',
     'data-tf-step-skin',
-    // Step 运行态禁止 JS 判定（运行状态完全由官方 DOM 的 data-text-shimmer 呈现，
+    // Step 运行态禁止 JS 判定（运行状态完全由官方 DOM 的 shimmer 属性呈现，
     // 插件只决定该状态长什么样——翻牌动画全在 CSS keyframes 里）
     'MutationObserver',
     'replaceChild',
-    // 运行态属性名的历史错误：官方 TextShimmer 渲染的是 data-shimmer
-    // （master 639ed01539：data-shimmer={active || undefined}），
-    // 不是 data-text-shimmer —— 禁止它再出现在 production source 中
-    'data-text-shimmer',
   ]
   for (const name of FORBIDDEN) {
     it('源码不包含 ' + name, () => {
       assert.ok(!src.includes(name), '禁用标识符残留：' + name)
     })
   }
+
+  it('shimmer 双契约：production source 同时包含两个官方运行态属性（缺一不可）', () => {
+    // data-text-shimmer = DSH 0.1.7 正式契约（release 787b746b80）；
+    // data-shimmer      = DSH 0.2.0+ 当前契约（master 639ed01539）。
+    // 上一轮曾把 data-text-shimmer 列为禁用标识符——那是错误约束：两个都是
+    // 官方真实历史契约，必须共存于 production skin。
+    assert.ok(src.includes('data-text-shimmer'), '缺少 DSH 0.1.7 官方契约 data-text-shimmer')
+    assert.ok(src.includes('data-shimmer'), '缺少 DSH 0.2.0+ 官方契约 data-shimmer')
+  })
 
   it('无 document.body 成员访问 / appendChild（head 的样式注入是已记录的软依赖，放行）', () => {
     assert.ok(!/document\.body\s*\./.test(src), '不得访问 document.body 成员')
