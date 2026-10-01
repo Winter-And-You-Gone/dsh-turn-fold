@@ -19,7 +19,7 @@
   "sideEffects": true,
   "engines": {
     "node": ">=20.3",
-    "dsh": ">=0.1.7-rc.1 <=0.1.7-rc.2"
+    "dsh": ">=0.1.7-rc.1 <=0.2.0-rc.2"
   },
   "scripts": {
     "check": "node --check client.js && node --check index.js",

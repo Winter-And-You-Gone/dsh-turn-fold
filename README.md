@@ -278,12 +278,15 @@ git push --follow-tags
   且 rc.1 为真机验证版本、rc.2 经逐包契约 diff 复核；**更早版本不再声明兼容**——
   "安装后自然休眠"不计入兼容，兼容 = 插件核心功能真正工作。DSH 升级若改变上述
   契约，本插件可能需要随版本小改（属插件维护，非改源码）。
-- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1 <=0.1.7-rc.2`
+- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1 <=0.2.0-rc.2`
   —— 插件市场（dshmarket）读 npm `latest` manifest 的这个字段，在插件卡片上显示
   宿主要求，并在**更新**前拦下确定不满足的版本（DSH 本体不读该字段，不影响加载）。
   区间是**闭区间**、锁到已核验的宿主版本：每次 DSH 升级后重新核对契约，再抬上限
   并随新版本发布。
-- **集成依赖清单**（DSH 升级时对照排查）：
+- **集成依赖清单**（DSH 升级时对照排查；已按 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2
+  `c1b47e41fc` 逐契约 diff 审计：Public/stable 契约在两个 release 间逐字节不变）：
+  - **Cordis activation**：`exports.inject = ["slots"]` + `ctx.inject(["slots"], …)`
+    （客户端 slots 服务与 keyed slot 注册语义，官方 `boot-client` 未变）；
   - **Public/stable**：`conversation.chat.node` keyed slot（`turn-process` key +
     owner state `TurnProcessOwnerProps`）；`TurnLocation`（start/end/status/steps）、
     step data store（`assistant-step` usage/timing）、turn data store

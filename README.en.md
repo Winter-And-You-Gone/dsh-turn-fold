@@ -268,13 +268,18 @@ git push --follow-tags
   count as compatibility; compatibility means the plugin's core features really work.
   If a DSH upgrade changes the contract above, this plugin may need a matching
   maintenance release (plugin maintenance, never source patches).
-- **Declared host requirement**: `engines.dsh` = `>=0.1.7-rc.1 <=0.1.7-rc.2` in
+- **Declared host requirement**: `engines.dsh` = `>=0.1.7-rc.1 <=0.2.0-rc.2` in
   `package.json`. The plugin marketplace (dshmarket) reads this field from the npm
   `latest` manifest to show the badge and to block updates that certainly cannot
   satisfy it (the DSH host itself does not read it). The range is **closed** and locked
   to verified host versions: after each DSH upgrade, re-verify the contract before
   raising the ceiling in a release.
-- **Integration dependency list** (check against DSH upgrades):
+- **Integration dependency list** (check against DSH upgrades; audited via a
+  contract-by-contract diff of 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2 `c1b47e41fc`:
+  the Public/stable contracts are byte-identical across both releases):
+  - **Cordis activation**: `exports.inject = ["slots"]` + `ctx.inject(["slots"], …)`
+    (the client slots service and keyed-slot registration semantics; the official
+    `boot-client` is unchanged);
   - **Public/stable**: the `conversation.chat.node` keyed slot (`turn-process` key +
     `TurnProcessOwnerProps` owner state); `TurnLocation` (start/end/status/steps), the
     step data store (`assistant-step` usage/timing) and the turn data store
