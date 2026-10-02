@@ -143,17 +143,25 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
     assert.ok(!svg.includes('rotate('), '牌堆变换只允许平移（stack5 无旋转）')
   })
 
+  it('hover/focus 不让位：皮肤不得包含 hover 让位逻辑，icon 恒显、chevron 恒隐（无条件总控）', () => {
+    const skin = skinEl().textContent
+    // 官方 ChatGroupSeat 在 hover/focus-visible/展开时换箭头；Poker skin 接管图标语义后
+    // 这些时刻也必须显示 Poker——皮肤内不得出现任何 "hover/focus 让位 chevron" 的选择器
+    assert.ok(!skin.includes(':not(:hover)'), '皮肤不得包含 :not(:hover)（hover 让位逻辑）')
+    assert.ok(!skin.includes(':not(:focus-visible)'), '皮肤不得包含 :not(:focus-visible)（focus 让位逻辑）')
+    // 无条件总控（特异性 (0,3,1) 压过官方全部四条 (0,3,0)）：icon 恒显、chevron 恒隐
+    const iconAlways = skin.split('\n').find((l) => l.includes('button[data-process-activity] [data-step-process-icon]{opacity:1}'))
+    const chevronAlways = skin.split('\n').find((l) => l.includes('button[data-process-activity] [data-step-process-chevron]{opacity:0}'))
+    assert.ok(iconAlways, '缺少 icon 恒显总控规则（normal/hover/focus/active 一致）')
+    assert.ok(chevronAlways, '缺少 chevron 恒隐总控规则')
+  })
+
   it('展开态规则三件套：fan mask + activityIcon opacity 翻回 + chevron 压下；hover/focus 让位官方', () => {
     const skin = skinEl().textContent
     const fanLine = fanLineOf(skin)
-    assert.ok(fanLine.includes(':not(:hover):not(:focus-visible)'), 'fan 规则必须在 hover/focus 时让位官方 chevron')
     assert.ok(fanLine.includes(':not(:has([data-shimmer="true"]))') && fanLine.includes(':not(:has([data-text-shimmer="true"]))'), 'fan 规则必须排除 running（shimmer 双契约）')
     const lines = skin.split('\n')
     const hostSel = fanHostSelectorOf(skin)
-    const opacityLine = lines.find((l) => l.startsWith(hostSel) && l.includes(' [data-step-process-icon]{opacity:1}'))
-    assert.ok(opacityLine, '展开态必须把官方 activityIcon 淡出策略翻回 opacity:1')
-    const chevronLine = lines.find((l) => l.startsWith(hostSel) && l.includes(' [data-step-process-chevron]{opacity:0}'))
-    assert.ok(chevronLine, '展开态非 hover 必须压下官方 chevron')
     const fanSvg = decodedMaskSvg(fanLine)
     assert.ok(fanSvg.includes('rotate('), '扇形变换必须包含 rotate（fan5）')
     assert.equal((fanSvg.match(/id="scc-g\d"/g) || []).length, 5, '扇形应为五张牌 glyph')
@@ -175,6 +183,100 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
       assert.ok(!openRunning.button.matches(sel), 'shimmer 在场的展开组不得命中 fan 规则（running 轮换优先）')
     } finally { openRunning.cleanup() }
   })
+
+  // ══════ stack ↔ fan morph 帧序（closed → open 展开扇 / open → closed 收拢） ══════
+  // 架构事实（真机实验证实）：同 URL 的 mask 图像在 Chromium 全页共享单一实例、SMIL
+  // 时间线不随重应用 restart——"换 animated URI 触发 morph"只能播一次。因此 morph 用
+  // 预采样插值帧（每帧静态 SVG、牌与 occluder 都在当帧位置）+ CSS animation keyframes
+  // 逐帧换 mask-image：animation 每次规则命中都从头重放，帧内 knockout 逐帧正确。
+  it('morph 双向 keyframes 存在：tf-step-open（stack→fan）与 tf-step-close（fan→stack）', () => {
+    const skin = skinEl().textContent
+    const openKf = skin.split('\n').find((l) => l.includes('@keyframes tf-step-open{'))
+    const closeKf = skin.split('\n').find((l) => l.includes('@keyframes tf-step-close{'))
+    assert.ok(openKf, '缺少 stack→fan 展开帧序 keyframes')
+    assert.ok(closeKf, '缺少 fan→stack 收拢帧序 keyframes')
+    // 帧插值时间轴：0% = 出发端点、每 12.5% 一帧（6 帧）、100% 省略回落常驻端点
+    for (const [kf, from, to] of [[openKf, stackMaskUri(), fanMaskUri()], [closeKf, fanMaskUri(), stackMaskUri()]]) {
+      assert.ok(kf.includes('0%{' + morphDecl(from) + '}'), '0% 必须是出发端点（与切换前显示同值，无缝起步）')
+      assert.ok(!/100%\{/.test(kf), '100% 必须省略（回落常驻端点 = freeze 语义，末帧与常驻同值无缝）')
+      for (let k = 1; k <= 6; k++) assert.ok(kf.includes((k * 12.5) + '%{-webkit-mask-image:url("data:image/svg+xml'), '帧 ' + k + ' 缺失')
+    }
+    // 两条规则分别挂对应 animation；closed/open 规则 mask 常驻 = 各自端点（动画结束回落正确）
+    const base = skin.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
+    assert.ok(base.includes('animation:tf-step-close .4s linear 1'), 'closed 规则应挂收拢帧序动画（400ms 在 350-450ms 目标内）')
+    const fanLine = fanLineOf(skin)
+    assert.ok(fanLine.includes('animation:tf-step-open .4s linear 1'), 'open 规则应挂展开帧序动画（400ms 在 350-450ms 目标内）')
+  })
+
+  it('morph 端点逐值等于现有真实数据：stepMorphTransforms(0)≡stack5、(1)≡fan5（不改几何）', () => {
+    const zero = T.stepMorphTransforms(0), one = T.stepMorphTransforms(1)
+    const stack = T.pokerTransforms(5, false), fan = T.pokerTransforms(5, true)
+    for (let i = 1; i <= 5; i++) {
+      // t=0：rotate 为 0（stack 无旋转）→ translate 必须等于 stack5
+      const zt = /translate\(([-\d.]+), ([-\d.]+)\)/.exec(zero[i])
+      const st = /translate\(([-\d.]+), ([-\d.]+)\)/.exec(stack[i])
+      assert.ok(Math.abs(Number(zt[1]) - Number(st[1])) < 1e-6 && Math.abs(Number(zt[2]) - Number(st[2])) < 1e-6,
+        't=0 card' + i + ' translate 必须等于 stack5：' + zero[i] + ' vs ' + stack[i])
+      assert.ok(!zero[i].includes('rotate(-') && !zero[i].includes('rotate(3') && !zero[i].includes('rotate(1'), 't=0 不得带 rotate（stack 端点）')
+      // t=1：translate 与 rotate 都等于 fan5（card3 在 fan5 无 rotate → 两者应一致地无）
+      const ot = /translate\(([-\d.]+), ([-\d.]+)\)/.exec(one[i])
+      const ft = /translate\(([-\d.]+), ([-\d.]+)\)/.exec(fan[i])
+      assert.ok(Math.abs(Number(ot[1]) - Number(ft[1])) < 1e-6 && Math.abs(Number(ot[2]) - Number(ft[2])) < 1e-6,
+        't=1 card' + i + ' translate 必须等于 fan5：' + one[i] + ' vs ' + fan[i])
+      const odeg = /rotate\(([-\d.]+) 8 12\)/.exec(one[i])
+      const fdeg = /rotate\(([-\d.]+) 8 12\)/.exec(fan[i])
+      if (!fdeg) {
+        assert.ok(!odeg || Math.abs(Number(odeg[1])) < 1e-6, 't=1 card' + i + ' fan5 无 rotate → 插值端点不得带旋转：' + one[i])
+      } else {
+        assert.ok(odeg && Math.abs(Number(odeg[1]) - Number(fdeg[1])) < 1e-6,
+          't=1 card' + i + ' rotate 必须等于 fan5：' + one[i] + ' vs ' + fan[i])
+      }
+    }
+  })
+
+  it('morph 每帧：5 张真实牌带插值变换 + 每个 occluder 与同层真实牌同步（逐帧 knockout）', () => {
+    const t = 0.5
+    const tfs = T.stepMorphTransforms(t)
+    const frameUri = 'url("data:image/svg+xml,' + encodeURIComponent(T.stepCompletedGroupSvg(tfs)) + '")'
+    const svg = decodeGroupMask(frameUri)
+    // 5 张真实牌都在当帧插值位置（中间帧 ≠ 两个端点 → 必须带 rotate 或非端点 translate）
+    const layers = [...svg.matchAll(/<g mask="url\(#scc-m\d\)"><g transform="([^"]+)">/g)].map((m) => m[1])
+    assert.equal(layers.length, 5, '5 层真实牌')
+    for (let i = 1; i <= 5; i++) assert.equal(layers[i - 1], tfs[i], '真实牌 card' + i + ' 的帧变换 = 插值表')
+    // occluder 与真实牌同帧同变换（cut transform = 同一插值表的 z 更高层）
+    const mask1 = svg.match(/<mask id="scc-m1"[\s\S]*?<\/mask>/)[0]
+    const occTfs = [...mask1.matchAll(/<g transform="([^"]+)">/g)].map((m) => m[1])
+    assert.equal(occTfs.length, 4, 'owner-1 的 4 个 occluder')
+    for (let z = 2; z <= 5; z++) assert.equal(occTfs[z - 2], tfs[z], 'occluder z' + z + ' 与真实牌 card' + z + ' 同帧同步')
+    // 中间帧确实介于两端点之间（spline easing 单调 → card5 rotate ∈ (0,32)）
+    const midDeg = Number(/rotate\(([-\d.]+) 8 12\)/.exec(tfs[5])[1])
+    assert.ok(midDeg > 0 && midDeg < 32, 't=0.5 的 card5 rotate 应在 (0°,32°) 开区间：' + midDeg)
+  })
+
+  it('reduced-motion：completed morph 动画禁用（直接显示静态端点），running 回落不变', () => {
+    const skin = skinEl().textContent
+    const rmLines = skin.split('\n').filter((l) => l.includes('@media (prefers-reduced-motion:reduce)'))
+    const morphOff = rmLines.find((l) => l.includes('animation:none') && l.includes('[data-step-process-icon]::before'))
+    assert.ok(morphOff, 'reduced-motion 必须显式关闭 completed morph 帧序动画（SMIL/animation 不受媒体查询自动控制）')
+    assert.ok(morphOff.includes(completedFanSelectorOf(skin) + ' [data-step-process-icon]::before') ||
+      morphOff.includes('[data-process-activity][aria-expanded="true"]'), 'reduced-motion 必须同时覆盖 open 规则')
+    // running 的 reduced-motion 回落保持不变
+    assert.ok(rmLines.some((l) => l.includes('mask-image:var(--tf-suit)')), 'running 的静态回落规则保留')
+  })
+
+  function morphDecl(uri) { return '-webkit-mask-image:' + uri + ';mask-image:' + uri }
+  function stackMaskUri() {
+    const base = skinEl().textContent.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
+    return base.match(/-webkit-mask:(url\("data:image\/svg\+xml,[^"]+"\)) center/)[1]
+  }
+  function fanMaskUri() {
+    const fanLine = fanLineOf(skinEl().textContent)
+    return fanLine.match(/-webkit-mask-image:(url\("data:image\/svg\+xml,[^"]+"\))/)[1]
+  }
+  function completedFanSelectorOf(skin) {
+    const line = fanLineOf(skin)
+    return line.slice(0, line.indexOf('{'))
+  }
 
   it('stack 与 fan 是两份不同的五牌资产（closed/open 语义各自独立）', () => {
     const stackSvg = decodedMaskSvg(skinEl().textContent.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""')))

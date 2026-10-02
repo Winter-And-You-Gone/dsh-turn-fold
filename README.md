@@ -90,12 +90,15 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
 - **completed 双态图标**（Fold-state aware）：收起 = 五张花色牌堆（♠ ♥ ♦ ♣ + 鲸鱼，
   closed = 牌收好未翻看），展开 = 五张扇形（open = 牌已翻看）——与运行态五牌面同序
   同构，几何直接复用 Turn 栏的 stack5/fan5 变换表（`icons/default.json` 数据源）；
-  重叠区用**真 knockout 遮挡**：每张下层牌一个内嵌 luminance mask，z 更高层牌以
-  实心黑牌面（fill=black occluder）把覆盖区从下层整体挖掉——牌身保持透明
-  （壁纸/图片背景透出），但下层 stroke 与 pip 绝不穿透上层牌（occluder 必须直接
-  内联图形——Chromium 不渲染 mask 内容里的 `<use>` 引用）；官方在展开/hover 时
-  显示的 chevron 保留 hover 让位（hover/focus 仍显示官方 chevron，非 hover 的
-  展开组显示扇形）；
+  **开合有 morph 过渡**：预采样 stack5→fan5 插值帧（cubic-bezier(.22,1,.36,1) 采样、
+  400ms、每帧静态 SVG）经 CSS keyframes 逐帧换 mask-image——animation 每次状态变化
+  都从头重放（同 URL mask 图像的 SMIL 时间线在 Chromium 全页共享、重应用不 restart，
+  帧序列绕开该限制），帧内 occluder 逐帧同步 knockout；**重叠区用真 knockout 遮挡**：
+  每张下层牌一个内嵌 luminance mask，z 更高层牌以实心黑牌面（fill=black occluder）
+  把覆盖区从下层整体挖掉——牌身保持透明（壁纸/图片背景透出），下层 stroke 与 pip
+  绝不穿透上层牌（occluder 必须直接内联图形——Chromium 不渲染 `<mask>` 内容里的
+  `<use>` 引用）；**官方 chevron 在 Poker skin 下恒隐**（normal/hover/focus/active
+  一致显示 Poker，hover 变色与 focus ring 等官方交互不受影响）；
 - 花色按官方 `data-process-activity` 值映射（`ACTIVITY_SUIT` 单一数据源生成 CSS）：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；

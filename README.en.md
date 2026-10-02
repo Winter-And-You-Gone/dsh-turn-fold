@@ -80,14 +80,19 @@ and search reveal) works untouched; the plugin only reskins it:
   (♠ ♥ ♦ ♣ + whale, closed = cards put away), expanded = a five-card fan (open = cards
   looked through) — same suit order and structure as the running rotation, with the
   geometry taken straight from the Turn bar's stack5/fan5 transform tables
-  (`icons/default.json` data source). Overlaps use **real knockout masking**: each
-  lower card carries an inline luminance mask whose occluder is a solid black card
-  face (fill=black) covering the whole upper-card footprint — the card body stays
-  transparent (wallpaper/image backgrounds show through) while lower strokes and pips
-  never bleed through the upper card (occluders must be inlined shapes — Chromium does
-  not render `<use>` references inside `<mask>` content). The official chevron keeps
-  its hover affordance: hover/focus still shows the official chevron, non-hover
-  expanded groups show the fan;
+  (`icons/default.json` data source). **Open/close has a morph transition**: pre-sampled
+  stack5→fan5 interpolation frames (cubic-bezier(.22,1,.36,1) sampling, 400ms, each
+  frame a static SVG) swapped frame-by-frame via CSS keyframes — the animation replays
+  from the start on every state change (same-URL mask images share one SMIL timeline
+  across the page in Chromium and do not restart on re-apply; the frame sequence
+  sidesteps that). Overlaps use **real knockout masking**: each lower card carries an
+  inline luminance mask whose occluder is a solid black card face (fill=black) covering
+  the whole upper-card footprint — the card body stays transparent (wallpaper/image
+  backgrounds show through) while lower strokes and pips never bleed through the upper
+  card (occluders must be inlined shapes — Chromium does not render `<use>` references
+  inside `<mask>` content). **The official chevron stays hidden under the Poker skin**
+  (normal/hover/focus/active all show Poker; official hover tint and focus ring are
+  untouched);
 - The suit maps from the official `data-process-activity` value (single `ACTIVITY_SUIT`
   source generating the CSS): thinking/questions → ♥, read/readImage/search/webSearch/
   webFetch → ♠, edit/write → ♦, commands/code → ♣, subagents/plan/tools → 🐋whale

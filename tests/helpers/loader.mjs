@@ -41,6 +41,9 @@ const TEST_EXPORTS = [
   'buildStepSkinCss',
   'suitMaskImage',
   'stepCompletedGroupMask',
+  'stepCompletedGroupSvg',
+  'stepMorphTransforms',
+  'cssBezierEase',
   // 运行中秒表时钟（固定 1000ms）
   'useLiveNow',
   'subscribeTicks',
