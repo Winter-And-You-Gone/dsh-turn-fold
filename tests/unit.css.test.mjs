@@ -141,7 +141,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     }
   })
 
-  it('0.1.7 DOM：data-text-shimmer="true" → front/back 翻牌生效（rotateY 3D 翻转）', () => {
+  it('0.1.7 DOM：data-text-shimmer="true" → front/back 翻牌生效（scaleX 二维翻面）', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('0.1.7')
     try {
@@ -212,90 +212,104 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     } finally { cleanup() }
   })
 
-  // 解析 @keyframes 为 [{pct, deg}]；规则按行拼接（一条 @keyframes 一行），行内形如 0%{transform:rotateY(0deg)}
+  // 解析 @keyframes 为 [{pct, scale}]；规则按行拼接（一条 @keyframes 一行），行内形如 0%{transform:scaleX(1)}
   function keyframeStopsOf(skin, name) {
     const line = skin.split('\n').find((l) => l.startsWith('@keyframes ' + name + '{'))
     assert.ok(line, name + ' keyframes 规则缺失')
-    const stops = [...line.matchAll(/([\d.]+)%\{transform:rotateY\((-?\d+)deg\)\}/g)]
-      .map((m) => ({ pct: Number(m[1]), deg: Number(m[2]) }))
+    const stops = [...line.matchAll(/([\d.]+)%\{transform:scaleX\(([\d.]+)\)\}/g)]
+      .map((m) => ({ pct: Number(m[1]), scale: Number(m[2]) }))
     assert.ok(stops.length >= 4, name + ' 关键帧数量异常：' + line)
     return stops
   }
-  // 非零角度变化序列（相邻键帧差，去 0），用于方向/反转断言
-  function angleDeltasOf(stops) {
-    return stops.slice(1).map((s, i) => s.deg - stops[i].deg).filter((d) => d !== 0)
-  }
-  // 键帧分段（相邻键帧），用于节奏/接力断言
+  // 键帧分段（相邻键帧），用于节奏/接力/可见性断言
   function segmentsOf(stops) {
     return stops.slice(1).map((s, i) => ({
       fromPct: stops[i].pct,
       toPct: s.pct,
       span: s.pct - stops[i].pct,
-      fromDeg: stops[i].deg,
-      delta: s.deg - stops[i].deg,
+      fromScale: stops[i].scale,
+      delta: s.scale - stops[i].scale,
     }))
   }
+  // 分段线性求值：键帧序列在 pct 处的 scale（复刻 CSS 插值语义，用于可见性采样）
+  function scaleAt(stops, pct) {
+    if (pct <= stops[0].pct) return stops[0].scale
+    for (let i = 1; i < stops.length; i++) {
+      if (pct <= stops[i].pct) {
+        const a = stops[i - 1]
+        const b = stops[i]
+        return a.scale + (b.scale - a.scale) * ((pct - a.pct) / (b.pct - a.pct))
+      }
+    }
+    return stops[stops.length - 1].scale
+  }
 
-  it('动画 = 单张牌 front/back 两态翻牌：只在 0°/±90° 间摆动，去程 + 回程 −（禁止累计旋转/风车）', () => {
+  it('动画 = 单张牌 front/back 两态二维翻面（scaleX 压缩到牌侧换面）：无 rotateY/3D、无累计旋转、无淡入淡出', () => {
     const skin = skinEl().textContent
     const front = keyframeStopsOf(skin, 'tf-flip-front')
     const back = keyframeStopsOf(skin, 'tf-flip-back')
-    const frontText = skin.slice(skin.indexOf('@keyframes tf-flip-front{'), skin.indexOf('@keyframes tf-flip-back{'))
-    const backText = skin.slice(skin.indexOf('@keyframes tf-flip-back{'))
-    // 1) 角度词表：只允许 0°/±90°；180/270/360/540 是累计旋转（整张牌同向转圈＝风车），严禁
-    for (const [name, stops] of [['front', front], ['back', back]]) {
-      for (const { pct, deg } of stops) {
-        assert.ok(Math.abs(deg) <= 90, name + ' @' + pct + '% 出现累计旋转角 ' + deg + 'deg（只允许 0/±90）')
-      }
-    }
-    for (const banned of ['rotateY(180deg)', 'rotateY(-180deg)', 'rotateY(270deg)', 'rotateY(360deg)', 'rotateY(540deg)']) {
-      assert.ok(!frontText.includes(banned) && !backText.includes(banned), 'keyframes 禁止出现 ' + banned)
-    }
-    // 2) 起止角 = 静态基态（front 0° 面朝观众 / back -90° 停在牌侧零宽）：循环与静态切换均无跳变
-    assert.equal(front[0].deg, 0, 'front 起始必须 0°')
-    assert.equal(front[front.length - 1].deg, 0, 'front 结束必须回到 0°')
-    assert.equal(back[0].deg, -90, 'back 起始必须停在牌侧 -90°')
-    assert.equal(back[back.length - 1].deg, -90, 'back 结束必须回到牌侧 -90°')
-    // 3) 方向反转：每面恰好一次 +90 去程、一次 −90 回程（先 + 后 −）——"翻到牌侧换面再沿原路翻回来"
-    assert.deepEqual(angleDeltasOf(front), [90, -90], 'front 必须 0→+90 翻到牌侧、再 +90→0 沿原路翻回（同向续转 = 风车）')
-    assert.deepEqual(angleDeltasOf(back), [90, -90], 'back 必须 -90→0 翻入、再 0→-90 沿原路翻出（同向续转 = 风车）')
-    // 4) 换面只发生在两面同时处于牌侧（±90° 零宽）的瞬间
-    for (const stop of front.filter((s) => s.deg === 90)) {
-      const mate = back.find((s) => s.pct === stop.pct)
-      assert.ok(mate, 'front 在 ' + stop.pct + '% 到达牌侧时 back 必须有同步键帧')
-      assert.equal(mate.deg, -90, 'front 处于 +90° 时 back 必须停在牌侧 -90°（零宽窗口换面）')
-    }
-    // 5) 真 3D 翻转：不得用 scaleX 压缩替代；动画中不改 mask（运行全程不换花色）
-    assert.ok(!frontText.includes('scaleX') && !backText.includes('scaleX'), '不得用 scaleX 压缩替代真翻转')
-    assert.ok(!frontText.includes('mask') && !backText.includes('mask'), '动画中不得改 mask（运行中不换花色）')
-  })
-
-  it('两态节奏守卫：翻面短促（每段 ≤10% 且合计 ≤20%）、停留为主（正 ≥40% / 背 ≥15%）、两面无缝接力', () => {
-    const skin = skinEl().textContent
-    const front = keyframeStopsOf(skin, 'tf-flip-front')
-    const back = keyframeStopsOf(skin, 'tf-flip-back')
-    for (const [name, stops, minFlat] of [['front', front, 40], ['back', back, 15]]) {
-      const segs = segmentsOf(stops)
-      const motion = segs.filter((s) => s.delta !== 0)
-      assert.ok(motion.length >= 2, name + ' 必须有 ≥2 个翻面段（翻出 + 翻回）')
-      for (const s of motion) {
-        assert.ok(s.span <= 10, name + ' 翻面段 ' + s.fromPct + '–' + s.toPct + '% 过长（' + s.span + '% > 10%）：翻牌必须短促，否则会读成连续旋转')
-      }
-      const motionTotal = motion.reduce((a, s) => a + s.span, 0)
-      assert.ok(motionTotal <= 20, name + ' 运动占比过高（' + motionTotal + '% > 20%）：连续运动过长 = 原地旋转感')
-      const flatDwell = segs.filter((s) => s.delta === 0 && s.fromDeg === 0).reduce((a, s) => a + s.span, 0)
-      assert.ok(flatDwell >= minFlat, name + ' 平放停留不足（' + flatDwell + '% < ' + minFlat + '%）：两个状态必须各有明显停留')
-    }
-    // 两面无缝接力：正面翻到牌侧的瞬间 = 背面开始翻入；背面翻到牌侧的瞬间 = 正面开始翻回
-    const fMotion = segmentsOf(front).filter((s) => s.delta !== 0)
-    const bMotion = segmentsOf(back).filter((s) => s.delta !== 0)
-    assert.equal(fMotion[0].toPct, bMotion[0].fromPct, '正面翻到牌侧时背面必须同刻接力翻入（零宽换面）')
-    assert.equal(bMotion[1].toPct, fMotion[1].fromPct, '背面翻到牌侧时正面必须同刻接力翻回（零宽换面）')
-    // 翻牌必须是真旋转过渡，不得改用 opacity/visibility 硬切换；花色轮播（tf-cycle）不得回归
     const kfText = skin.slice(skin.indexOf('@keyframes tf-flip-front{'))
+    // 1) 变换词表：只允许 scaleX ∈ [0,1]；rotateY/透视/累计角（180/270/360/540）= 绕轴旋转观感来源，一律严禁
+    for (const [name, stops] of [['front', front], ['back', back]]) {
+      for (const { pct, scale } of stops) {
+        assert.ok(scale >= 0 && scale <= 1, name + ' @' + pct + '% 出现越界 scaleX(' + scale + ')（只允许 0..1）')
+      }
+    }
+    assert.ok(!kfText.includes('rotateY'), 'keyframes 不得再出现 rotateY（透明梯形/绕轴旋转感来源）')
+    assert.ok(!kfText.includes('180deg') && !kfText.includes('360deg') && !kfText.includes('540deg'), 'keyframes 禁止累计旋转角')
     assert.ok(!kfText.includes('opacity'), '不得用 opacity 淡入淡出代替翻牌')
     assert.ok(!kfText.includes('visibility'), '不得用 visibility 硬切换代替翻牌过渡')
+    assert.ok(!skin.includes('perspective'), '二维翻面不得再引入 3D 透视（避免"原地绕轴旋转"观感）')
     assert.ok(!skin.includes('tf-cycle'), 'tf-cycle 花色轮播已废弃，不得回归')
+    // 2) 起止值 = 静态基态（front scaleX(1) 完整可见 / back scaleX(0) 收窄不可见）：循环与静态切换均无跳变
+    assert.equal(front[0].scale, 1, 'front 起始必须 scaleX(1)')
+    assert.equal(front[front.length - 1].scale, 1, 'front 结束必须 scaleX(1)')
+    assert.equal(back[0].scale, 0, 'back 起始必须 scaleX(0)（收窄不可见）')
+    assert.equal(back[back.length - 1].scale, 0, 'back 结束必须 scaleX(0)')
+    // 3) 每面恰好一次"收窄"与一次"展开"——两个离散状态间往返，不是连续旋转
+    const fDeltas = segmentsOf(front).map((s) => s.delta).filter((d) => d !== 0)
+    const bDeltas = segmentsOf(back).map((s) => s.delta).filter((d) => d !== 0)
+    assert.deepEqual(fDeltas, [-1, 1], 'front 必须恰好一次收窄(1→0)、一次展开(0→1)')
+    assert.deepEqual(bDeltas, [1, -1], 'back 必须恰好一次展开(0→1)、一次收窄(1→0)')
+    // 4) 真翻面：动画中不改 mask（运行全程不换花色）
+    assert.ok(!kfText.includes('mask'), '动画中不得改 mask（运行中不换花色）')
+  })
+
+  it('两态节奏守卫：翻面短促（每段 ≤6% 且合计 ≤12%）、停留为主（正 ≥45% / 背 ≥25%）、两面同刻零宽接力', () => {
+    const skin = skinEl().textContent
+    const front = keyframeStopsOf(skin, 'tf-flip-front')
+    const back = keyframeStopsOf(skin, 'tf-flip-back')
+    for (const [name, stops, minDwell] of [['front', front, 45], ['back', back, 25]]) {
+      const segs = segmentsOf(stops)
+      const motion = segs.filter((s) => s.delta !== 0)
+      assert.ok(motion.length >= 2, name + ' 必须有 ≥2 个翻面段（收窄 + 展开）')
+      for (const s of motion) {
+        assert.ok(s.span <= 6, name + ' 翻面段 ' + s.fromPct + '–' + s.toPct + '% 过长（' + s.span + '% > 6%）：翻面必须短促')
+      }
+      const motionTotal = motion.reduce((a, s) => a + s.span, 0)
+      assert.ok(motionTotal <= 12, name + ' 运动占比过高（' + motionTotal + '% > 12%）：连续运动过长 = 旋转感')
+      const dwell = segs.filter((s) => s.delta === 0 && s.fromScale === 1).reduce((a, s) => a + s.span, 0)
+      assert.ok(dwell >= minDwell, name + ' 停留不足（' + dwell + '% < ' + minDwell + '%）：两个状态必须各有明显停留')
+    }
+    // 两面同刻接力：正面收窄到 0 的瞬间 = 背面开始展开；背面收窄到 0 的瞬间 = 正面开始展开
+    const fMotion = segmentsOf(front).filter((s) => s.delta !== 0)
+    const bMotion = segmentsOf(back).filter((s) => s.delta !== 0)
+    assert.equal(fMotion[0].toPct, bMotion[0].fromPct, '正面收窄到 0 时背面必须同刻开始展开（零宽换面）')
+    assert.equal(bMotion[1].toPct, fMotion[1].fromPct, '背面收窄到 0 时正面必须同刻开始展开（零宽换面）')
+  })
+
+  it('两面绝不同时可见：任一时刻最多一面非零宽，换面只发生在 scaleX=0 的瞬间', () => {
+    const skin = skinEl().textContent
+    const front = keyframeStopsOf(skin, 'tf-flip-front')
+    const back = keyframeStopsOf(skin, 'tf-flip-back')
+    let handoffSamples = 0
+    for (let pct = 0; pct <= 100; pct += 0.5) {
+      const f = scaleAt(front, pct)
+      const b = scaleAt(back, pct)
+      assert.ok(!(f > 0.001 && b > 0.001), 'pct=' + pct + ' 两面同时可见（front=' + f.toFixed(3) + ', back=' + b.toFixed(3) + '）')
+      if (f <= 0.001 && b <= 0.001) handoffSamples++
+    }
+    assert.ok(handoffSamples >= 2, '必须存在两个"两面皆收窄为零宽"的换面瞬间（当前采样到 ' + handoffSamples + ' 个）')
   })
 
   it('running 动画时长：两面同周期、完整周期 2.4s–3.0s', () => {
@@ -321,8 +335,8 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       'front 必须使用静态 --tf-suit（当前 activity 花色）',
     )
     assert.ok(
-      skin.includes('[data-step-process] [data-step-process-icon]::after{-webkit-mask:var(--tf-back) center/contain no-repeat;mask:var(--tf-back) center/contain no-repeat;transform:rotateY(-90deg)}'),
-      'back 必须使用 --tf-back（统一牌背）且基态停在牌侧（-90° 零宽不可见，与动画首尾值一致）',
+      skin.includes('[data-step-process] [data-step-process-icon]::after{-webkit-mask:var(--tf-back) center/contain no-repeat;mask:var(--tf-back) center/contain no-repeat;transform:scaleX(0)}'),
+      'back 必须使用 --tf-back（统一牌背）且基态 scaleX(0)（收窄不可见，与动画首尾值一致）',
     )
     // 牌背与任何花色正面都不同色块（镜像 whale ≠ 未镜像 whale / 四花色）
     for (const suit of ['spade', 'heart', 'diamond', 'club', 'whale']) {
@@ -337,7 +351,6 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(base.includes('position:absolute') && base.includes('inset:0') && base.includes('margin:auto'), '两面必须 absolute + inset:0 + margin:auto')
     assert.ok(base.includes('width:14px') && base.includes('height:20px'), '两面必须同尺寸 14×20')
     assert.ok(base.includes('backface-visibility:hidden'), '两面必须 backface-visibility:hidden')
-    assert.ok(skin.includes('perspective:160px'), '3D 翻转需要透视（挂在 icon span 上）')
   })
 
   it('running 与静态映射共存：动画 keyframes 覆盖静态 mask，静态 --tf-suit 规则不删', () => {
@@ -371,7 +384,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(line.includes('[data-shimmer="true"]'), 'reduced-motion 缺 0.2.0+ 契约选择器')
     assert.ok(line.includes('[data-step-process-icon]::before'), 'reduced-motion 必须覆盖正面')
     assert.ok(line.includes('[data-step-process-icon]::after'), 'reduced-motion 必须覆盖背面')
-    assert.ok(line.includes('animation:none'), 'reduced-motion 下两面 animation 必须为 none（不 rotateY、不闪烁）')
+    assert.ok(line.includes('animation:none'), 'reduced-motion 下两面 animation 必须为 none（不翻面、不闪烁）')
   })
 
   it('running → completed：shimmer 移除后 running 规则不再命中，静态 activity 牌回归', () => {
