@@ -82,11 +82,12 @@ and search reveal) works untouched; the plugin only reskins it:
   renders `data-shimmer`; both are real official historical contracts and the plugin
   supports both) becomes a **single card front ↔ back 3D flip** — front = the current
   activity suit (never changes while running), back = the shared DeepSeek card back
-  (mirrored draw, same as the old turn running card back). The card swings out to the
-  edge (front 0°→+90°, swapping to back -90°→0°) and swings back along the same arc
-  with reversed angular direction (back 0°→-90°, front +90°→0°); angles only ever
-  swing between 0°/±90° with no cumulative rotation (no one-way spinning), 2.8s per
-  cycle with a brief dwell on each face; when the
+  (mirrored draw, same as the old turn running card back). The pacing is
+  "long dwell + short flip": the front rests flat ≈1.5s and the back ≈0.67s, while each
+  front/back swap takes only ≈0.34s (90° to the card edge in ≈0.17s, the face is swapped
+  at the zero-width edge and the other side flips in seamlessly); angles only ever move
+  between 0°/±90° with no cumulative rotation — two discrete states trading places, not
+  a card spinning in place; 2.8s per cycle; when the
   step settles the card freezes on that step's activity suit (edit → ♦,
   thinking → ♥, …). Pure CSS, zero JS state; static front card under reduced motion
   (back parked edge-on, hidden);
@@ -303,9 +304,9 @@ git push --follow-tags
     - DSH 0.2.0+ (master, `TextShimmer.tsx`: `data-shimmer={active || undefined}`) →
       `data-shimmer="true"`.
     The plugin supports both: either one present → Running Step Poker animation
-    (`:has()` matching overlays the pure-CSS front/back 3D flip — front = the
-    current activity suit, back = the shared DeepSeek card back; swings between
-    0°/±90° and reverses back along the same arc, 2.8s per cycle); both absent →
+    (`:has()` matching overlays the pure-CSS front/back flip — front = the
+    current activity suit, back = the shared DeepSeek card back; short flips and
+    long dwells between 0°/±90°, 2.8s per cycle); both absent →
     static Poker fallback (that step's activity suit).
     **Used only to identify running steps for the poker flip animation**; when the
     official turn/step closes the attribute disappears, the animation rule stops

@@ -225,8 +225,18 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
   function angleDeltasOf(stops) {
     return stops.slice(1).map((s, i) => s.deg - stops[i].deg).filter((d) => d !== 0)
   }
+  // 键帧分段（相邻键帧），用于节奏/接力断言
+  function segmentsOf(stops) {
+    return stops.slice(1).map((s, i) => ({
+      fromPct: stops[i].pct,
+      toPct: s.pct,
+      span: s.pct - stops[i].pct,
+      fromDeg: stops[i].deg,
+      delta: s.deg - stops[i].deg,
+    }))
+  }
 
-  it('动画 = 单张牌 front/back 往返翻牌：只在 0°/±90° 间摆动，去程 + 回程 −（禁止累计旋转/风车）', () => {
+  it('动画 = 单张牌 front/back 两态翻牌：只在 0°/±90° 间摆动，去程 + 回程 −（禁止累计旋转/风车）', () => {
     const skin = skinEl().textContent
     const front = keyframeStopsOf(skin, 'tf-flip-front')
     const back = keyframeStopsOf(skin, 'tf-flip-back')
@@ -246,8 +256,8 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.equal(front[front.length - 1].deg, 0, 'front 结束必须回到 0°')
     assert.equal(back[0].deg, -90, 'back 起始必须停在牌侧 -90°')
     assert.equal(back[back.length - 1].deg, -90, 'back 结束必须回到牌侧 -90°')
-    // 3) 方向反转（本次核心验收）：每面恰好一次 +90 去程、一次 −90 回程（先 + 后 −）——"翻过去再沿原路翻回来"
-    assert.deepEqual(angleDeltasOf(front), [90, -90], 'front 必须 0→+90 翻出、再 +90→0 沿原路翻回（同向续转 = 风车）')
+    // 3) 方向反转：每面恰好一次 +90 去程、一次 −90 回程（先 + 后 −）——"翻到牌侧换面再沿原路翻回来"
+    assert.deepEqual(angleDeltasOf(front), [90, -90], 'front 必须 0→+90 翻到牌侧、再 +90→0 沿原路翻回（同向续转 = 风车）')
     assert.deepEqual(angleDeltasOf(back), [90, -90], 'back 必须 -90→0 翻入、再 0→-90 沿原路翻出（同向续转 = 风车）')
     // 4) 换面只发生在两面同时处于牌侧（±90° 零宽）的瞬间
     for (const stop of front.filter((s) => s.deg === 90)) {
@@ -260,7 +270,35 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(!frontText.includes('mask') && !backText.includes('mask'), '动画中不得改 mask（运行中不换花色）')
   })
 
-  it('running 动画时长：两面同周期、落在 2.4s–3.0s 慢速区间（不高速旋转）', () => {
+  it('两态节奏守卫：翻面短促（每段 ≤10% 且合计 ≤20%）、停留为主（正 ≥40% / 背 ≥15%）、两面无缝接力', () => {
+    const skin = skinEl().textContent
+    const front = keyframeStopsOf(skin, 'tf-flip-front')
+    const back = keyframeStopsOf(skin, 'tf-flip-back')
+    for (const [name, stops, minFlat] of [['front', front, 40], ['back', back, 15]]) {
+      const segs = segmentsOf(stops)
+      const motion = segs.filter((s) => s.delta !== 0)
+      assert.ok(motion.length >= 2, name + ' 必须有 ≥2 个翻面段（翻出 + 翻回）')
+      for (const s of motion) {
+        assert.ok(s.span <= 10, name + ' 翻面段 ' + s.fromPct + '–' + s.toPct + '% 过长（' + s.span + '% > 10%）：翻牌必须短促，否则会读成连续旋转')
+      }
+      const motionTotal = motion.reduce((a, s) => a + s.span, 0)
+      assert.ok(motionTotal <= 20, name + ' 运动占比过高（' + motionTotal + '% > 20%）：连续运动过长 = 原地旋转感')
+      const flatDwell = segs.filter((s) => s.delta === 0 && s.fromDeg === 0).reduce((a, s) => a + s.span, 0)
+      assert.ok(flatDwell >= minFlat, name + ' 平放停留不足（' + flatDwell + '% < ' + minFlat + '%）：两个状态必须各有明显停留')
+    }
+    // 两面无缝接力：正面翻到牌侧的瞬间 = 背面开始翻入；背面翻到牌侧的瞬间 = 正面开始翻回
+    const fMotion = segmentsOf(front).filter((s) => s.delta !== 0)
+    const bMotion = segmentsOf(back).filter((s) => s.delta !== 0)
+    assert.equal(fMotion[0].toPct, bMotion[0].fromPct, '正面翻到牌侧时背面必须同刻接力翻入（零宽换面）')
+    assert.equal(bMotion[1].toPct, fMotion[1].fromPct, '背面翻到牌侧时正面必须同刻接力翻回（零宽换面）')
+    // 翻牌必须是真旋转过渡，不得改用 opacity/visibility 硬切换；花色轮播（tf-cycle）不得回归
+    const kfText = skin.slice(skin.indexOf('@keyframes tf-flip-front{'))
+    assert.ok(!kfText.includes('opacity'), '不得用 opacity 淡入淡出代替翻牌')
+    assert.ok(!kfText.includes('visibility'), '不得用 visibility 硬切换代替翻牌过渡')
+    assert.ok(!skin.includes('tf-cycle'), 'tf-cycle 花色轮播已废弃，不得回归')
+  })
+
+  it('running 动画时长：两面同周期、完整周期 2.4s–3.0s', () => {
     const skin = skinEl().textContent
     const durationOf = (face) => {
       const declaration = runningDeclarationOf(skin, face)

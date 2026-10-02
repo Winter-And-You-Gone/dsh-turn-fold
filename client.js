@@ -571,33 +571,34 @@ window.__ModuleLoader__.load({
 			//   DSH 0.2.0+（master 639ed01539）→ data-shimmer={active || undefined}
 			// running 识别 = [data-step-process]:has([<任一官方 shimmer 属性>="true"])
 			// （软依赖：钩子失效 → :has() 不命中 → 回落静态 activity 牌，官方折叠不受影响）。
-			// 动画 = 单张牌 front/back 往返翻牌（rotateY），与 Turn 运行态的多牌花旋完全两套语言：
+			// 动画 = 单张牌 front/back 两态交替翻牌（rotateY 只用于短暂的"翻面动作"）：
 			//   正面 ::before = 当前 activity 花色（var(--tf-suit)，运行全程不换花色、无 tf-cycle）；
 			//   背面 ::after  = 统一 DeepSeek 牌背（var(--tf-back)）；
 			//   两面 backface-visibility:hidden，各自只在 0°/±90° 三档之间摆动、绝不累计旋转
-			//   （无 180/270/360/540——那会让整张牌沿同一方向转圈，就是风车感）：
-			//     0–20%   正面停留（front 0°；back -90° 在牌侧待命）
-			//     20–35%  正面翻出（front 0°→+90°）→ 35% 到了牌侧（正/背在此换面）
-			//     35–50%  背面翻入（back -90°→0°）→ 50–65% 背面停留
-			//     65–80%  背面沿原路反向翻出（back 0°→-90°）→ 80% 回到牌侧换面
-			//     80–95%  正面沿原路反向翻回（front +90°→0°）→ 95–100% 正面停留
-			//   后半个周期是前半个周期的时间反演（同一张牌的两个面在 ±90° 牌侧零宽重合）：
-			//   每个面的角速度先 + 后 -，"翻过去 → 原路翻回来"的往返摆动，而不是单向风车旋转；
+			//   （无 180/270/360/540——那会让整张牌沿同一方向转圈，就是风车/原地旋转感）：
+			//     0–30%   正面停留（front 0°；back -90° 在牌侧待命）
+			//     30–36%  正面快速翻到牌侧（front 0°→+90°，仅 6%≈0.17s）→ 36% 牌侧换面
+			//     36–42%  背面快速翻入（back -90°→0°，仅 6%）→ 42–66% 背面停留
+			//     66–72%  背面沿原路反向快速翻到牌侧（back 0°→-90°）→ 72% 牌侧换面
+			//     72–78%  正面沿原路反向快速翻回（front +90°→0°）→ 78–100% 正面停留
+			//   正面平放合计 ≈52%（跨周期 78–100% + 0–30%）、背面停留 ≈24%，全程可见运动仅 24%：
+			//   两个停留状态分明、翻面短促（一次正/背互换 ≈0.34s），观感是"正面↔背面交替翻牌"，
+			//   而不是整张牌原地连续旋转；后半个周期是前半个周期的时间反演，每面角速度先 + 后 -；
 			//   换面只发生在零宽牌侧，任何一刻都不会在正对观众时突然换面。
 			// 旧版 Step 无 poker 实现（Step 皮随 Native Fold 重构引入），牌背视觉复用旧版回合
 			// 运行卡背的 DeepSeek Logo 镜像绘制（见 stepPokerBackMask）。
 			// shimmer 消失 → animation 规则不再命中 → front 回落静态 activity 牌、back 停在牌侧不可见。
 			var flipFront = '0%{transform:rotateY(0deg)}' +
-				'20%{transform:rotateY(0deg)}' +
-				'35%{transform:rotateY(90deg)}' +
-				'80%{transform:rotateY(90deg)}' +
-				'95%{transform:rotateY(0deg)}' +
+				'30%{transform:rotateY(0deg)}' +
+				'36%{transform:rotateY(90deg)}' +
+				'72%{transform:rotateY(90deg)}' +
+				'78%{transform:rotateY(0deg)}' +
 				'100%{transform:rotateY(0deg)}';
 			var flipBack = '0%{transform:rotateY(-90deg)}' +
-				'35%{transform:rotateY(-90deg)}' +
-				'50%{transform:rotateY(0deg)}' +
-				'65%{transform:rotateY(0deg)}' +
-				'80%{transform:rotateY(-90deg)}' +
+				'36%{transform:rotateY(-90deg)}' +
+				'42%{transform:rotateY(0deg)}' +
+				'66%{transform:rotateY(0deg)}' +
+				'72%{transform:rotateY(-90deg)}' +
 				'100%{transform:rotateY(-90deg)}';
 			rules.push('@keyframes tf-flip-front{' + flipFront + '}');
 			rules.push('@keyframes tf-flip-back{' + flipBack + '}');
