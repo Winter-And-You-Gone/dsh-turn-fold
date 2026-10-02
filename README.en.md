@@ -77,20 +77,21 @@ and search reveal) works untouched; the plugin only reskins it:
   source generating the CSS): thinking/questions → ♥, read/readImage/search/webSearch/
   webFetch → ♠, edit/write → ♦, commands/code → ♣, subagents/plan/tools → 🐋whale
   (DeepSeek logo); unregistered activities fall back to ♥;
-- **Running flip animation**: a running step (official title shimmer. Soft
+- **Running face rotation**: a running step (official title shimmer. Soft
   running-state dependencies — DSH 0.1.7 renders `data-text-shimmer`, DSH 0.2.0+
   renders `data-shimmer`; both are real official historical contracts and the plugin
-  supports both) becomes a **single card front ↔ back 3D flip** — front = the current
-  activity suit (never changes while running), back = the shared DeepSeek card back
-  (mirrored draw, same as the old turn running card back). This is a **2D flip, not a 3D
-  rotateY spin** (an axis rotation reads as "the icon turning in place"): the face is
-  squashed horizontally (scaleX) down to the card edge and swapped at zero width. Pacing:
-  the front rests ≈1.2s → fast squash-swap ≈0.25s → the back rests ≈0.8s → fast
-  squash-swap back ≈0.25s, 2.5s per cycle; at any instant at most one face is non-zero
-  wide (never both, no cross-fade, no suit cycling); when the
-  step settles the card freezes on that step's activity suit (edit → ♦,
-  thinking → ♥, …). Pure CSS, zero JS state; static front card under reduced motion
-  (back parked edge-on, hidden);
+  supports both) cycles through **five equal card faces** (♠ ♥ ♦ ♣ + the DeepSeek whale;
+  no front/back, no card back): a self-running SVG (SMIL, ported from the reference
+  `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html` row 3 "牌面轮换 · 正向" via
+  `scripts/sync-step-anim.mjs`) is used as the card's CSS mask, so the stroke color keeps
+  following `currentColor`. Every 0.8s two full flat cards drift slightly apart on
+  opposite diagonals and merge again (the only rotate is a ±3.1° 2D in-plane tilt), the
+  layer order is flipped mid-way with `discrete`, and four dynamic masks knock the lower
+  card's strokes out under the upper card (transparent faces still show the wallpaper);
+  five phases form a 4s loop: diamond → club → spade → heart → deepseek → (back to
+  diamond). When the step settles the shimmer disappears → automatic fallback to that
+  step's static activity suit (edit → ♦, thinking → ♥, …) — pure CSS cascade, zero JS
+  running state; static suit card under reduced motion;
 - **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
   the skin `<style>` element's `disabled` property (the plugin never writes global
   `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
@@ -304,9 +305,9 @@ git push --follow-tags
     - DSH 0.2.0+ (master, `TextShimmer.tsx`: `data-shimmer={active || undefined}`) →
       `data-shimmer="true"`.
     The plugin supports both: either one present → Running Step Poker animation
-    (`:has()` matching overlays the pure-CSS front/back 2D flip — front = the
-    current activity suit, back = the shared DeepSeek card back; scaleX squash-swap,
-    short flips and long dwells, 2.5s per cycle); both absent →
+    (`:has()` matching swaps the card mask to the five-face rotation SVG — ♠ ♥ ♦ ♣ +
+    the DeepSeek whale, one rotation every 0.8s, a 4s loop with dynamic knockout of the
+    lower card); both absent →
     static Poker fallback (that step's activity suit).
     **Used only to identify running steps for the poker flip animation**; when the
     official turn/step closes the attribute disappears, the animation rule stops

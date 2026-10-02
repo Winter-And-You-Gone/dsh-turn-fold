@@ -87,16 +87,18 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
   未登记活动回退 ♥；
-- **运行态动态翻牌**：运行中的 Step（官方标题带 shimmer。Soft running-state
+- **运行态牌面轮换**：运行中的 Step（官方标题带 shimmer。Soft running-state
   dependencies——DSH 0.1.7 输出 `data-text-shimmer`、DSH 0.2.0+ 输出 `data-shimmer`，
-  两者都是官方真实历史契约，插件同时兼容）改为**单张牌正面 ↔ 背面两态交替"二维翻面"**
-  （不用 3D rotateY——绕轴旋转/透视梯形正是要避免的观感；用水平压缩 scaleX 把牌面
-  收窄到牌侧、在零宽瞬间换面）——正面 = 当前 activity 花色（运行全程不换花色），
-  背面 = 统一 DeepSeek 牌背（镜像绘制，与旧版回合运行卡背同款）。节奏：正面停留
-  ≈1.2s → 快速收窄换面 ≈0.25s → 背面停留 ≈0.8s → 快速收窄换回 ≈0.25s，2.5s 一轮；
-  同一时刻只有一面非零宽可见（两面绝不同时显示、无淡入淡出、无花色轮播）；回合结束
-  自动定格为该 Step activity 的静态花色（edit → ♦、thinking → ♥……），全程纯 CSS、
-  零 JS 状态。系统「减少动态效果」开启时运行中直接显示静态正面（背面保持收窄不可见）；
+  两者都是官方真实历史契约，插件同时兼容）改为**五牌面轮换**（♠ ♥ ♦ ♣ + DeepSeek
+  鲸鱼，五张地位相同的牌面，没有正/背面）——自运行 SVG（SMIL，移植自参考实现
+  `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html` 第三行「牌面轮换 · 正向」，
+  见 `scripts/sync-step-anim.mjs`）作为卡牌的 CSS mask，牌线颜色仍由 `currentColor`
+  跟随主题。每 0.8s 一组：两张完整平面牌对角轻微错开再合拢（唯一的 rotate 是 ±3.1°
+  二维平面小角度），中途 discrete 在中点切换上下层，四个动态蒙版把下层牌与上层牌
+  重叠处的线条挖空（透明卡面仍透壁纸、不透下层牌）；五组相位连成 4s 完整循环：
+  diamond → club → spade → heart → deepseek →（回到 diamond）。回合结束 shimmer
+  消失 → 自动回落该 Step activity 的静态花色（edit → ♦、thinking → ♥……），
+  全程纯 CSS cascade、零 JS 运行态。系统「减少动态效果」开启时直接显示静态花色牌；
 - **软依赖**：全部选择器挂在官方 DOM 钩子上，总闸 = 皮肤 `<style>` 元素的
   `disabled` 属性（插件不写任何 `document.body` 全局状态）——DSH 改掉钩子时
   **最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。
@@ -306,9 +308,9 @@ git push --follow-tags
       `data-text-shimmer="true"`；
     - DSH 0.2.0+（master，`TextShimmer.tsx`：`data-shimmer={active || undefined}`）→
       `data-shimmer="true"`。
-    插件同时兼容两者，任一存在 → Running Step Poker 动画（`:has()` 命中即叠加
-    纯 CSS 单张牌 front/back 两态二维翻面（scaleX 收窄换面，无 3D 旋转）——正面 =
-    当前 activity 花色、背面 = 统一 DeepSeek 牌背；翻面短促、两面长停留，2.5s 一轮）；
+    插件同时兼容两者，任一存在 → Running Step Poker 动画（`:has()` 命中即把卡牌
+    mask 换成五牌面轮换 SVG——♠ ♥ ♦ ♣ + DeepSeek 五张牌面、每 0.8s 一次轮换、
+    4s 完整循环，动态蒙版挖空下层牌）；
     两者都不存在 → 静态 Poker fallback（该 Step activity 对应花色）。**仅用于运行中 Step 的
     扑克翻牌动画识别**；官方回合结束属性消失 → 动画规则不再命中 → 自动回落，
     交接零 JS。无论视觉钩子是否失效，都不影响 Step Fold / Tool / Think /

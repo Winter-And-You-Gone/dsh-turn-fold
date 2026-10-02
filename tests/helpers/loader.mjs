@@ -40,7 +40,6 @@ const TEST_EXPORTS = [
   'activitySuitOf',
   'buildStepSkinCss',
   'suitMaskImage',
-  'stepPokerBackMask',
   // 运行中秒表时钟（固定 1000ms）
   'useLiveNow',
   'subscribeTicks',

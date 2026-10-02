@@ -84,23 +84,35 @@ describe('Step Poker Skin（官方结构 + 软 DOM 依赖 + style.disabled 总�
 })
 
 describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
-  // 从皮肤 CSS 里提取真实的 running 选择器与动画声明（单一事实来源，测试不复制选择器）。
-  // 注意：nwsapi（jsdom 选择器引擎）对含 :has() 的选择器列表 matches() 会整体返回 false
-  //（单项明明命中）——真实浏览器按列表语义正确应用；因此 fixture 断言按单个选择器逐个做。
-  function runningRuleOf(skin, face) {
-    const line = skin.split('\n').find((l) => l.includes('{animation:tf-flip-' + face))
-    assert.ok(line, face + ' running 动画规则缺失')
+  // ── 从皮肤 CSS 提取真实 running 规则（单一事实来源，测试不复制选择器） ──
+  // running 规则形态（单一卡牌位 ::before；mask 换成五牌面轮换 SVG 的数据 URI）：
+  //   [data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before,
+  //   [data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{ …mask-image:url("data:image/svg+xml,…")… }
+  function runningRuleOf(skin) {
+    const line = skin
+      .split('\n')
+      .find((l) => l.includes(':has([data-shimmer="true"])') && l.includes('[data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
+    assert.ok(line, 'running 规则缺失（双契约 + 五牌面轮换 mask）')
     return line
   }
-  function runningDeclarationOf(skin, face) {
-    const line = runningRuleOf(skin, face)
+  function runningDeclarationOf(skin) {
+    const line = runningRuleOf(skin)
     return line.slice(line.indexOf('{') + 1, line.lastIndexOf('}'))
   }
-  function runningSelectorsOf(skin, face) {
-    const line = runningRuleOf(skin, face)
+  function runningSelectorsOf(skin) {
+    const line = runningRuleOf(skin)
     return line.slice(0, line.indexOf('{')).split(',')
   }
-  // matches() 不能带伪元素：running 选择器以 " [data-step-process-icon]::before|::after" 结尾，
+  // 从 running 规则取出五牌面轮换 SVG 数据 URI 并解码（还原 SVG 文本后断言内部结构）
+  function decodedAnimSvgOf(skin) {
+    const declaration = runningDeclarationOf(skin)
+    const m = declaration.match(/-webkit-mask-image:url\("(data:image\/svg\+xml,[^"]+)"\)/)
+    assert.ok(m, 'running 规则缺 -webkit-mask-image 数据 URI')
+    const svg = decodeURIComponent(m[1].slice('data:image/svg+xml,'.length))
+    assert.ok(svg.startsWith('<svg'), '数据 URI 解码后不是 SVG')
+    return svg
+  }
+  // matches() 不能带伪元素：running 选择器以 " [data-step-process-icon]::before" 结尾，
   // 去掉伪元素后缀后剩下的宿主部分（[data-step-process]:has(...)）才是可匹配的元素选择器。
   function hostSelectorOf(sel) {
     const marker = ' [data-step-process-icon]::'
@@ -127,58 +139,48 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     return { host, icon, cleanup: () => host.remove() }
   }
 
-  it('双契约 running 规则存在：0.1.7 data-text-shimmer 与 0.2.0+ data-shimmer 都在（front/back 两面）', () => {
+  it('双契约 running 规则存在：0.1.7 data-text-shimmer 与 0.2.0+ data-shimmer 都在（单一卡牌位 ::before）', () => {
     const skin = skinEl().textContent
-    for (const face of ['before', 'after']) {
-      assert.ok(
-        skin.includes('[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::' + face),
-        '0.1.7 官方契约（data-text-shimmer）的 ' + face + ' running 选择器缺失',
-      )
-      assert.ok(
-        skin.includes('[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::' + face),
-        '0.2.0+ 官方契约（data-shimmer）的 ' + face + ' running 选择器缺失',
-      )
-    }
+    assert.ok(
+      skin.includes('[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before'),
+      '0.1.7 官方契约（data-text-shimmer）的 running 选择器缺失',
+    )
+    assert.ok(
+      skin.includes('[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before'),
+      '0.2.0+ 官方契约（data-shimmer）的 running 选择器缺失',
+    )
+    // Step 侧只有一张牌：不存在第二个伪元素（无正/背面）
+    assert.ok(!skin.includes('[data-step-process-icon]::after'), 'Step 侧不得再出现第二个伪元素')
   })
 
-  it('0.1.7 DOM：data-text-shimmer="true" → front/back 翻牌生效（scaleX 二维翻面）', () => {
+  it('0.1.7 DOM：data-text-shimmer="true" → 五牌面轮换 mask 生效', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('0.1.7')
     try {
-      const frontSel = runningSelectorsOf(skin, 'front').find((s) => s.includes('[data-text-shimmer="true"]'))
-      const backSel = runningSelectorsOf(skin, 'back').find((s) => s.includes('[data-text-shimmer="true"]'))
-      assert.ok(frontSel && backSel, '0.1.7 契约选择器缺失')
-      assert.ok(host.matches(hostSelectorOf(frontSel)), '0.1.7 官方 DOM 未命中 front 选择器')
-      assert.ok(host.matches(hostSelectorOf(backSel)), '0.1.7 官方 DOM 未命中 back 选择器')
-      assert.ok(runningDeclarationOf(skin, 'front').includes('tf-flip-front'), 'front 动画缺 tf-flip-front')
-      assert.ok(runningDeclarationOf(skin, 'back').includes('tf-flip-back'), 'back 动画缺 tf-flip-back')
+      const sel = runningSelectorsOf(skin).find((s) => s.includes('[data-text-shimmer="true"]'))
+      assert.ok(sel, '0.1.7 契约选择器缺失')
+      assert.ok(host.matches(hostSelectorOf(sel)), '0.1.7 官方 DOM 未命中 running 选择器')
+      assert.ok(runningDeclarationOf(skin).includes('mask-image:url("data:image/svg+xml'), 'running 声明未换成轮换 mask')
     } finally { cleanup() }
   })
 
-  it('0.2.0+ DOM：data-shimmer="true" → front/back 翻牌生效', () => {
+  it('0.2.0+ DOM：data-shimmer="true" → 五牌面轮换 mask 生效', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('0.2.0')
     try {
-      const frontSel = runningSelectorsOf(skin, 'front').find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
-      const backSel = runningSelectorsOf(skin, 'back').find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
-      assert.ok(frontSel && backSel, '0.2.0+ 契约选择器缺失')
-      assert.ok(host.matches(hostSelectorOf(frontSel)), '0.2.0+ 官方 DOM 未命中 front 选择器')
-      assert.ok(host.matches(hostSelectorOf(backSel)), '0.2.0+ 官方 DOM 未命中 back 选择器')
-      assert.ok(runningDeclarationOf(skin, 'front').includes('tf-flip-front') && runningDeclarationOf(skin, 'back').includes('tf-flip-back'))
+      const sel = runningSelectorsOf(skin).find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
+      assert.ok(sel, '0.2.0+ 契约选择器缺失')
+      assert.ok(host.matches(hostSelectorOf(sel)), '0.2.0+ 官方 DOM 未命中 running 选择器')
     } finally { cleanup() }
   })
 
-  it('两属性都不存在 → front/back 都不命中，回落静态 activity 牌', () => {
+  it('两属性都不存在 → running 不命中，回落静态 activity 牌', () => {
     const skin = skinEl().textContent
     const { host, icon, cleanup } = stepDom(null)
     try {
-      // 无 shimmer：双契约 × 双面的选择器逐个都不命中（nwsapi 列表匹配限制，见 runningSelectorsOf 注释）
-      for (const face of ['front', 'back']) {
-        for (const sel of runningSelectorsOf(skin, face)) {
-          assert.ok(!host.matches(hostSelectorOf(sel)), '无 shimmer 时 ' + face + ' 不应命中：' + sel)
-        }
+      for (const sel of runningSelectorsOf(skin)) {
+        assert.ok(!host.matches(hostSelectorOf(sel)), '无 shimmer 时 running 不应命中：' + sel)
       }
-      // 静态牌：host 标记 activity → icon 命中静态映射（mask = var(--tf-suit)）
       host.setAttribute('data-process-activity', 'edit')
       const staticRule = skin.split('\n').find((l) => l.includes('[data-process-activity="edit"] [data-step-process-icon]'))
       assert.ok(staticRule && staticRule.includes('--tf-suit:'), '静态 activity 花色映射缺失')
@@ -186,218 +188,162 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     } finally { cleanup() }
   })
 
-  it('completed 静态花色：thinking → ♥、search → ♠、edit → ♦、commands → ♣（与 JS 映射同源，无动画）', () => {
+  it('completed 静态花色：thinking → ♥、search → ♠、edit → ♦、commands → ♣（与 JS 映射同源，无运行态 mask）', () => {
     const skin = skinEl().textContent
     for (const [activity, suit] of [['thinking', 'heart'], ['search', 'spade'], ['edit', 'diamond'], ['commands', 'club']]) {
       const rule = skin.split('\n').find((l) => l.includes('[data-process-activity="' + activity + '"] [data-step-process-icon]'))
       assert.ok(rule, activity + ' 静态规则缺失')
       assert.ok(rule.includes('--tf-suit:' + T.suitMaskImage(suit)), activity + ' 静态花色不是 ' + suit)
-      assert.ok(!rule.includes('animation:tf-flip'), activity + ' 静态规则不得携带 running 动画')
+      assert.ok(!rule.includes('phase-1'), activity + ' 静态规则不得携带轮换动画 SVG（只允许花色 mask）')
     }
   })
 
-  it('双属性同时存在 → 仍只是一套 front/back 动画（front 恰一条、back 恰一条）', () => {
+  it('双属性同时存在 → 仍只有一条 running 规则（轮换 SVG 数据 URI 只声明一次）', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('both')
     try {
-      // 两个契约选择器对同一 DOM 在各面上各自命中（nwsapi 列表匹配限制，逐个断言）
-      for (const face of ['front', 'back']) {
-        for (const sel of runningSelectorsOf(skin, face)) {
-          assert.ok(host.matches(hostSelectorOf(sel)), '双属性 DOM 未命中 ' + face + ' 选择器：' + sel)
-        }
+      for (const sel of runningSelectorsOf(skin)) {
+        assert.ok(host.matches(hostSelectorOf(sel)), '双属性 DOM 未命中 running 选择器：' + sel)
       }
-      // 每面 = 一条选择器列表规则 + 单个 animation 声明 → 浏览器每个伪元素只应用一次
-      assert.equal((skin.match(/animation:tf-flip-front/g) || []).length, 1, 'front 动画声明必须恰好一次')
-      assert.equal((skin.match(/animation:tf-flip-back/g) || []).length, 1, 'back 动画声明必须恰好一次')
+      const maskRules = skin.split('\n').filter((l) => l.includes(':has([data-shimmer="true"])') && l.includes('mask-image:url("data:image/svg+xml'))
+      assert.equal(maskRules.length, 1, 'running 轮换 mask 规则必须恰好一条')
+      assert.equal((skin.match(/phase-1/g) || []).length, 2, '轮换 SVG 只应出现一次（webkit + 标准两条 mask-image 声明）')
     } finally { cleanup() }
   })
 
-  // 解析 @keyframes 为 [{pct, scale}]；规则按行拼接（一条 @keyframes 一行），行内形如 0%{transform:scaleX(1)}
-  function keyframeStopsOf(skin, name) {
-    const line = skin.split('\n').find((l) => l.startsWith('@keyframes ' + name + '{'))
-    assert.ok(line, name + ' keyframes 规则缺失')
-    const stops = [...line.matchAll(/([\d.]+)%\{transform:scaleX\(([\d.]+)\)\}/g)]
-      .map((m) => ({ pct: Number(m[1]), scale: Number(m[2]) }))
-    assert.ok(stops.length >= 4, name + ' 关键帧数量异常：' + line)
-    return stops
-  }
-  // 键帧分段（相邻键帧），用于节奏/接力/可见性断言
-  function segmentsOf(stops) {
-    return stops.slice(1).map((s, i) => ({
-      fromPct: stops[i].pct,
-      toPct: s.pct,
-      span: s.pct - stops[i].pct,
-      fromScale: stops[i].scale,
-      delta: s.scale - stops[i].scale,
-    }))
-  }
-  // 分段线性求值：键帧序列在 pct 处的 scale（复刻 CSS 插值语义，用于可见性采样）
-  function scaleAt(stops, pct) {
-    if (pct <= stops[0].pct) return stops[0].scale
-    for (let i = 1; i < stops.length; i++) {
-      if (pct <= stops[i].pct) {
-        const a = stops[i - 1]
-        const b = stops[i]
-        return a.scale + (b.scale - a.scale) * ((pct - a.pct) / (b.pct - a.pct))
-      }
+  // ══════ 五牌面轮换契约（机械移植自参考实现 docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html 第三行） ══════
+  it('五牌面轮换 SVG：五组相位 / 每 0.8s 一次轮换 / 4s 完整循环 / 参考参数原样（±3.1°、0.55、0.867、1.888、1.35467）', () => {
+    const svg = decodedAnimSvgOf(skinEl().textContent)
+    for (let n = 1; n <= 5; n++) assert.ok(svg.includes('<g id="phase-' + n + '">'), 'phase-' + n + ' 缺失')
+    const opacities = [...svg.matchAll(/attributeName="opacity" values="([^"]+)"/g)].map((m) => m[1])
+    for (const want of ['1;0;0;0;0', '0;1;0;0;0', '0;0;1;0;0', '0;0;0;1;0', '0;0;0;0;1']) {
+      assert.ok(opacities.includes(want), '缺少相位可见窗口 values=' + want)
     }
-    return stops[stops.length - 1].scale
-  }
-
-  it('动画 = 单张牌 front/back 两态二维翻面（scaleX 压缩到牌侧换面）：无 rotateY/3D、无累计旋转、无淡入淡出', () => {
-    const skin = skinEl().textContent
-    const front = keyframeStopsOf(skin, 'tf-flip-front')
-    const back = keyframeStopsOf(skin, 'tf-flip-back')
-    const kfText = skin.slice(skin.indexOf('@keyframes tf-flip-front{'))
-    // 1) 变换词表：只允许 scaleX ∈ [0,1]；rotateY/透视/累计角（180/270/360/540）= 绕轴旋转观感来源，一律严禁
-    for (const [name, stops] of [['front', front], ['back', back]]) {
-      for (const { pct, scale } of stops) {
-        assert.ok(scale >= 0 && scale <= 1, name + ' @' + pct + '% 出现越界 scaleX(' + scale + ')（只允许 0..1）')
-      }
+    assert.equal((svg.match(/dur="4s"/g) || []).length, 5, '必须恰好 5 个 4s 相位窗口（五牌面完整循环 4s）')
+    assert.equal((svg.match(/dur="0.8s"/g) || []).length, 82, '0.8s 转场参数数量异常（72 组卡牌/蒙版变换 + 10 个半程换层）')
+    assert.equal((svg.match(/<animateTransform/g) || []).length, 72, '参考动画为 72 个 animateTransform')
+    assert.equal((svg.match(/<animate\b/g) || []).length, 15, '参考动画为 15 个 animate（5 相位窗口 + 10 半程换层）')
+    for (const token of ['type="translate"', 'type="rotate"', 'type="scale"', '1.888', '1.35467', '0.55', '0.867', '3.1']) {
+      assert.ok(svg.includes(token), '缺少参考参数 ' + token)
     }
-    assert.ok(!kfText.includes('rotateY'), 'keyframes 不得再出现 rotateY（透明梯形/绕轴旋转感来源）')
-    assert.ok(!kfText.includes('180deg') && !kfText.includes('360deg') && !kfText.includes('540deg'), 'keyframes 禁止累计旋转角')
-    assert.ok(!kfText.includes('opacity'), '不得用 opacity 淡入淡出代替翻牌')
-    assert.ok(!kfText.includes('visibility'), '不得用 visibility 硬切换代替翻牌过渡')
-    assert.ok(!skin.includes('perspective'), '二维翻面不得再引入 3D 透视（避免"原地绕轴旋转"观感）')
-    assert.ok(!skin.includes('tf-cycle'), 'tf-cycle 花色轮播已废弃，不得回归')
-    // 2) 起止值 = 静态基态（front scaleX(1) 完整可见 / back scaleX(0) 收窄不可见）：循环与静态切换均无跳变
-    assert.equal(front[0].scale, 1, 'front 起始必须 scaleX(1)')
-    assert.equal(front[front.length - 1].scale, 1, 'front 结束必须 scaleX(1)')
-    assert.equal(back[0].scale, 0, 'back 起始必须 scaleX(0)（收窄不可见）')
-    assert.equal(back[back.length - 1].scale, 0, 'back 结束必须 scaleX(0)')
-    // 3) 每面恰好一次"收窄"与一次"展开"——两个离散状态间往返，不是连续旋转
-    const fDeltas = segmentsOf(front).map((s) => s.delta).filter((d) => d !== 0)
-    const bDeltas = segmentsOf(back).map((s) => s.delta).filter((d) => d !== 0)
-    assert.deepEqual(fDeltas, [-1, 1], 'front 必须恰好一次收窄(1→0)、一次展开(0→1)')
-    assert.deepEqual(bDeltas, [1, -1], 'back 必须恰好一次展开(0→1)、一次收窄(1→0)')
-    // 4) 真翻面：动画中不改 mask（运行全程不换花色）
-    assert.ok(!kfText.includes('mask'), '动画中不得改 mask（运行中不换花色）')
-  })
-
-  it('两态节奏守卫：翻面短促（每段 ≤6% 且合计 ≤12%）、停留为主（正 ≥45% / 背 ≥25%）、两面同刻零宽接力', () => {
-    const skin = skinEl().textContent
-    const front = keyframeStopsOf(skin, 'tf-flip-front')
-    const back = keyframeStopsOf(skin, 'tf-flip-back')
-    for (const [name, stops, minDwell] of [['front', front, 45], ['back', back, 25]]) {
-      const segs = segmentsOf(stops)
-      const motion = segs.filter((s) => s.delta !== 0)
-      assert.ok(motion.length >= 2, name + ' 必须有 ≥2 个翻面段（收窄 + 展开）')
-      for (const s of motion) {
-        assert.ok(s.span <= 6, name + ' 翻面段 ' + s.fromPct + '–' + s.toPct + '% 过长（' + s.span + '% > 6%）：翻面必须短促')
-      }
-      const motionTotal = motion.reduce((a, s) => a + s.span, 0)
-      assert.ok(motionTotal <= 12, name + ' 运动占比过高（' + motionTotal + '% > 12%）：连续运动过长 = 旋转感')
-      const dwell = segs.filter((s) => s.delta === 0 && s.fromScale === 1).reduce((a, s) => a + s.span, 0)
-      assert.ok(dwell >= minDwell, name + ' 停留不足（' + dwell + '% < ' + minDwell + '%）：两个状态必须各有明显停留')
-    }
-    // 两面同刻接力：正面收窄到 0 的瞬间 = 背面开始展开；背面收窄到 0 的瞬间 = 正面开始展开
-    const fMotion = segmentsOf(front).filter((s) => s.delta !== 0)
-    const bMotion = segmentsOf(back).filter((s) => s.delta !== 0)
-    assert.equal(fMotion[0].toPct, bMotion[0].fromPct, '正面收窄到 0 时背面必须同刻开始展开（零宽换面）')
-    assert.equal(bMotion[1].toPct, fMotion[1].fromPct, '背面收窄到 0 时正面必须同刻开始展开（零宽换面）')
-  })
-
-  it('两面绝不同时可见：任一时刻最多一面非零宽，换面只发生在 scaleX=0 的瞬间', () => {
-    const skin = skinEl().textContent
-    const front = keyframeStopsOf(skin, 'tf-flip-front')
-    const back = keyframeStopsOf(skin, 'tf-flip-back')
-    let handoffSamples = 0
-    for (let pct = 0; pct <= 100; pct += 0.5) {
-      const f = scaleAt(front, pct)
-      const b = scaleAt(back, pct)
-      assert.ok(!(f > 0.001 && b > 0.001), 'pct=' + pct + ' 两面同时可见（front=' + f.toFixed(3) + ', back=' + b.toFixed(3) + '）')
-      if (f <= 0.001 && b <= 0.001) handoffSamples++
-    }
-    assert.ok(handoffSamples >= 2, '必须存在两个"两面皆收窄为零宽"的换面瞬间（当前采样到 ' + handoffSamples + ' 个）')
-  })
-
-  it('running 动画时长：两面同周期、完整周期 2.4s–3.0s', () => {
-    const skin = skinEl().textContent
-    const durationOf = (face) => {
-      const declaration = runningDeclarationOf(skin, face)
-      const m = declaration.match(/([\d.]+)s/)
-      assert.ok(m, face + ' 动画声明缺时长：' + declaration)
-      return Number(m[1])
-    }
-    const front = durationOf('front')
-    assert.equal(front, durationOf('back'), 'front/back 必须同周期')
-    assert.ok(front >= 2.4 && front <= 3.0, '完整周期应在 2.4s–3.0s（当前 ' + front + 's）')
-  })
-
-  it('背面 = 统一 DeepSeek 牌背（镜像绘制，与旧版回合运行卡背同款），正面 = 当前 activity 花色', () => {
-    const skin = skinEl().textContent
-    const backMask = T.stepPokerBackMask()
-    assert.ok(backMask && backMask.length > 100, '牌背 mask 未生成')
-    assert.ok(skin.includes('--tf-back:' + backMask), '皮肤未使用 stepPokerBackMask 作为 --tf-back')
-    assert.ok(
-      skin.includes('[data-step-process] [data-step-process-icon]::before{-webkit-mask:var(--tf-suit) center/contain no-repeat;mask:var(--tf-suit) center/contain no-repeat}'),
-      'front 必须使用静态 --tf-suit（当前 activity 花色）',
-    )
-    assert.ok(
-      skin.includes('[data-step-process] [data-step-process-icon]::after{-webkit-mask:var(--tf-back) center/contain no-repeat;mask:var(--tf-back) center/contain no-repeat;transform:scaleX(0)}'),
-      'back 必须使用 --tf-back（统一牌背）且基态 scaleX(0)（收窄不可见，与动画首尾值一致）',
-    )
-    // 牌背与任何花色正面都不同色块（镜像 whale ≠ 未镜像 whale / 四花色）
-    for (const suit of ['spade', 'heart', 'diamond', 'club', 'whale']) {
-      assert.notEqual(backMask, T.suitMaskImage(suit), '牌背不得与 ' + suit + ' 正面相同')
+    // 唯一的旋转是二维平面小角度 ±3.1°（不是 rotateY、不是任何 3D/牌侧/换面）
+    const rots = [...svg.matchAll(/type="rotate" values="([^"]+)"/g)].flatMap((m) => m[1].split(';').map(Number))
+    assert.ok(rots.length >= 20, 'rotate 关键帧数量异常：' + rots.length)
+    assert.equal(Math.max(...rots), 3.1, 'rotate 极值应为 +3.1°')
+    assert.equal(Math.min(...rots), -3.1, 'rotate 极值应为 -3.1°')
+    for (const banned of ['rotateY', 'perspective', 'scaleX', 'card-back', 'skew']) {
+      assert.ok(!svg.includes(banned), '五牌面轮换不得包含 ' + banned)
     }
   })
 
-  it('几何守卫：两面 absolute 同 inset 同尺寸同 backface，icon 布局不变', () => {
-    const skin = skinEl().textContent
-    const base = skin.split('\n').find((l) => l.includes('[data-step-process-icon]::before,[data-step-process] [data-step-process-icon]::after{content:""'))
-    assert.ok(base, '双面基座规则缺失')
-    assert.ok(base.includes('position:absolute') && base.includes('inset:0') && base.includes('margin:auto'), '两面必须 absolute + inset:0 + margin:auto')
-    assert.ok(base.includes('width:14px') && base.includes('height:20px'), '两面必须同尺寸 14×20')
-    assert.ok(base.includes('backface-visibility:hidden'), '两面必须 backface-visibility:hidden')
+  it('牌面顺序：diamond → club → spade → heart → deepseek → diamond（DeepSeek 是第五张牌，非牌背）', () => {
+    const svg = decodedAnimSvgOf(skinEl().textContent)
+    const order = ['diamond', 'club', 'spade', 'heart', 'deepseek']
+    const phases = [...svg.matchAll(/<g id="phase-(\d)">([\s\S]*?)(?=<g id="phase-|<\/svg>)/g)]
+    assert.equal(phases.length, 5, '必须解析出 5 个相位')
+    phases.forEach((m, idx) => {
+      const cards = [...m[2].matchAll(/href="#card-([a-z]+)"/g)].map((x) => x[1])
+      assert.equal(cards.length, 4, 'phase-' + m[1] + ' 应有 4 个卡牌引用（前/后半各两张）')
+      // 每个半段先画下层牌、后画上层牌 → cards[1] / cards[3] 是该半段的上层=当前牌面
+      assert.equal(cards[1], order[idx], 'phase-' + m[1] + ' 前半当前牌应为 ' + order[idx])
+      assert.equal(cards[3], order[(idx + 1) % 5], 'phase-' + m[1] + ' 后半当前牌应为 ' + order[(idx + 1) % 5])
+    })
+    // 鲸鱼是独立第五张牌面；不存在任何"牌背"语义
+    assert.ok(svg.includes('id="pip-deepseek"') && svg.includes('id="card-deepseek"'), 'DeepSeek 鲸鱼牌面缺失')
+    for (const suit of ['spade', 'heart', 'diamond', 'club', 'deepseek']) {
+      assert.ok(svg.includes('id="card-' + suit + '"'), '五牌面缺少 ' + suit)
+    }
+    assert.ok(!svg.includes('back'), '不得出现 back/牌背语义')
   })
 
-  it('running 与静态映射共存：动画 keyframes 覆盖静态 mask，静态 --tf-suit 规则不删', () => {
+  it('半程层级交换 + 动态遮挡：discrete 在 50% 换层；四个 luminance 蒙版挖空下层牌线条', () => {
+    const svg = decodedAnimSvgOf(skinEl().textContent)
+    assert.equal((svg.match(/calcMode="discrete"/g) || []).length, 15, '缺少 discrete（5 相位窗口 + 10 半程换层）')
+    assert.equal((svg.match(/values="1;0" keyTimes="0;0.5"/g) || []).length, 5, '前半段换层（1;0 @0;0.5）数量异常')
+    assert.equal((svg.match(/values="0;1" keyTimes="0;0.5"/g) || []).length, 5, '后半段换层（0;1 @0;0.5）数量异常')
+    for (const id of ['mask-plus-out', 'mask-plus-in', 'mask-minus-out', 'mask-minus-in']) {
+      assert.ok(svg.includes('id="' + id + '"'), id + ' 缺失')
+    }
+    assert.equal((svg.match(/mask-type:luminance/g) || []).length, 4, '四个动态蒙版都必须是 luminance')
+    // 相位与蒙版配对：phase-1/3/5 用 plus-*（一侧斜向），phase-2/4 用 minus-*（镜像斜向）
+    const phases = [...svg.matchAll(/<g id="phase-(\d)">([\s\S]*?)(?=<g id="phase-|<\/svg>)/g)]
+    phases.forEach((m) => {
+      const masks = [...m[2].matchAll(/mask="url\(#(mask-[a-z-]+)\)"/g)].map((x) => x[1])
+      const want = Number(m[1]) % 2 === 1 ? 'plus-' : 'minus-'
+      assert.equal(masks.length, 2, 'phase-' + m[1] + ' 应有前/后半各一个动态蒙版')
+      for (const mk of masks) assert.ok(mk.includes(want), 'phase-' + m[1] + ' 应使用 ' + want + '* 蒙版（实际 ' + mk + '）')
+    })
+    // 蒙版剪影按 poker 5:7 牌形（6.434…×8.72，连同 stroke 一起挖空）
+    assert.ok(svg.includes('class="anim-mask-rect"') && svg.includes('width="6.434285714285714"'), '蒙版剪影未按 poker 5:7 适配')
+    assert.ok(svg.includes('rx="1.44"'), '蒙版剪影圆角未按 poker 适配')
+  })
+
+  it('卡片本体 = poker 5:7（8×5.714…，rx 1.08）、透明卡面（自包含 .anim-card{fill:transparent}）', () => {
+    const svg = decodedAnimSvgOf(skinEl().textContent)
+    assert.ok(svg.includes('class="anim-base-rect"'), '卡牌 rect 缺失')
+    assert.ok(svg.includes('width="5.714285714285714"') && svg.includes('height="8"') && svg.includes('rx="1.08"'), '卡牌 rect 未按 poker 5:7 适配')
+    assert.ok(svg.includes('.anim-card{fill:transparent}'), '缺少自包含的 .anim-card{fill:transparent}（透明卡面）')
+    assert.ok(svg.includes('stroke="currentColor"'), '卡牌描边应使用 currentColor')
+  })
+
+  it('旧概念清除：无 front/back、无 rotateY/3D、无 scaleX 换面、无 tf-cycle、无第二伪元素', () => {
     const skin = skinEl().textContent
-    // 静态映射（completed 用）保持原样
+    for (const banned of ['tf-flip', 'rotateY', 'perspective', 'scaleX', 'tf-cycle', '--tf-back', 'stepPokerBackMask', '[data-step-process-icon]::after', 'backface-visibility']) {
+      assert.ok(!skin.includes(banned), '皮肤不得再包含 ' + banned)
+    }
+  })
+
+  it('几何守卫：单一伪元素 absolute + inset:0 + margin:auto；静态/运行牌本体尺寸一致（≈14×19.6）', () => {
+    const skin = skinEl().textContent
+    const base = skin.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
+    assert.ok(base, '单伪元素基座规则缺失')
+    assert.ok(base.includes('position:absolute') && base.includes('inset:0') && base.includes('margin:auto'), '伪元素必须 absolute + inset:0 + margin:auto（不参与官方布局）')
+    assert.ok(base.includes('width:28px') && base.includes('height:28px'), '伪元素盒子应为 28×28（容纳轮换位移）')
+    assert.ok(base.includes('center/14px 19.6px'), '静态牌必须按 14×19.6 渲染（与旧几何一致）')
+    const declaration = runningDeclarationOf(skin)
+    assert.ok(declaration.includes('mask-size:36px 36px'), 'running mask 尺寸应显式为 36×36（16 单位视箱 → 卡牌 ≈14.3×20）')
+  })
+
+  it('running 与静态映射共存：running 只换 mask，静态 --tf-suit 规则不删', () => {
+    const skin = skinEl().textContent
     assert.ok(skin.includes('[data-process-activity="edit"] [data-step-process-icon]'), '静态 edit 映射缺失')
     assert.ok(skin.includes('--tf-suit:'), '静态 mask 变量缺失')
     const staticCount = (skin.match(/--tf-suit:/g) || []).length
     assert.ok(staticCount >= 5, '静态映射规则数量异常：' + staticCount)
   })
 
-  it('shimmer 钩子缺失的最坏退化 = 静态牌（CSS 结构守卫，双契约属性一并退场）', () => {
+  it('shimmer 钩子缺失的最坏退化 = 静态牌（running 规则整行退场，无残留轮换 SVG）', () => {
     const skin = skinEl().textContent
-    // running 规则只追加 animation、不改静态声明——移除任一 shimmer 钩子规则后静态皮完整
     const withoutRunning = skin
       .split('\n')
-      .filter((l) => !l.includes('[data-shimmer') && !l.includes('[data-text-shimmer'))
+      .filter((l) => !l.includes('[data-shimmer') && !l.includes('data-text-shimmer'))
       .join('\n')
     assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::before'), '静态牌渲染位仍在')
-    assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::after'), '背面渲染位仍在（基态停在牌侧不可见）')
     assert.ok(withoutRunning.includes('--tf-suit:'), '静态花色映射仍在')
-    // 动画"应用"随钩子退场（@keyframes 定义留存为无引用的死代码，不产生任何动画）
-    assert.ok(!withoutRunning.includes('animation:tf-flip'), '动画应用规则随钩子一起退场')
+    assert.ok(!withoutRunning.includes('phase-1'), '轮换 SVG 随 running 规则一起退场')
   })
 
-  it('reduced-motion：front/back 动画都禁用 → 正面静态 activity 牌、背面基态隐藏', () => {
+  it('reduced-motion：不播放轮换动画——mask 换回静态 activity 花色牌', () => {
     const skin = skinEl().textContent
-    const line = skin.split('\n').find((l) => l.includes('@media (prefers-reduced-motion:reduce)') && l.includes('animation:none'))
-    assert.ok(line, 'reduced-motion 关闭 running 动画的规则缺失')
-    assert.ok(line.includes('[data-text-shimmer="true"]'), 'reduced-motion 缺 0.1.7 契约选择器')
-    assert.ok(line.includes('[data-shimmer="true"]'), 'reduced-motion 缺 0.2.0+ 契约选择器')
-    assert.ok(line.includes('[data-step-process-icon]::before'), 'reduced-motion 必须覆盖正面')
-    assert.ok(line.includes('[data-step-process-icon]::after'), 'reduced-motion 必须覆盖背面')
-    assert.ok(line.includes('animation:none'), 'reduced-motion 下两面 animation 必须为 none（不翻面、不闪烁）')
+    const line = skin.split('\n').find((l) => l.includes('@media (prefers-reduced-motion:reduce)') && l.includes('mask-image:var(--tf-suit)'))
+    assert.ok(line, 'reduced-motion 的静态回退规则缺失')
+    assert.ok(line.includes('[data-text-shimmer="true"]') && line.includes('[data-shimmer="true"]'), 'reduced-motion 必须覆盖双契约')
+    assert.ok(line.includes('[data-step-process-icon]::before'), 'reduced-motion 必须覆盖卡牌位')
+    const declaration = line.slice(line.indexOf('{') + 1)
+    assert.ok(declaration.includes('-webkit-mask-image:var(--tf-suit)') && declaration.includes('mask-size:14px 19.6px'), 'reduced-motion 必须把 mask 换回静态花色牌')
   })
 
   it('running → completed：shimmer 移除后 running 规则不再命中，静态 activity 牌回归', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('0.2.0')
     try {
-      const sel = runningSelectorsOf(skin, 'front').find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
-      assert.ok(sel, '0.2.0+ front 选择器缺失')
+      const sel = runningSelectorsOf(skin).find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
+      assert.ok(sel, '0.2.0+ running 选择器缺失')
       assert.ok(host.matches(hostSelectorOf(sel)), 'running 中应命中 running 选择器')
       // 官方回合结束：shimmer 属性消失（同一渲染器继续存在）
       host.querySelector('[data-shimmer]').removeAttribute('data-shimmer')
       assert.ok(!host.matches(hostSelectorOf(sel)), 'shimmer 移除后 running 选择器不得再命中')
-      // 静态映射仍在（正面回落 activity 花色；背面基态停在牌侧不可见）
+      // 静态映射仍在（回落 activity 花色牌）
       host.setAttribute('data-process-activity', 'edit')
       const staticRule = skin.split('\n').find((l) => l.includes('[data-process-activity="edit"] [data-step-process-icon]'))
       assert.ok(staticRule && staticRule.includes('--tf-suit:'), '静态 activity 花色映射缺失')
