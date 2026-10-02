@@ -80,13 +80,16 @@ and search reveal) works untouched; the plugin only reskins it:
 - **Running flip animation**: a running step (official title shimmer. Soft
   running-state dependencies — DSH 0.1.7 renders `data-text-shimmer`, DSH 0.2.0+
   renders `data-shimmer`; both are real official historical contracts and the plugin
-  supports both) flips its poker card front ↔ back in 3D — front = the current
+  supports both) becomes a **single card front ↔ back 3D flip** — front = the current
   activity suit (never changes while running), back = the shared DeepSeek card back
-  (mirrored draw, same as the old turn running card back); rotateY over 2.4s with a
-  brief dwell on each face, swapping at the card's edge; when the
+  (mirrored draw, same as the old turn running card back). The card swings out to the
+  edge (front 0°→+90°, swapping to back -90°→0°) and swings back along the same arc
+  with reversed angular direction (back 0°→-90°, front +90°→0°); angles only ever
+  swing between 0°/±90° with no cumulative rotation (no one-way spinning), 2.8s per
+  cycle with a brief dwell on each face; when the
   step settles the card freezes on that step's activity suit (edit → ♦,
   thinking → ♥, …). Pure CSS, zero JS state; static front card under reduced motion
-  (back hidden);
+  (back parked edge-on, hidden);
 - **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
   the skin `<style>` element's `disabled` property (the plugin never writes global
   `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
@@ -301,8 +304,9 @@ git push --follow-tags
       `data-shimmer="true"`.
     The plugin supports both: either one present → Running Step Poker animation
     (`:has()` matching overlays the pure-CSS front/back 3D flip — front = the
-    current activity suit, back = the shared DeepSeek card back, rotateY over
-    2.4s); both absent → static Poker fallback (that step's activity suit).
+    current activity suit, back = the shared DeepSeek card back; swings between
+    0°/±90° and reverses back along the same arc, 2.8s per cycle); both absent →
+    static Poker fallback (that step's activity suit).
     **Used only to identify running steps for the poker flip animation**; when the
     official turn/step closes the attribute disappears, the animation rule stops
     matching, and the card settles with zero JS. Whether or not the visual hooks

@@ -89,12 +89,14 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   未登记活动回退 ♥；
 - **运行态动态翻牌**：运行中的 Step（官方标题带 shimmer。Soft running-state
   dependencies——DSH 0.1.7 输出 `data-text-shimmer`、DSH 0.2.0+ 输出 `data-shimmer`，
-  两者都是官方真实历史契约，插件同时兼容）改为**单张牌正面 ↔ 背面 3D 翻转**——
+  两者都是官方真实历史契约，插件同时兼容）改为**单张牌正面 ↔ 背面 3D 往返翻牌**——
   正面 = 当前 activity 花色（运行全程不换花色），背面 = 统一 DeepSeek 牌背
-  （镜像绘制，与旧版回合运行卡背同款）；rotateY 2.4s 一轮，牌侧换面、正/背各有
-  短暂停留；回合结束自动定格为该 Step activity 的静态花色（edit → ♦、
-  thinking → ♥……），全程纯 CSS、零 JS 状态。系统「减少动态效果」开启时运行中
-  直接显示静态正面（背面隐藏）；
+  （镜像绘制，与旧版回合运行卡背同款）。翻到背面：front 0°→+90° 到牌侧换面、
+  back -90°→0°；翻回正面：back 0°→-90°、front +90°→0°——沿原路反向翻回，
+  角度只摆动于 0°/±90° 之间、绝不累计到 180°/360°（不是同向续转的风车），
+  2.8s 一轮，正/背各有短暂停留；回合结束自动定格为该 Step activity 的静态花色
+  （edit → ♦、thinking → ♥……），全程纯 CSS、零 JS 状态。系统「减少动态效果」
+  开启时运行中直接显示静态正面（背面停在牌侧隐藏）；
 - **软依赖**：全部选择器挂在官方 DOM 钩子上，总闸 = 皮肤 `<style>` 元素的
   `disabled` 属性（插件不写任何 `document.body` 全局状态）——DSH 改掉钩子时
   **最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。
@@ -305,9 +307,9 @@ git push --follow-tags
     - DSH 0.2.0+（master，`TextShimmer.tsx`：`data-shimmer={active || undefined}`）→
       `data-shimmer="true"`。
     插件同时兼容两者，任一存在 → Running Step Poker 动画（`:has()` 命中即叠加
-    纯 CSS 单张牌 front/back 3D 翻转——正面 = 当前 activity 花色、背面 = 统一
-    DeepSeek 牌背，rotateY 2.4s 一轮）；两者都不存在 →
-    静态 Poker fallback（该 Step activity 对应花色）。**仅用于运行中 Step 的
+    纯 CSS 单张牌 front/back 3D 往返翻牌——正面 = 当前 activity 花色、背面 = 统一
+    DeepSeek 牌背；只在 0°/±90° 间摆动、回程沿原路反向翻回，2.8s 一轮）；
+    两者都不存在 → 静态 Poker fallback（该 Step activity 对应花色）。**仅用于运行中 Step 的
     扑克翻牌动画识别**；官方回合结束属性消失 → 动画规则不再命中 → 自动回落，
     交接零 JS。无论视觉钩子是否失效，都不影响 Step Fold / Tool / Think /
     Turn Fold 与页面稳定性；

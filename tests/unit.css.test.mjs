@@ -212,17 +212,65 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     } finally { cleanup() }
   })
 
-  it('动画 = 单张牌 front/back 3D 翻转：keyframes 全部为 rotateY，无 scaleX、无 mask 变化', () => {
+  // 解析 @keyframes 为 [{pct, deg}]；规则按行拼接（一条 @keyframes 一行），行内形如 0%{transform:rotateY(0deg)}
+  function keyframeStopsOf(skin, name) {
+    const line = skin.split('\n').find((l) => l.startsWith('@keyframes ' + name + '{'))
+    assert.ok(line, name + ' keyframes 规则缺失')
+    const stops = [...line.matchAll(/([\d.]+)%\{transform:rotateY\((-?\d+)deg\)\}/g)]
+      .map((m) => ({ pct: Number(m[1]), deg: Number(m[2]) }))
+    assert.ok(stops.length >= 4, name + ' 关键帧数量异常：' + line)
+    return stops
+  }
+  // 非零角度变化序列（相邻键帧差，去 0），用于方向/反转断言
+  function angleDeltasOf(stops) {
+    return stops.slice(1).map((s, i) => s.deg - stops[i].deg).filter((d) => d !== 0)
+  }
+
+  it('动画 = 单张牌 front/back 往返翻牌：只在 0°/±90° 间摆动，去程 + 回程 −（禁止累计旋转/风车）', () => {
     const skin = skinEl().textContent
-    const front = skin.slice(skin.indexOf('@keyframes tf-flip-front{'), skin.indexOf('@keyframes tf-flip-back{'))
-    assert.ok(front.includes('rotateY(0deg)'), 'front 缺 0° 帧')
-    assert.ok(front.includes('rotateY(180deg)'), 'front 缺 180° 帧')
-    assert.ok(front.includes('rotateY(360deg)'), 'front 缺 360° 帧')
-    assert.ok(!front.includes('scaleX'), 'front 不得用 scaleX 压缩替代真翻转')
-    assert.ok(!front.includes('mask'), 'front 不得在动画中改 mask（运行中不换花色）')
-    const back = skin.slice(skin.indexOf('@keyframes tf-flip-back{'))
-    assert.ok(back.includes('rotateY(180deg)') && back.includes('rotateY(360deg)') && back.includes('rotateY(540deg)'), 'back 缺 180° 偏移相位')
-    assert.ok(!back.includes('mask'), 'back 不得在动画中改 mask')
+    const front = keyframeStopsOf(skin, 'tf-flip-front')
+    const back = keyframeStopsOf(skin, 'tf-flip-back')
+    const frontText = skin.slice(skin.indexOf('@keyframes tf-flip-front{'), skin.indexOf('@keyframes tf-flip-back{'))
+    const backText = skin.slice(skin.indexOf('@keyframes tf-flip-back{'))
+    // 1) 角度词表：只允许 0°/±90°；180/270/360/540 是累计旋转（整张牌同向转圈＝风车），严禁
+    for (const [name, stops] of [['front', front], ['back', back]]) {
+      for (const { pct, deg } of stops) {
+        assert.ok(Math.abs(deg) <= 90, name + ' @' + pct + '% 出现累计旋转角 ' + deg + 'deg（只允许 0/±90）')
+      }
+    }
+    for (const banned of ['rotateY(180deg)', 'rotateY(-180deg)', 'rotateY(270deg)', 'rotateY(360deg)', 'rotateY(540deg)']) {
+      assert.ok(!frontText.includes(banned) && !backText.includes(banned), 'keyframes 禁止出现 ' + banned)
+    }
+    // 2) 起止角 = 静态基态（front 0° 面朝观众 / back -90° 停在牌侧零宽）：循环与静态切换均无跳变
+    assert.equal(front[0].deg, 0, 'front 起始必须 0°')
+    assert.equal(front[front.length - 1].deg, 0, 'front 结束必须回到 0°')
+    assert.equal(back[0].deg, -90, 'back 起始必须停在牌侧 -90°')
+    assert.equal(back[back.length - 1].deg, -90, 'back 结束必须回到牌侧 -90°')
+    // 3) 方向反转（本次核心验收）：每面恰好一次 +90 去程、一次 −90 回程（先 + 后 −）——"翻过去再沿原路翻回来"
+    assert.deepEqual(angleDeltasOf(front), [90, -90], 'front 必须 0→+90 翻出、再 +90→0 沿原路翻回（同向续转 = 风车）')
+    assert.deepEqual(angleDeltasOf(back), [90, -90], 'back 必须 -90→0 翻入、再 0→-90 沿原路翻出（同向续转 = 风车）')
+    // 4) 换面只发生在两面同时处于牌侧（±90° 零宽）的瞬间
+    for (const stop of front.filter((s) => s.deg === 90)) {
+      const mate = back.find((s) => s.pct === stop.pct)
+      assert.ok(mate, 'front 在 ' + stop.pct + '% 到达牌侧时 back 必须有同步键帧')
+      assert.equal(mate.deg, -90, 'front 处于 +90° 时 back 必须停在牌侧 -90°（零宽窗口换面）')
+    }
+    // 5) 真 3D 翻转：不得用 scaleX 压缩替代；动画中不改 mask（运行全程不换花色）
+    assert.ok(!frontText.includes('scaleX') && !backText.includes('scaleX'), '不得用 scaleX 压缩替代真翻转')
+    assert.ok(!frontText.includes('mask') && !backText.includes('mask'), '动画中不得改 mask（运行中不换花色）')
+  })
+
+  it('running 动画时长：两面同周期、落在 2.4s–3.0s 慢速区间（不高速旋转）', () => {
+    const skin = skinEl().textContent
+    const durationOf = (face) => {
+      const declaration = runningDeclarationOf(skin, face)
+      const m = declaration.match(/([\d.]+)s/)
+      assert.ok(m, face + ' 动画声明缺时长：' + declaration)
+      return Number(m[1])
+    }
+    const front = durationOf('front')
+    assert.equal(front, durationOf('back'), 'front/back 必须同周期')
+    assert.ok(front >= 2.4 && front <= 3.0, '完整周期应在 2.4s–3.0s（当前 ' + front + 's）')
   })
 
   it('背面 = 统一 DeepSeek 牌背（镜像绘制，与旧版回合运行卡背同款），正面 = 当前 activity 花色', () => {
@@ -235,8 +283,8 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       'front 必须使用静态 --tf-suit（当前 activity 花色）',
     )
     assert.ok(
-      skin.includes('[data-step-process] [data-step-process-icon]::after{-webkit-mask:var(--tf-back) center/contain no-repeat;mask:var(--tf-back) center/contain no-repeat;transform:rotateY(180deg)}'),
-      'back 必须使用 --tf-back（统一牌背）且基态背对',
+      skin.includes('[data-step-process] [data-step-process-icon]::after{-webkit-mask:var(--tf-back) center/contain no-repeat;mask:var(--tf-back) center/contain no-repeat;transform:rotateY(-90deg)}'),
+      'back 必须使用 --tf-back（统一牌背）且基态停在牌侧（-90° 零宽不可见，与动画首尾值一致）',
     )
     // 牌背与任何花色正面都不同色块（镜像 whale ≠ 未镜像 whale / 四花色）
     for (const suit of ['spade', 'heart', 'diamond', 'club', 'whale']) {
@@ -271,7 +319,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       .filter((l) => !l.includes('[data-shimmer') && !l.includes('[data-text-shimmer'))
       .join('\n')
     assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::before'), '静态牌渲染位仍在')
-    assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::after'), '背面渲染位仍在（基态背对不可见）')
+    assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::after'), '背面渲染位仍在（基态停在牌侧不可见）')
     assert.ok(withoutRunning.includes('--tf-suit:'), '静态花色映射仍在')
     // 动画"应用"随钩子退场（@keyframes 定义留存为无引用的死代码，不产生任何动画）
     assert.ok(!withoutRunning.includes('animation:tf-flip'), '动画应用规则随钩子一起退场')
@@ -298,7 +346,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       // 官方回合结束：shimmer 属性消失（同一渲染器继续存在）
       host.querySelector('[data-shimmer]').removeAttribute('data-shimmer')
       assert.ok(!host.matches(hostSelectorOf(sel)), 'shimmer 移除后 running 选择器不得再命中')
-      // 静态映射仍在（正面回落 activity 花色；背面基态背对不可见）
+      // 静态映射仍在（正面回落 activity 花色；背面基态停在牌侧不可见）
       host.setAttribute('data-process-activity', 'edit')
       const staticRule = skin.split('\n').find((l) => l.includes('[data-process-activity="edit"] [data-step-process-icon]'))
       assert.ok(staticRule && staticRule.includes('--tf-suit:'), '静态 activity 花色映射缺失')

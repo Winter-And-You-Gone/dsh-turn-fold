@@ -531,14 +531,15 @@ window.__ModuleLoader__.load({
 		function buildStepSkinCss() {
 			var rules = [];
 			// 官方活动图标内容隐藏 + 卡牌渲染位。翻牌是"同一张牌正反两面"，所以静态就把
-			// 两张完全等大的牌面渲染出来：::before = 正面（activity 花色）、::after = 背面
-			// （DeepSeek 牌背，rotateY(180deg) 背对观众 + backface-visibility:hidden →
-			// 静态不可见）。两面 absolute 同 inset 同尺寸并 margin:auto 居中，不参与官方
-			// flex 布局，几何与单面时代完全一致（icon 宽高/header 高度/标题位置不变）。
+			// 两张完全等大的牌面渲染出来：::before = 正面（activity 花色，基态 0° 面朝观众）、
+			// ::after = 背面（DeepSeek 牌背，基态 rotateY(-90deg) 停在牌侧——侧面投影零宽
+			// → 静态不可见，且与 running 关键帧的首尾值一致，动画起止无跳变）。两面
+			// absolute 同 inset 同尺寸并 margin:auto 居中，不参与官方 flex 布局，几何与
+			// 单面时代完全一致（icon 宽高/header 高度/标题位置不变）。
 			rules.push('[data-step-process] [data-step-process-icon] > *{display:none}');
 			rules.push('[data-step-process] [data-step-process-icon]::before,[data-step-process] [data-step-process-icon]::after{content:"";position:absolute;inset:0;margin:auto;width:14px;height:20px;background-color:currentColor;-webkit-backface-visibility:hidden;backface-visibility:hidden}');
 			rules.push('[data-step-process] [data-step-process-icon]::before{-webkit-mask:var(--tf-suit) center/contain no-repeat;mask:var(--tf-suit) center/contain no-repeat}');
-			rules.push('[data-step-process] [data-step-process-icon]::after{-webkit-mask:var(--tf-back) center/contain no-repeat;mask:var(--tf-back) center/contain no-repeat;transform:rotateY(180deg)}');
+			rules.push('[data-step-process] [data-step-process-icon]::after{-webkit-mask:var(--tf-back) center/contain no-repeat;mask:var(--tf-back) center/contain no-repeat;transform:rotateY(-90deg)}');
 			// 默认花色（未知/未登记活动）：heart（官方默认 activity=thinking 同款）；牌背统一
 			rules.push('[data-step-process] [data-step-process-icon]{--tf-suit:' + suitMaskImage("heart") + ';--tf-back:' + stepPokerBackMask() + ';perspective:160px}');
 			// 按官方 activity 值逐条映射（自定义属性挂在图标 span 上，::before 读取）
@@ -570,27 +571,34 @@ window.__ModuleLoader__.load({
 			//   DSH 0.2.0+（master 639ed01539）→ data-shimmer={active || undefined}
 			// running 识别 = [data-step-process]:has([<任一官方 shimmer 属性>="true"])
 			// （软依赖：钩子失效 → :has() 不命中 → 回落静态 activity 牌，官方折叠不受影响）。
-			// 动画 = 单张牌 front/back 3D 翻转（rotateY），与 Turn 运行态的多牌花旋完全两套语言：
+			// 动画 = 单张牌 front/back 往返翻牌（rotateY），与 Turn 运行态的多牌花旋完全两套语言：
 			//   正面 ::before = 当前 activity 花色（var(--tf-suit)，运行全程不换花色、无 tf-cycle）；
 			//   背面 ::after  = 统一 DeepSeek 牌背（var(--tf-back)）；
-			//   两面 backface-visibility:hidden，同周期 2.4s（正/背各含短暂停留）：
-			//     0%→360% 正面转一整圈，0°/360° 只看得见正面、180° 只看得见背面、90°/270° 牌侧；
-			//     背面 = 同款曲线偏移 180°（180°→540°），两者由 backface 互补显隐。
+			//   两面 backface-visibility:hidden，各自只在 0°/±90° 三档之间摆动、绝不累计旋转
+			//   （无 180/270/360/540——那会让整张牌沿同一方向转圈，就是风车感）：
+			//     0–20%   正面停留（front 0°；back -90° 在牌侧待命）
+			//     20–35%  正面翻出（front 0°→+90°）→ 35% 到了牌侧（正/背在此换面）
+			//     35–50%  背面翻入（back -90°→0°）→ 50–65% 背面停留
+			//     65–80%  背面沿原路反向翻出（back 0°→-90°）→ 80% 回到牌侧换面
+			//     80–95%  正面沿原路反向翻回（front +90°→0°）→ 95–100% 正面停留
+			//   后半个周期是前半个周期的时间反演（同一张牌的两个面在 ±90° 牌侧零宽重合）：
+			//   每个面的角速度先 + 后 -，"翻过去 → 原路翻回来"的往返摆动，而不是单向风车旋转；
+			//   换面只发生在零宽牌侧，任何一刻都不会在正对观众时突然换面。
 			// 旧版 Step 无 poker 实现（Step 皮随 Native Fold 重构引入），牌背视觉复用旧版回合
 			// 运行卡背的 DeepSeek Logo 镜像绘制（见 stepPokerBackMask）。
-			// shimmer 消失 → animation 规则不再命中 → 回落静态 activity 牌（背面自然背对不可见）。
+			// shimmer 消失 → animation 规则不再命中 → front 回落静态 activity 牌、back 停在牌侧不可见。
 			var flipFront = '0%{transform:rotateY(0deg)}' +
 				'20%{transform:rotateY(0deg)}' +
-				'45%{transform:rotateY(180deg)}' +
-				'70%{transform:rotateY(180deg)}' +
-				'95%{transform:rotateY(360deg)}' +
-				'100%{transform:rotateY(360deg)}';
-			var flipBack = '0%{transform:rotateY(180deg)}' +
-				'20%{transform:rotateY(180deg)}' +
-				'45%{transform:rotateY(360deg)}' +
-				'70%{transform:rotateY(360deg)}' +
-				'95%{transform:rotateY(540deg)}' +
-				'100%{transform:rotateY(540deg)}';
+				'35%{transform:rotateY(90deg)}' +
+				'80%{transform:rotateY(90deg)}' +
+				'95%{transform:rotateY(0deg)}' +
+				'100%{transform:rotateY(0deg)}';
+			var flipBack = '0%{transform:rotateY(-90deg)}' +
+				'35%{transform:rotateY(-90deg)}' +
+				'50%{transform:rotateY(0deg)}' +
+				'65%{transform:rotateY(0deg)}' +
+				'80%{transform:rotateY(-90deg)}' +
+				'100%{transform:rotateY(-90deg)}';
 			rules.push('@keyframes tf-flip-front{' + flipFront + '}');
 			rules.push('@keyframes tf-flip-back{' + flipBack + '}');
 			// 双契约 running 选择器（front/back 各一条规则）：任一官方 shimmer 属性命中即
@@ -601,9 +609,9 @@ window.__ModuleLoader__.load({
 			var runningBack = ['data-text-shimmer', 'data-shimmer'].map(function (attr) {
 				return '[data-step-process]:has([' + attr + '="true"]) [data-step-process-icon]::after';
 			}).join(",");
-			rules.push(runningFront + '{animation:tf-flip-front 2.4s linear infinite}');
-			rules.push(runningBack + '{animation:tf-flip-back 2.4s linear infinite}');
-			// reduced-motion：禁翻牌——正面回落静态 activity 牌，背面基态背对不可见；同样双契约
+			rules.push(runningFront + '{animation:tf-flip-front 2.8s linear infinite}');
+			rules.push(runningBack + '{animation:tf-flip-back 2.8s linear infinite}');
+			// reduced-motion：禁翻牌——正面回落静态 activity 牌，背面停在牌侧不可见；同样双契约
 			rules.push('@media (prefers-reduced-motion:reduce){' + runningFront + ',' + runningBack + '{animation:none}}');
 			return rules.join("\n");
 		}
