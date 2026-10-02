@@ -173,6 +173,42 @@ describe('格式化（中英文）', () => {
     assert.equal(T.turnHeaderLabel({}), '')
   })
 
+  it('槽位渲染：启用字段无值显示 —（running 0 秒起布局稳定，绝不伪造）', () => {
+    setLang('zh-CN')
+    // running 刚开局：只有 duration，其余启用槽位全部 —（与用户目标文案逐字一致）
+    assert.equal(
+      T.turnHeaderLabel(T.filterVisibleMetrics({ durationMs: 0 })),
+      '耗时0秒 · 首字— · — token · — tok/s · 缓存—',
+    )
+    // 真实值陆续到达：只替换 —，段结构不变
+    assert.equal(
+      T.turnHeaderLabel(T.filterVisibleMetrics({ durationMs: 6000, ttftMs: 800 })),
+      '耗时6秒 · 首字0.8s · — token · — tok/s · 缓存—',
+    )
+    assert.equal(
+      T.turnHeaderLabel(T.filterVisibleMetrics({ durationMs: 4000, ttftMs: 700, tokens: 8432, outputTokens: 8400, tokensPerSecond: 2100, cacheHitPercent: '91.42' })),
+      '耗时4秒 · 首字0.7s · 8,432 token · 2100tok/s · 缓存91.42%',
+    )
+    setLang('en')
+    assert.equal(
+      T.turnHeaderLabel(T.filterVisibleMetrics({ durationMs: 3000 })),
+      '3s · TTFT — · — tokens · — tok/s · Cache —',
+    )
+  })
+
+  it('槽位不伪造：computeTurnMetrics 的 result 中未产生的字段在槽位渲染下是 —，不是 0 或假数', () => {
+    setLang('zh-CN')
+    // 运行中无 usage：tokens/ttft/tps/cache 全 undefined（官方真实数据缺失）→ 槽位 —
+    const clock = { number: 1, startMs: 1000, endMs: undefined, status: 'open', reason: undefined, data: null, steps: [] }
+    const metrics = T.computeTurnMetrics(clock, [], undefined, 4000)
+    assert.equal(metrics.tokens, undefined)
+    assert.equal(metrics.ttftMs, undefined)
+    assert.equal(metrics.cacheHitPercent, undefined)
+    const label = T.turnHeaderLabel(T.filterVisibleMetrics(metrics))
+    assert.equal(label, '耗时3秒 · 首字— · — token · — tok/s · 缓存—')
+    assert.ok(!/\d[\d,]*(?:\.\d+)?\s*token/.test(label), '不得出现伪造 token 数字：' + label)
+  })
+
   it('turnStatusLabel：aborted→已停止 / error→运行失败 / max-tokens→已中断 / completed→无词', () => {
     setLang('zh-CN')
     assert.equal(T.turnStatusLabel('aborted'), '已停止')
@@ -199,15 +235,26 @@ describe('字段显隐（filterVisibleMetrics + 持久化）', () => {
     T.setFieldVisible('tokens', false)
     const filtered = T.filterVisibleMetrics({ durationMs: 1000, tokens: 500, outputTokens: 100, cacheHitPercent: '50.00' })
     assert.equal(filtered.tokens, undefined)
+    assert.ok(!('tokens' in filtered), '隐藏字段不得保留槽位（既不显示值也不显示 —）')
     assert.equal(filtered.outputTokens, 100)
     assert.equal(filtered.durationMs, 1000)
     assert.equal(filtered.cacheHitPercent, '50.00')
   })
 
-  it('全部隐藏时返回原对象（文案兜底）', () => {
+  it('隐藏字段在槽位渲染下整段消失（不因占位加回）', () => {
+    setLang('zh-CN')
+    T.setFieldVisible('ttft', false)
+    const label = T.turnHeaderLabel(T.filterVisibleMetrics({ durationMs: 8000, ttftMs: undefined, tokens: 12345, outputTokens: 11000, tokensPerSecond: 1800, cacheHitPercent: '88.12' }))
+    assert.equal(label, '耗时8秒 · 12,345 token · 1800tok/s · 缓存88.12%')
+    assert.ok(!label.includes('首字'), '关闭的 TTFT 字段不得出现（连 — 也不显示）')
+    T.setFieldVisible('ttft', true)
+  })
+
+  it('全部隐藏时返回空对象（turnHeaderLabel → 空文案 → 调用方 fallback 兜底）', () => {
     for (const key of T.FIELD_KEYS) T.setFieldVisible(key, false)
     const metrics = { durationMs: 1000 }
-    assert.equal(T.filterVisibleMetrics(metrics), metrics)
+    assert.deepEqual(T.filterVisibleMetrics(metrics), {})
+    assert.equal(T.turnHeaderLabel(T.filterVisibleMetrics(metrics)), '')
     for (const key of T.FIELD_KEYS) T.setFieldVisible(key, true)
   })
 

@@ -42,12 +42,12 @@
 
 ```
 运行中（turn/start → turn/end）：
-  [翻牌动画] 耗时0秒 · 第13轮                              ← 0 秒即出现，纯状态条
+  [翻牌动画] 耗时0秒 · 首字— · — token · — tok/s · 缓存—   ← 0 秒起字段槽位完整
   ────────────────────────────────────────
   [官方过程内容逐条加载…（官方 liveProcess 语义，始终展开）]
 
-  [翻牌动画] 耗时13秒 · 首字0.8s · 3,214 token · 247tok/s   ← 真实数据到达即更新
-  ────────────────────────────────────────
+  [翻牌动画] 耗时13秒 · 首字0.8s · 3,214 token · 247tok/s · 缓存—
+  ────────────────────────────────────────                 ← 真实值到达只替换 —
 
 回合结束（默认收起，点击展开）：
   [牌堆/扇形] 耗时22分34秒 · 首字4.9s · 370,202 token · 2.4tok/s · 缓存93.99%   第13轮
@@ -55,10 +55,12 @@
   [最终总结正文（官方渲染）]
 
 失败/中止：
-  [牌堆] 运行失败 · 48秒 · 7,812 token · 28tok/s           第13轮
-  [牌堆] 已停止 · 21秒 · 3,201 token                        第13轮
+  [牌堆] 运行失败 · 48秒 · 首字— · 7,812 token · 28tok/s · 缓存—   第13轮
 ```
 
+- **字段槽位始终存在**：设置里启用的字段从 0 秒起就占位（无真实数据显示 `—`），
+  真实数据到达只替换 `—`、完成瞬间不新增字段段；关闭的字段整段消失（连 `—` 也不显示）。
+  全部数值均为官方真实数据，**绝不伪造**（没有估算 token、假增长；无数据 = `—`）。
 - **指标来源（全部官方真实数据）**：
   - 耗时：`TurnLocation.start.time → end.time`（运行中用实时时钟补足）；
   - 首字（TTFT）：第一个请求 settle 后读官方 `finalNode.timing`
@@ -88,8 +90,12 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
 - **completed 双态图标**（Fold-state aware）：收起 = 五张花色牌堆（♠ ♥ ♦ ♣ + 鲸鱼，
   closed = 牌收好未翻看），展开 = 五张扇形（open = 牌已翻看）——与运行态五牌面同序
   同构，几何直接复用 Turn 栏的 stack5/fan5 变换表（`icons/default.json` 数据源）；
-  官方在展开/hover 时显示的 chevron 保留 hover 让位（hover/focus 仍显示官方
-  chevron，非 hover 的展开组显示扇形）；
+  重叠区用**真 knockout 遮挡**：每张下层牌一个内嵌 luminance mask，z 更高层牌以
+  实心黑牌面（fill=black occluder）把覆盖区从下层整体挖掉——牌身保持透明
+  （壁纸/图片背景透出），但下层 stroke 与 pip 绝不穿透上层牌（occluder 必须直接
+  内联图形——Chromium 不渲染 mask 内容里的 `<use>` 引用）；官方在展开/hover 时
+  显示的 chevron 保留 hover 让位（hover/focus 仍显示官方 chevron，非 hover 的
+  展开组显示扇形）；
 - 花色按官方 `data-process-activity` 值映射（`ACTIVITY_SUIT` 单一数据源生成 CSS）：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；

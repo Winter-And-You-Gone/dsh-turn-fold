@@ -241,36 +241,24 @@ window.__ModuleLoader__.load({
 			useSyncExternalStore(subscribeFieldVisibility, getFieldVisibilityVersion);
 			return settings.fields;
 		}
-		/** 按当前字段显隐设置过滤指标对象：隐藏的字段从 metrics 里剔除，
-		 *  turnHeaderLabel 据此不渲染对应文案。全部隐藏时返回原对象（fallback 文案兜底）。 */
+		/** 按字段显隐设置归一化指标槽位（turnHeaderLabel 据此渲染值或 "—"）：
+		 *  启用的字段槽位始终存在（key 显式设置——有值带值、无值 undefined），
+		 *  运行中从 0 秒起布局稳定，真实值到达只替换 "—"，完成瞬间不新增字段段；
+		 *  隐藏的字段整体剔除（既不显示值也不显示 "—"——关闭的字段绝不因占位加回）。
+		 *  全部隐藏时返回空对象（turnHeaderLabel → 空文案 → 调用方 fallback 兜底）。
+		 *  outputTokens（tok/s 计算用）非 UI 字段，有值则透传。 */
 		function filterVisibleMetrics(metrics) {
 			if (!metrics) return metrics;
+			var m = metrics;
 			var result = null;
-			if (metrics.durationMs !== undefined && settings.fields.duration) {
-				result = result || {};
-				result.durationMs = metrics.durationMs;
-			}
-			if (metrics.ttftMs !== undefined && settings.fields.ttft) {
-				result = result || {};
-				result.ttftMs = metrics.ttftMs;
-			}
-			if (metrics.tokens !== undefined && settings.fields.tokens) {
-				result = result || {};
-				result.tokens = metrics.tokens;
-			}
-			if (metrics.tokensPerSecond !== undefined && settings.fields.tokensPerSecond) {
-				result = result || {};
-				result.tokensPerSecond = metrics.tokensPerSecond;
-			}
-			if (metrics.cacheHitPercent !== undefined && settings.fields.cacheHit) {
-				result = result || {};
-				result.cacheHitPercent = metrics.cacheHitPercent;
-			}
-			if (metrics.outputTokens !== undefined) {
-				result = result || {};
-				result.outputTokens = metrics.outputTokens;
-			}
-			return result ? result : metrics;
+			if (settings.fields.duration) { result = result || {}; result.durationMs = m.durationMs; }
+			if (settings.fields.ttft) { result = result || {}; result.ttftMs = m.ttftMs; }
+			if (settings.fields.tokens) { result = result || {}; result.tokens = m.tokens; }
+			if (settings.fields.tokensPerSecond) { result = result || {}; result.tokensPerSecond = m.tokensPerSecond; }
+			if (settings.fields.cacheHit) { result = result || {}; result.cacheHitPercent = m.cacheHitPercent; }
+			if (!result) return {};
+			if (m.outputTokens !== undefined) result.outputTokens = m.outputTokens;
+			return result;
 		}
 
 		// -- Turn 栏前导图标风格（poker / native） --
@@ -521,7 +509,10 @@ window.__ModuleLoader__.load({
 		 *  牌面 = 五张固定花色（diamond→club→spade→heart→deepseek，与运行态轮换同序，
 		 *  鲸鱼缺数据时回退 club）。牌身透明（透壁纸），下层牌被上层压住的线条用静态
 		 *  SVG <mask> 挖掉——mask 挂在无变换的外层 g（用户系 = 视箱全局系），变换放
-		 *  内层 g，cut 才能与真实牌逐帧同系对齐（Turn 动态方案的同款分层）。 */
+		 *  内层 g，cut 才能与真实牌同系对齐（Turn 动态方案的同款分层）。
+		 *  ⚠ occluder 必须直接内联牌形（rect + pip 原文），不能用 <use> 引用 defs——
+		 *  Chromium 不渲染 <mask> 内容里的 <use>（本地实验证实：occluder 丢失 =
+		 *  下层 stroke/pip 穿透上层）；参考实现的动态蒙版同样是直接 fill="black" 图形。 */
 		function stepCompletedGroupMask(fan) {
 			var tfs = pokerTransforms(5, !!fan);
 			var cfgB = iconConfig && iconConfig.pokerSVGBase;
@@ -534,6 +525,14 @@ window.__ModuleLoader__.load({
 			var rx = (iconConfig && iconConfig.pokerR) || 1.08;
 			var suits = ["diamond", "club", "spade", "heart", POKER_SPIN_DEEPSEEK ? "deepseek" : "club"];
 			var defs = "", cards = "";
+			// mask occluder：实心黑牌面（fill #000 + 黑描边 = 牌外缘整块）。luminance mask
+			// 里黑色 = 挖空——上层覆盖区内的下层 stroke 与 pip 一并消失（背景不受影响，
+			// 这正是参考实现 mask rect fill="black" 与 Turn pokerDynamicMask 的同款 knockout；
+			// 若 occluder 用透明牌形（fill=none 只挖线），下层 pip 会从上层"牌面"里穿透）。
+			var occluder = '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h +
+				'" rx="' + rx + '" fill="#000" stroke="#000" stroke-width="0.7"/>';
+			// 牌形（rect 轮廓 + 花色 pip，无 id）：仅真实牌渲染用（defs 组）；牌身透明透壁纸
+			var glyphBodies = ["", "", "", "", "", ""];
 			for (var ci = 1; ci <= 5; ci++) {
 				var suit = suits[ci - 1];
 				var markup = suit === "deepseek"
@@ -542,18 +541,25 @@ window.__ModuleLoader__.load({
 				if (!markup) continue;
 				// 鲸鱼墨迹几乎填满 24 盒，按卡牌几何独立取缩放（buildPokerSVGBase 同款公式）
 				var usedScale = suit === "deepseek" ? (Math.min(w * 0.72, h * 0.58) / 24) : pipScale;
-				defs += '<g id="scc-g' + ci + '"><rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h +
+				glyphBodies[ci] = '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h +
 					'" rx="' + rx + '" fill="none" stroke="#000" stroke-width="0.7"/>' +
-					'<g transform="translate(8 8) scale(' + usedScale + ') translate(-12 -12)">' + markup + '</g></g>';
-				// 挖掉绘制序在本牌之后（z 更高）的牌：cut 与真实牌同为全局系变换
+					'<g transform="translate(8 8) scale(' + usedScale + ') translate(-12 -12)">' + markup + '</g>';
+				defs += '<g id="scc-g' + ci + '">' + glyphBodies[ci] + '</g>';
+			}
+			for (var ci2 = 1; ci2 <= 5; ci2++) {
+				if (!glyphBodies[ci2]) continue;
+				// 挖掉绘制序在本牌之后（z 更高）的牌：cut 与真实牌同为全局系变换、同一几何。
+				// z-order（绘制序 1→5，5 最上）：stack = card1(1.6,1.6) 右下 → card5(-1.6,-1.6) 左上顶牌；
+				// fan = card1(-32° 最左) → card5(+32° 最右、视觉最前）。owner 只被 z 更高者挖。
 				var cuts = "";
-				for (var zj = ci + 1; zj <= 5; zj++) {
-					cuts += '<use href="#scc-g' + zj + '" transform="' + tfs[zj] + '"/>';
+				for (var zj = ci2 + 1; zj <= 5; zj++) {
+					if (!glyphBodies[zj]) continue;
+					cuts += '<g transform="' + tfs[zj] + '">' + occluder + '</g>';
 				}
-				defs += '<mask id="scc-m' + ci + '" x="0" y="0" width="16" height="16" maskUnits="userSpaceOnUse" ' +
+				defs += '<mask id="scc-m' + ci2 + '" x="0" y="0" width="16" height="16" maskUnits="userSpaceOnUse" ' +
 					'maskContentUnits="userSpaceOnUse" style="mask-type:luminance"><rect x="0" y="0" width="16" height="16" fill="#fff"/>' +
 					cuts + '</mask>';
-				cards += '<g mask="url(#scc-m' + ci + ')"><g transform="' + tfs[ci] + '"><use href="#scc-g' + ci + '"/></g></g>';
+				cards += '<g mask="url(#scc-m' + ci2 + ')"><g transform="' + tfs[ci2] + '"><use href="#scc-g' + ci2 + '"/></g></g>';
 			}
 			var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><defs>' + defs + '</defs>' + cards + '</svg>';
 			return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
@@ -997,26 +1003,38 @@ window.__ModuleLoader__.load({
 		/** Turn 栏指标文案（目标样式，见 README）：
 		 *  zh: "耗时1分32秒 · 首字1.2s · 12,345 token · 34 tok/s · 缓存80%"
 		 *  en: "1m 32s · TTFT 1.2s · 12,345 tokens · 34 tok/s · Cache 80%"
-		 *  无任何可用数据返回空串（调用方回退官方风格文案）。 */
+		 *  槽位模式（filterVisibleMetrics 归一化的启用字段）：key 存在但无值 →
+		 *  显示 "—"（有真实数据才显示真实值，绝不伪造；运行中 0 秒起布局稳定）。
+		 *  非槽位入参（无该 key）不渲染该段。无任何字段返回空串（fallback 兜底）。 */
 		function turnHeaderLabel(metrics) {
 			if (!metrics) return "";
 			var zh = currentLocale() === "zh";
 			var parts = [];
 			if (metrics.durationMs !== undefined) {
 				parts.push(zh ? "耗时" + formatTurnDuration(metrics.durationMs) : formatTurnDuration(metrics.durationMs));
+			} else if ("durationMs" in metrics) {
+				parts.push(zh ? "耗时—" : "—");
 			}
 			if (metrics.ttftMs !== undefined) {
 				var ttftSec = (metrics.ttftMs / 1000).toFixed(1);
 				parts.push(zh ? "首字" + ttftSec + "s" : "TTFT " + ttftSec + "s");
+			} else if ("ttftMs" in metrics) {
+				parts.push(zh ? "首字—" : "TTFT —");
 			}
 			if (metrics.tokens !== undefined) {
 				parts.push(zh ? formatTokenCount(metrics.tokens) + " token" : formatTokenCount(metrics.tokens) + " tokens");
+			} else if ("tokens" in metrics) {
+				parts.push(zh ? "— token" : "— tokens");
 			}
 			if (metrics.tokensPerSecond !== undefined) {
 				parts.push(formatTokPerSec(metrics.tokensPerSecond) + (zh ? "tok/s" : " tok/s"));
+			} else if ("tokensPerSecond" in metrics) {
+				parts.push("— tok/s");
 			}
 			if (metrics.cacheHitPercent !== undefined) {
 				parts.push(zh ? "缓存" + metrics.cacheHitPercent + "%" : "Cache " + metrics.cacheHitPercent + "%");
+			} else if ("cacheHitPercent" in metrics) {
+				parts.push(zh ? "缓存—" : "Cache —");
 			}
 			return parts.join(" · ");
 		}

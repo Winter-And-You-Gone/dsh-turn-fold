@@ -187,6 +187,62 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
     assert.ok(stackTfs.every((t) => t.startsWith('translate(') && !t.includes('rotate')), '牌堆 = 纯平移错位')
     assert.ok(fanTfs.filter((t) => t.includes('rotate')).length === 4, '扇形 = 中间牌不转、两侧 ±16°/±32°（fan5）')
   })
+
+  // ══════ Knockout 遮挡契约（真 knockout，不是背景填充） ══════
+  // Chromium 不渲染 <mask> 内容里的 <use> 引用（本地实验证实：occluder 丢失 =
+  // 下层 stroke/pip 穿透上层）——occluder 必须直接内联牌形（rect + pip 原文）。
+  function decodeGroupMask(uri) {
+    const m = String(uri).match(/url\("data:image\/svg\+xml,([^"]+)"\)/)
+    assert.ok(m, 'stepCompletedGroupMask 返回值应为 data-URI mask')
+    return decodeURIComponent(m[1])
+  }
+  it('遮挡 occluder 直接内联（mask 内容不得出现 <use>——Chromium 不渲染会导致下层穿透）', () => {
+    for (const fan of [false, true]) {
+      const svg = decodeGroupMask(T.stepCompletedGroupMask(fan))
+      assert.ok(svg.startsWith('<svg'), '解码后应为 SVG 文本')
+      const masks = [...svg.matchAll(/<mask id="scc-m(\d)"[\s\S]*?<\/mask>/g)]
+      assert.equal(masks.length, 5, '五张 owner 各一个 mask（fan=' + fan + '）')
+      for (const m of masks) {
+        assert.ok(!m[0].includes('<use'), 'mask scc-m' + m[1] + ' 内容不得使用 <use>（occluder 丢失 = 下层穿透）')
+        const owner = Number(m[1])
+        // 外层 occluder 变换（tfs 形态：translate / translate+rotate，无 scale）；
+        // 含 scale( 的是 occluder 内部的 pip 缩放组，不计入
+        const cuts = [...m[0].matchAll(/<g transform="([^"]+)">/g)].filter((x) => !x[1].includes('scale('))
+        assert.equal(cuts.length, 5 - owner, 'owner ' + owner + ' 只被 z 更高的 ' + (5 - owner) + ' 张牌挖（不得全量互挖）')
+      }
+    }
+  })
+
+  it('遮挡覆盖下层 stroke 与 pip：occluder 是实心黑牌面（fill=#000 覆盖整个牌外缘，真 knockout）', () => {
+    const svg = decodeGroupMask(T.stepCompletedGroupMask(true))
+    const mask1 = svg.match(/<mask id="scc-m1"[\s\S]*?<\/mask>/)[0]
+    // 实心黑面挖空：上层覆盖区内的下层 stroke 与 pip 一并消失（与参考实现
+    // mask rect fill="black"、Turn pokerDynamicMask fill="black" 同款）
+    const occluders = [...mask1.matchAll(/<g transform="([^"]+)"><rect x="5\.14\d*" y="4" width="5\.71\d*" height="8" rx="1\.08" fill="#000" stroke="#000" stroke-width="0\.7"\/><\/g>/g)]
+    assert.equal(occluders.length, 4, 'owner-1 的 4 个 occluder 都是实心黑牌面')
+    for (const o of occluders) assert.ok(!o[1].includes('scale('), 'occluder 外层变换必须是 tfs（不含 pip 缩放）')
+    // 真实牌（defs glyph）仍是透明牌身 + 花色 pip（牌可见性不受 occluder 影响）
+    assert.ok(svg.includes('<g id="scc-g1">'), '真实牌 glyph 组存在')
+    const defsPart = svg.slice(svg.indexOf('<g id="scc-g1">'), svg.indexOf('<mask '))
+    assert.equal([...defsPart.matchAll(/<g transform="translate\(8 8\) scale\(/g)].length, 5, '五张真实牌都带花色 pip')
+  })
+
+  it('背景保持透明：真实牌 rect fill=none（透壁纸）；mask occluder 实心黑（机制本体，非可见填充）', () => {
+    for (const fan of [false, true]) {
+      const svg = decodeGroupMask(T.stepCompletedGroupMask(fan))
+      const maskStart = svg.indexOf('<mask ')
+      // 真实牌形（defs 组）：rect 一律 fill="none"（牌身透明，壁纸/透明背景正确）
+      for (const rect of svg.slice(0, maskStart).matchAll(/<rect [^/]*\/>/g)) {
+        assert.ok(rect[0].includes('fill="none"'), '真实牌 rect 必须 fill=none（透明卡面）：' + rect[0].slice(0, 80))
+      }
+      // mask 内容：occluder rect 一律 fill="#000"（luminance 挖空机制，不可见）
+      for (const rect of svg.slice(maskStart).matchAll(/<rect x="5\.14[^/]*\/>/g)) {
+        assert.ok(rect[0].includes('fill="#000"'), 'occluder rect 必须实心黑（真 knockout）：' + rect[0].slice(0, 80))
+      }
+      assert.ok(!svg.includes('fill="#fff"/><g transform="translate(8'), '不得用白色卡面填充模拟遮挡')
+      assert.ok(!/class="[^"]*card-bg/.test(svg), '不得引入卡面背景填充类')
+    }
+  })
 })
 
 describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {

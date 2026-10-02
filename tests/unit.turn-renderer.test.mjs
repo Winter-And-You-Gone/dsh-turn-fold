@@ -146,7 +146,9 @@ describe('Turn renderer：closed 相（折叠语义全部来自官方 turnProces
   it('官方最小切片订阅：turnDataSource 发布新 step 数据 → 栏指标随之更新', () => {
     const p = subscriptionProps({ status: 'closed', startTime: T0, endTime: T1, reason: 'completed', steps: [] })
     renderView({ node: p.node, turnProcess: p.turnProcess, useTurnData: p.useTurnData, useChat: p.useChat })
-    assert.ok(!barLabel().includes('token'), '无 step 数据时无 token 指标：' + barLabel())
+    // 无 step 数据：token 槽位显示 "—"（不伪造数字），其余启用槽位照常
+    assert.ok(barLabel().includes('— token'), '无 step 数据时 token 显示 —（槽位不消失）：' + barLabel())
+    assert.ok(!/\d[\d,.]*\s*token/.test(barLabel()), '无 step 数据时不得出现伪造 token 数字：' + barLabel())
     // 官方增量发布：成员数据到达
     act(() => {
       p.steps.set([usageStepData])
