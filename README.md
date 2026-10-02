@@ -82,11 +82,18 @@
 官方步骤分组栏（含官方标题语义「正在读取…」「已读取 3 个文件」「正在思考…」、官方
 shimmer、官方分页与搜索显隐）原样工作，插件只换装：
 
-- **牌身透明**的扑克卡（CSS mask，当前色描边 + 花色点，壁纸可透出）替换官方活动图标；
+- **牌身透明**的扑克卡（CSS mask，当前色描边 + 花色点，壁纸可透出）替换官方活动图标，
+  牌尺寸与 Turn 栏扑克图标**同一设计语言**：伪元素 24×24（= Turn 容器）、16 视箱 mask
+  按 24px 渲染（1.5px/单位），牌外缘 ≈9.62×13.05px、描边 1.05px，两侧逐像素一致；
+- **completed 双态图标**（Fold-state aware）：收起 = 五张花色牌堆（♠ ♥ ♦ ♣ + 鲸鱼，
+  closed = 牌收好未翻看），展开 = 五张扇形（open = 牌已翻看）——与运行态五牌面同序
+  同构，几何直接复用 Turn 栏的 stack5/fan5 变换表（`icons/default.json` 数据源）；
+  官方在展开/hover 时显示的 chevron 保留 hover 让位（hover/focus 仍显示官方
+  chevron，非 hover 的展开组显示扇形）；
 - 花色按官方 `data-process-activity` 值映射（`ACTIVITY_SUIT` 单一数据源生成 CSS）：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
-  未登记活动回退 ♥；
+  未登记活动回退 ♥（该映射现在主要作为 reduced-motion 的运行态回落）；
 - **运行态牌面轮换**：运行中的 Step（官方标题带 shimmer。Soft running-state
   dependencies——DSH 0.1.7 输出 `data-text-shimmer`、DSH 0.2.0+ 输出 `data-shimmer`，
   两者都是官方真实历史契约，插件同时兼容）改为**五牌面轮换**（♠ ♥ ♦ ♣ + DeepSeek
@@ -97,8 +104,8 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   二维平面小角度），中途 discrete 在中点切换上下层，四个动态蒙版把下层牌与上层牌
   重叠处的线条挖空（透明卡面仍透壁纸、不透下层牌）；五组相位连成 4s 完整循环：
   diamond → club → spade → heart → deepseek →（回到 diamond）。回合结束 shimmer
-  消失 → 自动回落该 Step activity 的静态花色（edit → ♦、thinking → ♥……），
-  全程纯 CSS cascade、零 JS 运行态。系统「减少动态效果」开启时直接显示静态花色牌；
+  消失 → 自动回落 completed 双态（收起牌堆 / 展开扇形），全程纯 CSS cascade、
+  零 JS 运行态。系统「减少动态效果」开启时运行态直接显示静态花色牌；
 - **软依赖**：全部选择器挂在官方 DOM 钩子上，总闸 = 皮肤 `<style>` 元素的
   `disabled` 属性（插件不写任何 `document.body` 全局状态）——DSH 改掉钩子时
   **最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。

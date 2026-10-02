@@ -72,11 +72,21 @@ The official step group bar (official title semantics, official shimmer, officia
 and search reveal) works untouched; the plugin only reskins it:
 
 - A **transparent-bodied** poker card (CSS mask, current-color stroke + suit pip,
-  wallpaper shows through) replaces the official activity icon;
+  wallpaper shows through) replaces the official activity icon. The card shares **one
+  design language** with the Turn-bar poker icon: a 24×24 pseudo-element (= the Turn
+  container), a 16-unit mask rendered at 24px (1.5px/unit) → card outer edge ≈9.62×13.05px
+  with a 1.05px stroke, pixel-identical on both sides;
+- **Completed two-state icon** (fold-state aware): collapsed = a five-suit stack
+  (♠ ♥ ♦ ♣ + whale, closed = cards put away), expanded = a five-card fan (open = cards
+  looked through) — same suit order and structure as the running rotation, with the
+  geometry taken straight from the Turn bar's stack5/fan5 transform tables
+  (`icons/default.json` data source). The official chevron keeps its hover affordance:
+  hover/focus still shows the official chevron, non-hover expanded groups show the fan;
 - The suit maps from the official `data-process-activity` value (single `ACTIVITY_SUIT`
   source generating the CSS): thinking/questions → ♥, read/readImage/search/webSearch/
   webFetch → ♠, edit/write → ♦, commands/code → ♣, subagents/plan/tools → 🐋whale
-  (DeepSeek logo); unregistered activities fall back to ♥;
+  (DeepSeek logo); unregistered activities fall back to ♥ (this mapping now mainly
+  serves as the reduced-motion running fallback);
 - **Running face rotation**: a running step (official title shimmer. Soft
   running-state dependencies — DSH 0.1.7 renders `data-text-shimmer`, DSH 0.2.0+
   renders `data-shimmer`; both are real official historical contracts and the plugin
@@ -89,8 +99,8 @@ and search reveal) works untouched; the plugin only reskins it:
   layer order is flipped mid-way with `discrete`, and four dynamic masks knock the lower
   card's strokes out under the upper card (transparent faces still show the wallpaper);
   five phases form a 4s loop: diamond → club → spade → heart → deepseek → (back to
-  diamond). When the step settles the shimmer disappears → automatic fallback to that
-  step's static activity suit (edit → ♦, thinking → ♥, …) — pure CSS cascade, zero JS
+  diamond). When the step settles the shimmer disappears → automatic fallback to the
+  completed two-state icon (collapsed stack / expanded fan) — pure CSS cascade, zero JS
   running state; static suit card under reduced motion;
 - **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
   the skin `<style>` element's `disabled` property (the plugin never writes global
@@ -308,7 +318,7 @@ git push --follow-tags
     (`:has()` matching swaps the card mask to the five-face rotation SVG — ♠ ♥ ♦ ♣ +
     the DeepSeek whale, one rotation every 0.8s, a 4s loop with dynamic knockout of the
     lower card); both absent →
-    static Poker fallback (that step's activity suit).
+    completed two-state fallback (collapsed five-suit stack / expanded fan).
     **Used only to identify running steps for the poker flip animation**; when the
     official turn/step closes the attribute disappears, the animation rule stops
     matching, and the card settles with zero JS. Whether or not the visual hooks

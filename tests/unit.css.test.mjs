@@ -83,15 +83,122 @@ describe('Step Poker Skin（官方结构 + 软 DOM 依赖 + style.disabled 总�
   })
 })
 
+describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇形）', () => {
+  // fan 规则形态（三件套共用同一宿主选择器）：
+  //   [data-step-process] [data-process-activity][aria-expanded="true"]:not(:is(:hover,:focus-visible))
+  //     :not(:has([data-shimmer="true"])):not(:has([data-text-shimmer="true"])) [data-step-process-icon]::before{…fan mask…}
+  function fanLineOf(skin) {
+    const line = skin
+      .split('\n')
+      .find((l) => l.includes('[aria-expanded="true"]') && l.includes('[data-step-process-icon]::before{-webkit-mask-image:url("data:image/svg+xml'))
+    assert.ok(line, 'completed 展开态 fan 规则缺失')
+    return line
+  }
+  function fanHostSelectorOf(skin) {
+    const line = fanLineOf(skin)
+    const sel = line.slice(0, line.indexOf('{'))
+    const marker = ' [data-step-process-icon]::'
+    const at = sel.lastIndexOf(marker)
+    assert.ok(at > 0, 'fan 选择器缺少卡牌渲染位后缀')
+    return sel.slice(0, at)
+  }
+  function decodedMaskSvg(rule) {
+    // 基础规则用 mask 简写（-webkit-mask:url(...) center/24px…）、fan 用 mask-image，两种都接
+    const m = rule.match(/-webkit-mask(?:-image)?:url\("(data:image\/svg\+xml,[^"]+)"\)/)
+    assert.ok(m, '规则缺 mask 数据 URI')
+    return decodeURIComponent(m[1].slice('data:image/svg+xml,'.length))
+  }
+  // 官方 completed header 最小 DOM：button[data-process-activity] 内 icon + chevron
+  function completedDom(opts) {
+    const host = document.createElement('div')
+    host.setAttribute('data-step-process', '')
+    const button = document.createElement('button')
+    button.setAttribute('data-process-activity', 'edit')
+    if (opts && opts.expanded) button.setAttribute('aria-expanded', 'true')
+    const icon = document.createElement('span')
+    icon.setAttribute('data-step-process-icon', '')
+    const chevron = document.createElement('span')
+    chevron.setAttribute('data-step-process-chevron', '')
+    button.appendChild(icon)
+    button.appendChild(chevron)
+    if (opts && opts.shimmer) {
+      const title = document.createElement('span')
+      title.setAttribute('data-shimmer', 'true')
+      button.appendChild(title)
+    }
+    host.appendChild(button)
+    document.body.appendChild(host)
+    return { host, button, icon, chevron, cleanup: () => host.remove() }
+  }
+
+  it('基础规则 = 收起牌堆 stack：24px 盒 + 24px mask（五张 hFive 牌，Turn 渲染比例）', () => {
+    const skin = skinEl().textContent
+    const base = skin.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
+    assert.ok(base, '基础规则缺失')
+    assert.ok(base.includes('width:24px') && base.includes('height:24px'), '伪元素应为 24×24（Turn 容器同款）')
+    assert.ok(base.includes('center/24px 24px no-repeat'), '基础 mask 尺寸应为 24px（16 视箱 @1.5px/单位）')
+    const svg = decodedMaskSvg(base)
+    assert.equal((svg.match(/id="scc-g\d"/g) || []).length, 5, '牌堆应为五张牌 glyph')
+    assert.equal((svg.match(/<mask /g) || []).length, 5, '每张牌一个内嵌遮挡 mask')
+    assert.ok(!svg.includes('rotate('), '牌堆变换只允许平移（stack5 无旋转）')
+  })
+
+  it('展开态规则三件套：fan mask + activityIcon opacity 翻回 + chevron 压下；hover/focus 让位官方', () => {
+    const skin = skinEl().textContent
+    const fanLine = fanLineOf(skin)
+    assert.ok(fanLine.includes(':not(:hover):not(:focus-visible)'), 'fan 规则必须在 hover/focus 时让位官方 chevron')
+    assert.ok(fanLine.includes(':not(:has([data-shimmer="true"]))') && fanLine.includes(':not(:has([data-text-shimmer="true"]))'), 'fan 规则必须排除 running（shimmer 双契约）')
+    const lines = skin.split('\n')
+    const hostSel = fanHostSelectorOf(skin)
+    const opacityLine = lines.find((l) => l.startsWith(hostSel) && l.includes(' [data-step-process-icon]{opacity:1}'))
+    assert.ok(opacityLine, '展开态必须把官方 activityIcon 淡出策略翻回 opacity:1')
+    const chevronLine = lines.find((l) => l.startsWith(hostSel) && l.includes(' [data-step-process-chevron]{opacity:0}'))
+    assert.ok(chevronLine, '展开态非 hover 必须压下官方 chevron')
+    const fanSvg = decodedMaskSvg(fanLine)
+    assert.ok(fanSvg.includes('rotate('), '扇形变换必须包含 rotate（fan5）')
+    assert.equal((fanSvg.match(/id="scc-g\d"/g) || []).length, 5, '扇形应为五张牌 glyph')
+  })
+
+  it('DOM 命中：收起不命中 fan（走基础牌堆）；展开命中；展开 + shimmer 不命中（轮换优先）', () => {
+    const skin = skinEl().textContent
+    const sel = fanHostSelectorOf(skin)
+    const closed = completedDom({})
+    try {
+      assert.ok(!closed.button.matches(sel), '收起组不得命中 fan 规则（牌堆）')
+    } finally { closed.cleanup() }
+    const open = completedDom({ expanded: true })
+    try {
+      assert.ok(open.button.matches(sel), '展开组应命中 fan 规则')
+    } finally { open.cleanup() }
+    const openRunning = completedDom({ expanded: true, shimmer: true })
+    try {
+      assert.ok(!openRunning.button.matches(sel), 'shimmer 在场的展开组不得命中 fan 规则（running 轮换优先）')
+    } finally { openRunning.cleanup() }
+  })
+
+  it('stack 与 fan 是两份不同的五牌资产（closed/open 语义各自独立）', () => {
+    const stackSvg = decodedMaskSvg(skinEl().textContent.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""')))
+    const fanSvg = decodedMaskSvg(fanLineOf(skinEl().textContent))
+    assert.notEqual(stackSvg, fanSvg, '牌堆与扇形不得是同一份 SVG')
+    const stackTfs = [...stackSvg.matchAll(/<g mask="url\(#scc-m\d\)"><g transform="([^"]+)">/g)].map((m) => m[1])
+    const fanTfs = [...fanSvg.matchAll(/<g mask="url\(#scc-m\d\)"><g transform="([^"]+)">/g)].map((m) => m[1])
+    assert.equal(stackTfs.length, 5, '牌堆 5 层')
+    assert.equal(fanTfs.length, 5, '扇形 5 层')
+    assert.ok(stackTfs.every((t) => t.startsWith('translate(') && !t.includes('rotate')), '牌堆 = 纯平移错位')
+    assert.ok(fanTfs.filter((t) => t.includes('rotate')).length === 4, '扇形 = 中间牌不转、两侧 ±16°/±32°（fan5）')
+  })
+})
+
 describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
   // ── 从皮肤 CSS 提取真实 running 规则（单一事实来源，测试不复制选择器） ──
   // running 规则形态（单一卡牌位 ::before；mask 换成五牌面轮换 SVG 的数据 URI）：
   //   [data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before,
   //   [data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{ …mask-image:url("data:image/svg+xml,…")… }
   function runningRuleOf(skin) {
+    // :has(...) 后必须紧跟卡牌位（排除 fan 规则里的 :not(:has(...)) 排除子句）
     const line = skin
       .split('\n')
-      .find((l) => l.includes(':has([data-shimmer="true"])') && l.includes('[data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
+      .find((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
     assert.ok(line, 'running 规则缺失（双契约 + 五牌面轮换 mask）')
     return line
   }
@@ -188,7 +295,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     } finally { cleanup() }
   })
 
-  it('completed 静态花色：thinking → ♥、search → ♠、edit → ♦、commands → ♣（与 JS 映射同源，无运行态 mask）', () => {
+  it('activity 花色映射（--tf-suit）保留为回落实：thinking → ♥、search → ♠、edit → ♦、commands → ♣（与 JS 映射同源，无运行态 mask）', () => {
     const skin = skinEl().textContent
     for (const [activity, suit] of [['thinking', 'heart'], ['search', 'spade'], ['edit', 'diamond'], ['commands', 'club']]) {
       const rule = skin.split('\n').find((l) => l.includes('[data-process-activity="' + activity + '"] [data-step-process-icon]'))
@@ -205,7 +312,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       for (const sel of runningSelectorsOf(skin)) {
         assert.ok(host.matches(hostSelectorOf(sel)), '双属性 DOM 未命中 running 选择器：' + sel)
       }
-      const maskRules = skin.split('\n').filter((l) => l.includes(':has([data-shimmer="true"])') && l.includes('mask-image:url("data:image/svg+xml'))
+      const maskRules = skin.split('\n').filter((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before') && l.includes('mask-image:url("data:image/svg+xml'))
       assert.equal(maskRules.length, 1, 'running 轮换 mask 规则必须恰好一条')
       assert.equal((skin.match(/phase-1/g) || []).length, 2, '轮换 SVG 只应出现一次（webkit + 标准两条 mask-image 声明）')
     } finally { cleanup() }
@@ -293,15 +400,16 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     }
   })
 
-  it('几何守卫：单一伪元素 absolute + inset:0 + margin:auto；静态/运行牌本体尺寸一致（≈14×19.6）', () => {
+  it('几何守卫：单一伪元素 absolute + inset:0 + margin:auto；全牌型统一 Turn 栏渲染比例（24px 盒 / 24px mask ≈ 牌外缘 9.62×13.05）', () => {
     const skin = skinEl().textContent
     const base = skin.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
     assert.ok(base, '单伪元素基座规则缺失')
     assert.ok(base.includes('position:absolute') && base.includes('inset:0') && base.includes('margin:auto'), '伪元素必须 absolute + inset:0 + margin:auto（不参与官方布局）')
-    assert.ok(base.includes('width:28px') && base.includes('height:28px'), '伪元素盒子应为 28×28（容纳轮换位移）')
-    assert.ok(base.includes('center/14px 19.6px'), '静态牌必须按 14×19.6 渲染（与旧几何一致）')
+    // 伪元素 24×24 = Turn 栏 .ccg-poker-icon 容器同款；基础 mask = completed 收起牌堆
+    assert.ok(base.includes('width:24px') && base.includes('height:24px'), '伪元素盒子应为 24×24（与 Turn 容器一致，右缘不触标题起点）')
+    assert.ok(base.includes('center/24px 24px no-repeat'), '基础 mask 应为牌堆（16 视箱 @24px = Turn 渲染比例 1.5px/单位）')
     const declaration = runningDeclarationOf(skin)
-    assert.ok(declaration.includes('mask-size:36px 36px'), 'running mask 尺寸应显式为 36×36（16 单位视箱 → 卡牌 ≈14.3×20）')
+    assert.ok(declaration.includes('mask-size:24px 24px'), 'running mask 尺寸应显式为 24×24（16 单位视箱 → 牌外缘 ≈9.62×13.05，与 Turn 牌逐像素一致）')
   })
 
   it('running 与静态映射共存：running 只换 mask，静态 --tf-suit 规则不删', () => {
@@ -312,7 +420,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(staticCount >= 5, '静态映射规则数量异常：' + staticCount)
   })
 
-  it('shimmer 钩子缺失的最坏退化 = 静态牌（running 规则整行退场，无残留轮换 SVG）', () => {
+  it('shimmer 钩子缺失的最坏退化 = completed 双态（running 规则整行退场，无残留轮换 SVG）', () => {
     const skin = skinEl().textContent
     const withoutRunning = skin
       .split('\n')
@@ -323,14 +431,14 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(!withoutRunning.includes('phase-1'), '轮换 SVG 随 running 规则一起退场')
   })
 
-  it('reduced-motion：不播放轮换动画——mask 换回静态 activity 花色牌', () => {
+  it('reduced-motion：不播放轮换动画——mask 换回静态 activity 花色牌（与统一牌规格同外缘）', () => {
     const skin = skinEl().textContent
     const line = skin.split('\n').find((l) => l.includes('@media (prefers-reduced-motion:reduce)') && l.includes('mask-image:var(--tf-suit)'))
     assert.ok(line, 'reduced-motion 的静态回退规则缺失')
     assert.ok(line.includes('[data-text-shimmer="true"]') && line.includes('[data-shimmer="true"]'), 'reduced-motion 必须覆盖双契约')
     assert.ok(line.includes('[data-step-process-icon]::before'), 'reduced-motion 必须覆盖卡牌位')
     const declaration = line.slice(line.indexOf('{') + 1)
-    assert.ok(declaration.includes('-webkit-mask-image:var(--tf-suit)') && declaration.includes('mask-size:14px 19.6px'), 'reduced-motion 必须把 mask 换回静态花色牌')
+    assert.ok(declaration.includes('-webkit-mask-image:var(--tf-suit)') && declaration.includes('mask-size:9.62px 13.05px'), 'reduced-motion 必须把 mask 换回静态花色牌（外缘与 Turn 牌一致）')
   })
 
   it('running → completed：shimmer 移除后 running 规则不再命中，静态 activity 牌回归', () => {

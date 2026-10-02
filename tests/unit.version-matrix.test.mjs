@@ -235,9 +235,10 @@ describe('版本矩阵 D：metrics 数据形状（turn-tail 聚合 + assistant-s
 
 // ══════════════ E. Step DOM：0.1.7 平铺 shimmer / 0.2.0 嵌套 TextShimmer ══════════════
 describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）', () => {
-  // 从皮肤 CSS 提取 running 选择器（与 unit.css.test 同款解析；轮换 mask 规则）
+  // 从皮肤 CSS 提取 running 选择器（与 unit.css.test 同款解析；轮换 mask 规则）。
+  // :has(...) 后必须紧跟卡牌位——排除 completed fan 规则里的 :not(:has(...)) 排除子句。
   function runningHostSelectors(skin) {
-    const line = skin.split('\n').find((l) => l.includes(':has([data-shimmer="true"])') && l.includes('[data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
+    const line = skin.split('\n').find((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
     assert.ok(line, 'running 轮换 mask 规则缺失')
     return line.slice(0, line.indexOf('{')).split(',')
       .map((sel) => sel.slice(0, sel.lastIndexOf(' [data-step-process-icon]::before')))
