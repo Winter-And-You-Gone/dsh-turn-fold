@@ -271,7 +271,7 @@ describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）',
   beforeEach(() => { T.settings.stepSkin = 'poker'; T.applyStepSkin() })
 
   for (const shape of ['0.1.7-rc.2', '0.2.0-rc.2']) {
-    it(shape + ' 官方 DOM → running 选择器命中（任一 shimmer 契约）', () => {
+    it(shape + ' 官方 DOM → running 选择器命中（任一 shimmer 契约），front/back 双面均在', () => {
       const skin = document.querySelector('style[data-plugin-css="' + T.SKIN_CSS_ID + '"]').textContent
       const selectors = runningHostSelectors(skin)
       const { host, cleanup } = buildStep(shape)
@@ -284,6 +284,9 @@ describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）',
           assert.equal(hit.length, 1, '0.2.0 只有 data-shimmer 选择器命中')
           assert.ok(hit[0].includes('[data-shimmer="true"]') && !hit[0].includes('data-text-shimmer'))
         }
+        // front/back 两面各自都有本版本契约的动画规则
+        assert.ok(skin.includes('{animation:tf-flip-front'), 'front 动画规则缺失')
+        assert.ok(skin.includes('{animation:tf-flip-back'), 'back 动画规则缺失')
       } finally { cleanup() }
     })
   }

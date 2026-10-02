@@ -494,11 +494,12 @@ window.__ModuleLoader__.load({
 		}
 		/** 一张牌身透明的扑克牌 SVG（10×14 视箱，5:7 比例）转 CSS mask data-URI：
 		 *  rect 纯描边 + 花色点（fill 黑 = alpha 不透明），中间镂空透壁纸。
-		 *  suitMarkup 是花色 path 的 SVG 标记（POKER_PIPS[suit].path / 鲸鱼 path）。 */
-		function suitCardMask(suitMarkup) {
+		 *  suitMarkup 是花色 path 的 SVG 标记（POKER_PIPS[suit].path / 鲸鱼 path）。
+		 *  mirror=true 时花色点左右镜像（运行态牌背的旧版绘制处理，见 stepPokerBackMask）。 */
+		function suitCardMask(suitMarkup, mirror) {
 			var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 14">' +
 				'<rect x="0.5" y="0.5" width="9" height="13" rx="1.1" fill="none" stroke="#000" stroke-width="1"/>' +
-				'<g transform="translate(5 7) scale(0.2) translate(-12 -12)">' + suitMarkup + '</g></svg>';
+				'<g transform="translate(5 7) scale(0.2)' + (mirror ? ' scale(-1 1)' : '') + ' translate(-12 -12)">' + suitMarkup + '</g></svg>';
 			return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
 		}
 		/** 花色 → mask 图像。鲸鱼（whale）用 DeepSeek Logo path（缺数据时回退 club）。 */
@@ -514,17 +515,32 @@ window.__ModuleLoader__.load({
 			}
 			return markup ? suitCardMask(String(markup)) : "";
 		}
+		/** Step 运行翻牌的统一牌背 mask：牌描边 + DeepSeek 鲸鱼 Logo（镜像绘制——
+		 *  与旧版回合运行卡背同一处理 scale(-1 1)）。数据源与 whale 花色同源
+		 *  （POKER_SPIN_DEEPSEEK，缺数据时回退 club path），自定义 icon pack 同样生效。 */
+		function stepPokerBackMask() {
+			var markup = POKER_SPIN_DEEPSEEK
+				? String(POKER_SPIN_DEEPSEEK).replace(/id="[^"]*"/, "")
+				: (POKER_PIPS.club && POKER_PIPS.club.path);
+			return markup ? suitCardMask(String(markup), true) : "";
+		}
 		/** 生成 Step Poker Skin 的 CSS（依赖注入的图标数据，只能在 ICON_DEFAULTS 就绪后调用）。
 		 *  规则不带任何 body 前缀——总闸是皮肤样式元素自身的 disabled（applyStepSkin）。
 		 *  结构：官方图标内容隐藏 → ::before 卡牌；每个官方 activity 一条 --tf-suit
 		 *  变量规则（未登记活动回退默认 heart）。 */
 		function buildStepSkinCss() {
 			var rules = [];
-			// 官方活动图标内容隐藏 + 卡牌渲染位（::before 用当前色 mask 出牌形）
+			// 官方活动图标内容隐藏 + 卡牌渲染位。翻牌是"同一张牌正反两面"，所以静态就把
+			// 两张完全等大的牌面渲染出来：::before = 正面（activity 花色）、::after = 背面
+			// （DeepSeek 牌背，rotateY(180deg) 背对观众 + backface-visibility:hidden →
+			// 静态不可见）。两面 absolute 同 inset 同尺寸并 margin:auto 居中，不参与官方
+			// flex 布局，几何与单面时代完全一致（icon 宽高/header 高度/标题位置不变）。
 			rules.push('[data-step-process] [data-step-process-icon] > *{display:none}');
-			rules.push('[data-step-process] [data-step-process-icon]::before{content:"";display:block;width:14px;height:20px;background-color:currentColor;-webkit-mask:var(--tf-suit) center/contain no-repeat;mask:var(--tf-suit) center/contain no-repeat}');
-			// 默认花色（未知/未登记活动）：heart（官方默认 activity=thinking 同款）
-			rules.push('[data-step-process] [data-step-process-icon]{--tf-suit:' + suitMaskImage("heart") + '}');
+			rules.push('[data-step-process] [data-step-process-icon]::before,[data-step-process] [data-step-process-icon]::after{content:"";position:absolute;inset:0;margin:auto;width:14px;height:20px;background-color:currentColor;-webkit-backface-visibility:hidden;backface-visibility:hidden}');
+			rules.push('[data-step-process] [data-step-process-icon]::before{-webkit-mask:var(--tf-suit) center/contain no-repeat;mask:var(--tf-suit) center/contain no-repeat}');
+			rules.push('[data-step-process] [data-step-process-icon]::after{-webkit-mask:var(--tf-back) center/contain no-repeat;mask:var(--tf-back) center/contain no-repeat;transform:rotateY(180deg)}');
+			// 默认花色（未知/未登记活动）：heart（官方默认 activity=thinking 同款）；牌背统一
+			rules.push('[data-step-process] [data-step-process-icon]{--tf-suit:' + suitMaskImage("heart") + ';--tf-back:' + stepPokerBackMask() + ';perspective:160px}');
 			// 按官方 activity 值逐条映射（自定义属性挂在图标 span 上，::before 读取）
 			var seen = {};
 			for (var activity in ACTIVITY_SUIT) {
@@ -545,7 +561,7 @@ window.__ModuleLoader__.load({
 				}
 				rules.push(selectors.join(",") + '{--tf-suit:' + image + '}');
 			}
-			// ── 运行态动态翻牌（运行状态完全由官方 DOM 识别，插件零 JS 判定） ──
+			// ── 运行态 front/back 翻牌（运行状态完全由官方 DOM 识别，插件零 JS 判定） ──
 			// 官方 ProcessGroupHeader 的标题用 <TextShimmer active={!data.closed}>：
 			// active 时最终 DOM 出现 shimmer 属性，回合结束属性消失。属性名随官方
 			// 版本演进，两个都是官方真实历史契约，插件双契约同时兼容（缺一即只在
@@ -554,37 +570,41 @@ window.__ModuleLoader__.load({
 			//   DSH 0.2.0+（master 639ed01539）→ data-shimmer={active || undefined}
 			// running 识别 = [data-step-process]:has([<任一官方 shimmer 属性>="true"])
 			// （软依赖：钩子失效 → :has() 不命中 → 回落静态 activity 牌，官方折叠不受影响）。
-			// 动画 = 双动画叠加，跳变点严格对齐：
-			//   tf-flip（transform scaleX，0.8s 循环）：0.4s/1.2s/… 时牌侧对观众（scaleX(0)）；
-			//   tf-cycle（mask-image discrete，4s 循环 5 花色）：mask-image 不可平滑插值，
-			//   discrete 规则 = 两关键帧中点跳变 → 跳变点 10%/30%/50%/70%/90% = 0.4/1.2/2.0/2.8/3.6s，
-			//   恰好全部落在 scaleX(0) 的"侧面"时刻——牌在侧面瞬间换花色，展开即新牌。
-			// shimmer 消失 → animation 规则不再命中 → mask 回落 var(--tf-suit) 静态 activity 牌。
-			var flip = [
-				'0%{transform:scaleX(1)}',
-				'50%{transform:scaleX(0)}',
-				'100%{transform:scaleX(1)}'
-			].join("");
-			var suitTail = ' center/contain no-repeat';
-			var cycle = [
-				'0%{-webkit-mask:' + suitMaskImage("spade") + suitTail + ';mask:' + suitMaskImage("spade") + suitTail + '}',
-				'20%{-webkit-mask:' + suitMaskImage("heart") + suitTail + ';mask:' + suitMaskImage("heart") + suitTail + '}',
-				'40%{-webkit-mask:' + suitMaskImage("diamond") + suitTail + ';mask:' + suitMaskImage("diamond") + suitTail + '}',
-				'60%{-webkit-mask:' + suitMaskImage("club") + suitTail + ';mask:' + suitMaskImage("club") + suitTail + '}'
-			];
-			var whale = POKER_SPIN_DEEPSEEK ? suitMaskImage("whale") : suitMaskImage("heart");
-			cycle.push('80%{-webkit-mask:' + whale + suitTail + ';mask:' + whale + suitTail + '}');
-			cycle.push('100%{-webkit-mask:' + suitMaskImage("spade") + suitTail + ';mask:' + suitMaskImage("spade") + suitTail + '}');
-			rules.push('@keyframes tf-flip{' + flip + '}');
-			rules.push('@keyframes tf-cycle{' + cycle.join("") + '}');
-			// 双契约 running 选择器：同一规则声明一次动画，任一官方 shimmer 属性命中即
-			// 翻牌；两属性同时出现（官方不会如此输出）也只应用一次声明，不产生两套视觉。
-			var runningSelectors = ['data-text-shimmer', 'data-shimmer'].map(function (attr) {
+			// 动画 = 单张牌 front/back 3D 翻转（rotateY），与 Turn 运行态的多牌花旋完全两套语言：
+			//   正面 ::before = 当前 activity 花色（var(--tf-suit)，运行全程不换花色、无 tf-cycle）；
+			//   背面 ::after  = 统一 DeepSeek 牌背（var(--tf-back)）；
+			//   两面 backface-visibility:hidden，同周期 2.4s（正/背各含短暂停留）：
+			//     0%→360% 正面转一整圈，0°/360° 只看得见正面、180° 只看得见背面、90°/270° 牌侧；
+			//     背面 = 同款曲线偏移 180°（180°→540°），两者由 backface 互补显隐。
+			// 旧版 Step 无 poker 实现（Step 皮随 Native Fold 重构引入），牌背视觉复用旧版回合
+			// 运行卡背的 DeepSeek Logo 镜像绘制（见 stepPokerBackMask）。
+			// shimmer 消失 → animation 规则不再命中 → 回落静态 activity 牌（背面自然背对不可见）。
+			var flipFront = '0%{transform:rotateY(0deg)}' +
+				'20%{transform:rotateY(0deg)}' +
+				'45%{transform:rotateY(180deg)}' +
+				'70%{transform:rotateY(180deg)}' +
+				'95%{transform:rotateY(360deg)}' +
+				'100%{transform:rotateY(360deg)}';
+			var flipBack = '0%{transform:rotateY(180deg)}' +
+				'20%{transform:rotateY(180deg)}' +
+				'45%{transform:rotateY(360deg)}' +
+				'70%{transform:rotateY(360deg)}' +
+				'95%{transform:rotateY(540deg)}' +
+				'100%{transform:rotateY(540deg)}';
+			rules.push('@keyframes tf-flip-front{' + flipFront + '}');
+			rules.push('@keyframes tf-flip-back{' + flipBack + '}');
+			// 双契约 running 选择器（front/back 各一条规则）：任一官方 shimmer 属性命中即
+			// 翻牌；两属性同时出现（官方不会如此输出）也仍是同一套 front/back 动画。
+			var runningFront = ['data-text-shimmer', 'data-shimmer'].map(function (attr) {
 				return '[data-step-process]:has([' + attr + '="true"]) [data-step-process-icon]::before';
 			}).join(",");
-			rules.push(runningSelectors + '{animation:tf-flip .8s linear infinite,tf-cycle 4s linear infinite}');
-			// reduced-motion：禁翻牌，running 直接显示静态 activity 牌（mask 回落 var(--tf-suit)）；同样双契约
-			rules.push('@media (prefers-reduced-motion:reduce){' + runningSelectors + '{animation:none}}');
+			var runningBack = ['data-text-shimmer', 'data-shimmer'].map(function (attr) {
+				return '[data-step-process]:has([' + attr + '="true"]) [data-step-process-icon]::after';
+			}).join(",");
+			rules.push(runningFront + '{animation:tf-flip-front 2.4s linear infinite}');
+			rules.push(runningBack + '{animation:tf-flip-back 2.4s linear infinite}');
+			// reduced-motion：禁翻牌——正面回落静态 activity 牌，背面基态背对不可见；同样双契约
+			rules.push('@media (prefers-reduced-motion:reduce){' + runningFront + ',' + runningBack + '{animation:none}}');
 			return rules.join("\n");
 		}
 

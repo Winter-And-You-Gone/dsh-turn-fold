@@ -87,22 +87,23 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
   // 从皮肤 CSS 里提取真实的 running 选择器与动画声明（单一事实来源，测试不复制选择器）。
   // 注意：nwsapi（jsdom 选择器引擎）对含 :has() 的选择器列表 matches() 会整体返回 false
   //（单项明明命中）——真实浏览器按列表语义正确应用；因此 fixture 断言按单个选择器逐个做。
-  function runningRuleOf(skin) {
-    const line = skin.split('\n').find((l) => l.includes('{animation:tf-flip'))
-    assert.ok(line, 'running 动画规则缺失')
+  function runningRuleOf(skin, face) {
+    const line = skin.split('\n').find((l) => l.includes('{animation:tf-flip-' + face))
+    assert.ok(line, face + ' running 动画规则缺失')
     return line
   }
-  function runningDeclarationOf(skin) {
-    const line = runningRuleOf(skin)
+  function runningDeclarationOf(skin, face) {
+    const line = runningRuleOf(skin, face)
     return line.slice(line.indexOf('{') + 1, line.lastIndexOf('}'))
   }
-  function runningSelectorsOf(skin) {
-    return runningRuleOf(skin).slice(0, runningRuleOf(skin).indexOf('{')).split(',')
+  function runningSelectorsOf(skin, face) {
+    const line = runningRuleOf(skin, face)
+    return line.slice(0, line.indexOf('{')).split(',')
   }
-  // matches() 不能带伪元素：running 选择器以 " [data-step-process-icon]::before" 结尾，
-  // 去掉伪元素后剩下的宿主部分（[data-step-process]:has(...)）才是可匹配的元素选择器。
+  // matches() 不能带伪元素：running 选择器以 " [data-step-process-icon]::before|::after" 结尾，
+  // 去掉伪元素后缀后剩下的宿主部分（[data-step-process]:has(...)）才是可匹配的元素选择器。
   function hostSelectorOf(sel) {
-    const marker = ' [data-step-process-icon]::before'
+    const marker = ' [data-step-process-icon]::'
     const at = sel.lastIndexOf(marker)
     assert.ok(at > 0, 'running 选择器缺少卡牌渲染位后缀：' + sel)
     return sel.slice(0, at)
@@ -126,50 +127,56 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     return { host, icon, cleanup: () => host.remove() }
   }
 
-  it('双契约 running 规则存在：0.1.7 data-text-shimmer 与 0.2.0+ data-shimmer 都在', () => {
+  it('双契约 running 规则存在：0.1.7 data-text-shimmer 与 0.2.0+ data-shimmer 都在（front/back 两面）', () => {
     const skin = skinEl().textContent
-    assert.ok(
-      skin.includes('[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before'),
-      '0.1.7 官方契约（data-text-shimmer）的 running 选择器缺失',
-    )
-    assert.ok(
-      skin.includes('[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before'),
-      '0.2.0+ 官方契约（data-shimmer）的 running 选择器缺失',
-    )
+    for (const face of ['before', 'after']) {
+      assert.ok(
+        skin.includes('[data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::' + face),
+        '0.1.7 官方契约（data-text-shimmer）的 ' + face + ' running 选择器缺失',
+      )
+      assert.ok(
+        skin.includes('[data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::' + face),
+        '0.2.0+ 官方契约（data-shimmer）的 ' + face + ' running 选择器缺失',
+      )
+    }
   })
 
-  it('0.1.7 DOM：data-text-shimmer="true" → running 命中，animationName 含 tf-flip + tf-cycle', () => {
+  it('0.1.7 DOM：data-text-shimmer="true" → front/back 翻牌生效（rotateY 3D 翻转）', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('0.1.7')
     try {
-      const sel = runningSelectorsOf(skin).find((s) => s.includes('[data-text-shimmer="true"]'))
-      assert.ok(sel, '0.1.7 契约选择器缺失')
-      assert.ok(host.matches(hostSelectorOf(sel)), '0.1.7 官方 DOM 未命中 running 选择器')
-      const decl = runningDeclarationOf(skin)
-      assert.ok(decl.includes('tf-flip'), '动画声明缺 tf-flip')
-      assert.ok(decl.includes('tf-cycle'), '动画声明缺 tf-cycle')
+      const frontSel = runningSelectorsOf(skin, 'front').find((s) => s.includes('[data-text-shimmer="true"]'))
+      const backSel = runningSelectorsOf(skin, 'back').find((s) => s.includes('[data-text-shimmer="true"]'))
+      assert.ok(frontSel && backSel, '0.1.7 契约选择器缺失')
+      assert.ok(host.matches(hostSelectorOf(frontSel)), '0.1.7 官方 DOM 未命中 front 选择器')
+      assert.ok(host.matches(hostSelectorOf(backSel)), '0.1.7 官方 DOM 未命中 back 选择器')
+      assert.ok(runningDeclarationOf(skin, 'front').includes('tf-flip-front'), 'front 动画缺 tf-flip-front')
+      assert.ok(runningDeclarationOf(skin, 'back').includes('tf-flip-back'), 'back 动画缺 tf-flip-back')
     } finally { cleanup() }
   })
 
-  it('0.2.0+ DOM：data-shimmer="true" → running 命中，同一动画声明', () => {
+  it('0.2.0+ DOM：data-shimmer="true" → front/back 翻牌生效', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('0.2.0')
     try {
-      const sel = runningSelectorsOf(skin).find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
-      assert.ok(sel, '0.2.0+ 契约选择器缺失')
-      assert.ok(host.matches(hostSelectorOf(sel)), '0.2.0+ 官方 DOM 未命中 running 选择器')
-      const decl = runningDeclarationOf(skin)
-      assert.ok(decl.includes('tf-flip') && decl.includes('tf-cycle'))
+      const frontSel = runningSelectorsOf(skin, 'front').find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
+      const backSel = runningSelectorsOf(skin, 'back').find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
+      assert.ok(frontSel && backSel, '0.2.0+ 契约选择器缺失')
+      assert.ok(host.matches(hostSelectorOf(frontSel)), '0.2.0+ 官方 DOM 未命中 front 选择器')
+      assert.ok(host.matches(hostSelectorOf(backSel)), '0.2.0+ 官方 DOM 未命中 back 选择器')
+      assert.ok(runningDeclarationOf(skin, 'front').includes('tf-flip-front') && runningDeclarationOf(skin, 'back').includes('tf-flip-back'))
     } finally { cleanup() }
   })
 
-  it('两属性都不存在 → running 不命中，回落静态 activity 牌', () => {
+  it('两属性都不存在 → front/back 都不命中，回落静态 activity 牌', () => {
     const skin = skinEl().textContent
     const { host, icon, cleanup } = stepDom(null)
     try {
-      // 无 shimmer：双契约选择器逐个都不命中（nwsapi 列表匹配限制，见 runningSelectorsOf 注释）
-      for (const sel of runningSelectorsOf(skin)) {
-        assert.ok(!host.matches(hostSelectorOf(sel)), '无 shimmer 时 running 不应命中：' + sel)
+      // 无 shimmer：双契约 × 双面的选择器逐个都不命中（nwsapi 列表匹配限制，见 runningSelectorsOf 注释）
+      for (const face of ['front', 'back']) {
+        for (const sel of runningSelectorsOf(skin, face)) {
+          assert.ok(!host.matches(hostSelectorOf(sel)), '无 shimmer 时 ' + face + ' 不应命中：' + sel)
+        }
       }
       // 静态牌：host 标记 activity → icon 命中静态映射（mask = var(--tf-suit)）
       host.setAttribute('data-process-activity', 'edit')
@@ -179,9 +186,9 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     } finally { cleanup() }
   })
 
-  it('completed 静态花色：thinking → ♥、edit → ♦、commands → ♣（与 JS 映射同源，无动画）', () => {
+  it('completed 静态花色：thinking → ♥、search → ♠、edit → ♦、commands → ♣（与 JS 映射同源，无动画）', () => {
     const skin = skinEl().textContent
-    for (const [activity, suit] of [['thinking', 'heart'], ['edit', 'diamond'], ['commands', 'club']]) {
+    for (const [activity, suit] of [['thinking', 'heart'], ['search', 'spade'], ['edit', 'diamond'], ['commands', 'club']]) {
       const rule = skin.split('\n').find((l) => l.includes('[data-process-activity="' + activity + '"] [data-step-process-icon]'))
       assert.ok(rule, activity + ' 静态规则缺失')
       assert.ok(rule.includes('--tf-suit:' + T.suitMaskImage(suit)), activity + ' 静态花色不是 ' + suit)
@@ -189,41 +196,62 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     }
   })
 
-  it('双属性同时存在 → 正常命中，且只应用一次动画声明（不产生两套视觉）', () => {
+  it('双属性同时存在 → 仍只是一套 front/back 动画（front 恰一条、back 恰一条）', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('both')
     try {
-      // 两个契约选择器对同一 DOM 各自命中（nwsapi 列表匹配限制，逐个断言）
-      for (const sel of runningSelectorsOf(skin)) {
-        assert.ok(host.matches(hostSelectorOf(sel)), '双属性 DOM 未命中选择器：' + sel)
+      // 两个契约选择器对同一 DOM 在各面上各自命中（nwsapi 列表匹配限制，逐个断言）
+      for (const face of ['front', 'back']) {
+        for (const sel of runningSelectorsOf(skin, face)) {
+          assert.ok(host.matches(hostSelectorOf(sel)), '双属性 DOM 未命中 ' + face + ' 选择器：' + sel)
+        }
       }
-      // 两个选择器挂同一规则（选择器列表 + 单个 animation 声明）→ 浏览器只应用一次
-      assert.equal((skin.match(/animation:tf-flip/g) || []).length, 1, 'running 动画声明必须恰好一次')
+      // 每面 = 一条选择器列表规则 + 单个 animation 声明 → 浏览器每个伪元素只应用一次
+      assert.equal((skin.match(/animation:tf-flip-front/g) || []).length, 1, 'front 动画声明必须恰好一次')
+      assert.equal((skin.match(/animation:tf-flip-back/g) || []).length, 1, 'back 动画声明必须恰好一次')
     } finally { cleanup() }
   })
 
-  it('动画 = 翻牌（scaleX）+ 花色轮换（mask discrete）双 keyframes', () => {
+  it('动画 = 单张牌 front/back 3D 翻转：keyframes 全部为 rotateY，无 scaleX、无 mask 变化', () => {
     const skin = skinEl().textContent
-    assert.ok(skin.includes('@keyframes tf-flip{0%{transform:scaleX(1)}50%{transform:scaleX(0)}100%{transform:scaleX(1)}}'), '翻牌 keyframes 缺失')
-    // 花色轮换：spade → heart → diamond → club → whale → spade（0/20/40/60/80/100%）
-    const cycle = skin.slice(skin.indexOf('@keyframes tf-cycle{'))
-    assert.ok(cycle.includes(T.suitMaskImage('spade')), 'cycle 含 spade')
-    assert.ok(cycle.includes(T.suitMaskImage('heart')), 'cycle 含 heart')
-    assert.ok(cycle.includes(T.suitMaskImage('diamond')), 'cycle 含 diamond')
-    assert.ok(cycle.includes(T.suitMaskImage('club')), 'cycle 含 club')
-    assert.ok(cycle.includes(T.suitMaskImage('whale')), 'cycle 含 whale')
+    const front = skin.slice(skin.indexOf('@keyframes tf-flip-front{'), skin.indexOf('@keyframes tf-flip-back{'))
+    assert.ok(front.includes('rotateY(0deg)'), 'front 缺 0° 帧')
+    assert.ok(front.includes('rotateY(180deg)'), 'front 缺 180° 帧')
+    assert.ok(front.includes('rotateY(360deg)'), 'front 缺 360° 帧')
+    assert.ok(!front.includes('scaleX'), 'front 不得用 scaleX 压缩替代真翻转')
+    assert.ok(!front.includes('mask'), 'front 不得在动画中改 mask（运行中不换花色）')
+    const back = skin.slice(skin.indexOf('@keyframes tf-flip-back{'))
+    assert.ok(back.includes('rotateY(180deg)') && back.includes('rotateY(360deg)') && back.includes('rotateY(540deg)'), 'back 缺 180° 偏移相位')
+    assert.ok(!back.includes('mask'), 'back 不得在动画中改 mask')
   })
 
-  it('discrete 跳变点与牌侧面（scaleX=0）对齐：mask 帧间中点 = 10%/30%/50%/70%/90%', () => {
-    // 0.8s flip 循环的 scaleX(0) 时刻 = 0.4/1.2/2.0/2.8/3.6s；4s cycle 的 discrete
-    // 中点跳变 = 0.4/1.2/2.0/2.8/3.6s（帧 0/20/40/60/80/100%）——同一时刻，
-    // 牌在侧面瞬间换花色、展开即新牌（翻牌观感而非 opacity 闪烁）。
+  it('背面 = 统一 DeepSeek 牌背（镜像绘制，与旧版回合运行卡背同款），正面 = 当前 activity 花色', () => {
     const skin = skinEl().textContent
-    const cycleStart = skin.indexOf('@keyframes tf-cycle{')
-    const cycle = skin.slice(cycleStart, skin.indexOf('}/**/', cycleStart) > 0 ? skin.indexOf('}/**/', cycleStart) + 1 : skin.length)
-    for (const pct of ['0%', '20%', '40%', '60%', '80%', '100%']) {
-      assert.ok(cycle.includes(pct), 'cycle 缺帧 ' + pct)
+    const backMask = T.stepPokerBackMask()
+    assert.ok(backMask && backMask.length > 100, '牌背 mask 未生成')
+    assert.ok(skin.includes('--tf-back:' + backMask), '皮肤未使用 stepPokerBackMask 作为 --tf-back')
+    assert.ok(
+      skin.includes('[data-step-process] [data-step-process-icon]::before{-webkit-mask:var(--tf-suit) center/contain no-repeat;mask:var(--tf-suit) center/contain no-repeat}'),
+      'front 必须使用静态 --tf-suit（当前 activity 花色）',
+    )
+    assert.ok(
+      skin.includes('[data-step-process] [data-step-process-icon]::after{-webkit-mask:var(--tf-back) center/contain no-repeat;mask:var(--tf-back) center/contain no-repeat;transform:rotateY(180deg)}'),
+      'back 必须使用 --tf-back（统一牌背）且基态背对',
+    )
+    // 牌背与任何花色正面都不同色块（镜像 whale ≠ 未镜像 whale / 四花色）
+    for (const suit of ['spade', 'heart', 'diamond', 'club', 'whale']) {
+      assert.notEqual(backMask, T.suitMaskImage(suit), '牌背不得与 ' + suit + ' 正面相同')
     }
+  })
+
+  it('几何守卫：两面 absolute 同 inset 同尺寸同 backface，icon 布局不变', () => {
+    const skin = skinEl().textContent
+    const base = skin.split('\n').find((l) => l.includes('[data-step-process-icon]::before,[data-step-process] [data-step-process-icon]::after{content:""'))
+    assert.ok(base, '双面基座规则缺失')
+    assert.ok(base.includes('position:absolute') && base.includes('inset:0') && base.includes('margin:auto'), '两面必须 absolute + inset:0 + margin:auto')
+    assert.ok(base.includes('width:14px') && base.includes('height:20px'), '两面必须同尺寸 14×20')
+    assert.ok(base.includes('backface-visibility:hidden'), '两面必须 backface-visibility:hidden')
+    assert.ok(skin.includes('perspective:160px'), '3D 翻转需要透视（挂在 icon span 上）')
   })
 
   it('running 与静态映射共存：动画 keyframes 覆盖静态 mask，静态 --tf-suit 规则不删', () => {
@@ -235,14 +263,6 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(staticCount >= 5, '静态映射规则数量异常：' + staticCount)
   })
 
-  it('reduced-motion：running 动画禁用（双契约选择器都在）→ 回落静态 activity 牌', () => {
-    const skin = skinEl().textContent
-    const line = skin.split('\n').find((l) => l.includes('@media (prefers-reduced-motion:reduce)') && l.includes('animation:none'))
-    assert.ok(line, 'reduced-motion 关闭 running 动画的规则缺失')
-    assert.ok(line.includes('[data-text-shimmer="true"]'), 'reduced-motion 缺 0.1.7 契约选择器')
-    assert.ok(line.includes('[data-shimmer="true"]'), 'reduced-motion 缺 0.2.0+ 契约选择器')
-  })
-
   it('shimmer 钩子缺失的最坏退化 = 静态牌（CSS 结构守卫，双契约属性一并退场）', () => {
     const skin = skinEl().textContent
     // running 规则只追加 animation、不改静态声明——移除任一 shimmer 钩子规则后静态皮完整
@@ -250,10 +270,39 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       .split('\n')
       .filter((l) => !l.includes('[data-shimmer') && !l.includes('[data-text-shimmer'))
       .join('\n')
-    assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::before{'), '静态牌渲染位仍在')
+    assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::before'), '静态牌渲染位仍在')
+    assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::after'), '背面渲染位仍在（基态背对不可见）')
     assert.ok(withoutRunning.includes('--tf-suit:'), '静态花色映射仍在')
     // 动画"应用"随钩子退场（@keyframes 定义留存为无引用的死代码，不产生任何动画）
     assert.ok(!withoutRunning.includes('animation:tf-flip'), '动画应用规则随钩子一起退场')
+  })
+
+  it('reduced-motion：front/back 动画都禁用 → 正面静态 activity 牌、背面基态隐藏', () => {
+    const skin = skinEl().textContent
+    const line = skin.split('\n').find((l) => l.includes('@media (prefers-reduced-motion:reduce)') && l.includes('animation:none'))
+    assert.ok(line, 'reduced-motion 关闭 running 动画的规则缺失')
+    assert.ok(line.includes('[data-text-shimmer="true"]'), 'reduced-motion 缺 0.1.7 契约选择器')
+    assert.ok(line.includes('[data-shimmer="true"]'), 'reduced-motion 缺 0.2.0+ 契约选择器')
+    assert.ok(line.includes('[data-step-process-icon]::before'), 'reduced-motion 必须覆盖正面')
+    assert.ok(line.includes('[data-step-process-icon]::after'), 'reduced-motion 必须覆盖背面')
+    assert.ok(line.includes('animation:none'), 'reduced-motion 下两面 animation 必须为 none（不 rotateY、不闪烁）')
+  })
+
+  it('running → completed：shimmer 移除后 running 规则不再命中，静态 activity 牌回归', () => {
+    const skin = skinEl().textContent
+    const { host, cleanup } = stepDom('0.2.0')
+    try {
+      const sel = runningSelectorsOf(skin, 'front').find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
+      assert.ok(sel, '0.2.0+ front 选择器缺失')
+      assert.ok(host.matches(hostSelectorOf(sel)), 'running 中应命中 running 选择器')
+      // 官方回合结束：shimmer 属性消失（同一渲染器继续存在）
+      host.querySelector('[data-shimmer]').removeAttribute('data-shimmer')
+      assert.ok(!host.matches(hostSelectorOf(sel)), 'shimmer 移除后 running 选择器不得再命中')
+      // 静态映射仍在（正面回落 activity 花色；背面基态背对不可见）
+      host.setAttribute('data-process-activity', 'edit')
+      const staticRule = skin.split('\n').find((l) => l.includes('[data-process-activity="edit"] [data-step-process-icon]'))
+      assert.ok(staticRule && staticRule.includes('--tf-suit:'), '静态 activity 花色映射缺失')
+    } finally { cleanup() }
   })
 
   it('双契约守卫：皮肤必须同时包含两个官方运行态属性，任一都不是"非法旧属性"', () => {
