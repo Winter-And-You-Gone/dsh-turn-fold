@@ -190,9 +190,11 @@ describe('架构守卫（源码扫描）', () => {
   it('无 document.body 成员访问 / appendChild（head 的样式注入是已记录的软依赖，放行）', () => {
     assert.ok(!/document\.body\s*\./.test(src), '不得访问 document.body 成员')
     assert.ok(!src.includes('body.appendChild'), '不得向 body 追加节点')
-    // head 注入恰为两处（base + skin）——软依赖面收敛到最小
+    // head 注入恰为三处（base + skin + 牌数桥逐组覆盖表）——软依赖面收敛到最小。
+    // 牌数桥表只承载"官方 group snapshot → [data-chat-group-key] 视觉选择器"，
+    // 不写官方 DOM、不加官方属性。
     const headInjects = src.match(/document\.head\.appendChild\(/g) || []
-    assert.equal(headInjects.length, 2, '样式注入只有 base + skin 两处')
+    assert.equal(headInjects.length, 3, '样式注入只有 base + skin + step-cards 三处')
   })
 
   it('插件不写 transcriptView（写入调用 / 声明 / 注入面一律禁止）', () => {

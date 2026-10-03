@@ -323,7 +323,10 @@ window.__ModuleLoader__.load({
 		 *  注入段创建并持有，native 时 disabled=true 官方图标原样显示）。 */
 		function applyStepSkin() {
 			try {
-				if (skinStyleEl !== null) skinStyleEl.disabled = settings.stepSkin !== "poker";
+				var native = settings.stepSkin !== "poker";
+				if (skinStyleEl !== null) skinStyleEl.disabled = native;
+				// 牌数桥样式表同受皮肤总闸控制（native = 官方图标原样，桥规则一并停用）
+				if (stepCardStyleEl) stepCardStyleEl.disabled = native;
 			} catch (e) { /* 忽略 */ }
 		}
 
@@ -502,33 +505,39 @@ window.__ModuleLoader__.load({
 			}
 			return markup ? suitCardMask(String(markup)) : "";
 		}
-		/** completed 组牌 SVG（给定五张牌的变换表）：5 张真实牌（rect 轮廓 + 花色 pip，
+		/** completed 组牌 SVG（给定牌数与变换表）：N 张真实牌（rect 轮廓 + 花色 pip，
 		 *  牌身透明透壁纸）+ 每张 owner 一个内嵌 luminance mask，挖掉绘制序更高牌的
 		 *  实心黑牌面覆盖区。mask 挂在无变换的外层 g（用户系 = 视箱全局系），变换放
 		 *  内层 g——cut 与真实牌同系对齐（Turn 动态方案的同款分层）。
+		 *  几何与 Turn 栏 buildPokerSVGBase 同源同规则：3 张 = hThree/pipScaleThree/y=3.5、
+		 *  5 张 = hFive/pipScaleFive/y=4；牌面取运行态轮换序列的前 N 张（同序前缀），
+		 *  不新建 Step 专属牌面池。
 		 *  ⚠ occluder 必须直接内联实心黑 rect，不能用 <use> 引用 defs——Chromium 不渲染
 		 *  <mask> 内容里的 <use>；也不能用透明牌形（fill=none 只挖线）——下层 pip 会从
 		 *  上层"牌面"里穿透。fill=#000 是 luminance knockout 机制本体（不可见填充），
 		 *  与参考实现 mask rect fill="black"、Turn pokerDynamicMask 同款。 */
-		function stepCompletedGroupSvg(tfs) {
+		function stepCompletedGroupSvg(count, tfs) {
 			var cfgB = iconConfig && iconConfig.pokerSVGBase;
-			var h = (cfgB && cfgB.hFive) || 8;
+			var five = count > 3;
+			var n = five ? 5 : 3;
+			var h = (cfgB && (five ? cfgB.hFive : cfgB.hThree)) || (five ? 8 : 8.5);
 			var w = h * ((cfgB && cfgB.pokerRatio) || 0.7142857142857143);
-			var x = 8 - w / 2, y = 4;
-			var pipScale = (cfgB && cfgB.pipScaleFive) || 0.24;
+			var x = 8 - w / 2, y = five ? 4 : 3.5;
+			var pipScale = (cfgB && (five ? cfgB.pipScaleFive : cfgB.pipScaleThree)) || (five ? 0.24 : 0.28);
 			// rx 直接读 iconConfig.pokerR（= POKER_R 同源）：本函数在 CSS 注入段执行，
 			// 早于 POKER_R 的 var 赋值点
 			var rx = (iconConfig && iconConfig.pokerR) || 1.08;
-			var suits = ["diamond", "club", "spade", "heart", POKER_SPIN_DEEPSEEK ? "deepseek" : "club"];
+			var suits = ["diamond", "club", "spade", "heart", POKER_SPIN_DEEPSEEK ? "deepseek" : "club"].slice(0, n);
 			var defs = "", cards = "";
 			var occluder = '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h +
 				'" rx="' + rx + '" fill="#000" stroke="#000" stroke-width="0.7"/>';
-			var glyphBodies = ["", "", "", "", "", ""];
-			for (var ci = 1; ci <= 5; ci++) {
+			var glyphBodies = [];
+			for (var ci = 1; ci <= n; ci++) {
 				var suit = suits[ci - 1];
 				var markup = suit === "deepseek"
 					? String(POKER_SPIN_DEEPSEEK).replace(/id="[^"]*"/, "")
 					: (POKER_PIPS[suit] && POKER_PIPS[suit].path);
+				glyphBodies[ci] = null;
 				if (!markup) continue;
 				// 鲸鱼墨迹几乎填满 24 盒，按卡牌几何独立取缩放（buildPokerSVGBase 同款公式）
 				var usedScale = suit === "deepseek" ? (Math.min(w * 0.72, h * 0.58) / 24) : pipScale;
@@ -537,13 +546,13 @@ window.__ModuleLoader__.load({
 					'<g transform="translate(8 8) scale(' + usedScale + ') translate(-12 -12)">' + markup + '</g>';
 				defs += '<g id="scc-g' + ci + '">' + glyphBodies[ci] + '</g>';
 			}
-			for (var ci2 = 1; ci2 <= 5; ci2++) {
+			for (var ci2 = 1; ci2 <= n; ci2++) {
 				if (!glyphBodies[ci2]) continue;
 				// 挖掉绘制序在本牌之后（z 更高）的牌：cut 与真实牌同为全局系变换、同一几何。
-				// z-order（绘制序 1→5，5 最上）：stack = card1(1.6,1.6) 右下 → card5(-1.6,-1.6) 左上顶牌；
-				// fan = card1(-32° 最左) → card5(+32° 最右、视觉最前）。owner 只被 z 更高者挖。
+				// z-order（绘制序 1→N，N 最上）：stack = card1 右下 → cardN 左上顶牌；
+				// fan = card1 最左 → cardN 最右、视觉最前。owner 只被 z 更高者挖。
 				var cuts = "";
-				for (var zj = ci2 + 1; zj <= 5; zj++) {
+				for (var zj = ci2 + 1; zj <= n; zj++) {
 					if (!glyphBodies[zj]) continue;
 					cuts += '<g transform="' + tfs[zj] + '">' + occluder + '</g>';
 				}
@@ -557,14 +566,15 @@ window.__ModuleLoader__.load({
 		function svgMaskUri(svg) {
 			return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
 		}
-		/** completed 双态端点 mask（closed = 五张花色牌堆 / open = 五张扇形）。
-		 *  与 Turn 栏扑克图标同一几何语言：16 视箱、五张 hFive 牌、stack5/fan5 变换
-		 *  直接取 pokerTransforms（iconConfig 数据源可覆盖）；mask-size 24px 时牌外缘
-		 *  ≈9.62×13.05px、stroke 1.05px，与 .ccg-poker-icon 里的牌逐像素一致。
-		 *  牌面 = 五张固定花色（diamond→club→spade→heart→deepseek，与运行态轮换同序，
+		/** completed 双态端点 mask（closed = N 张花色牌堆 / open = N 张扇形）。
+		 *  与 Turn 栏扑克图标同一几何语言：16 视箱、N 张牌（3 → hThree、5 → hFive）、
+		 *  stack/fan 变换直接取 pokerTransforms(count, …)（iconConfig 数据源可覆盖）；
+		 *  mask-size 24px 时 5 张牌外缘 ≈9.62×13.05px、stroke 1.05px，与 .ccg-poker-icon
+		 *  里的牌逐像素一致；3 张牌与 Turn 栏 3 张牌（hThree/同扇角）逐像素一致。
+		 *  牌面 = 运行态轮换序列的前 N 张（diamond→club→spade→heart→deepseek，
 		 *  鲸鱼缺数据时回退 club）。 */
-		function stepCompletedGroupMask(fan) {
-			return svgMaskUri(stepCompletedGroupSvg(pokerTransforms(5, !!fan)));
+		function stepCompletedGroupMask(count, fan) {
+			return svgMaskUri(stepCompletedGroupSvg(count, pokerTransforms(count, !!fan)));
 		}
 		/** cubic-bezier(.22,1,.36,1)（CSS 与 SMIL spline 同构）在 x 处的 y 值（二分求参数 t）。 */
 		function cssBezierEase(x) {
@@ -581,13 +591,14 @@ window.__ModuleLoader__.load({
 			}
 			return sample(t, ay, by, cy);
 		}
-		/** stack5 → fan5 的插值帧变换表（t ∈ [0,1]；t=0 恒等 stack5、t=1 恒等 fan5）。
-		 *  fan5 的 rotate 中心 (8,12) 恒定、stack5 无 rotate——同一 "translate(tx,ty) rotate(θ 8 12)"
-		 *  结构下对 tx/ty/θ 做线性插值，端点与现有真实数据逐值一致。 */
-		function stepMorphTransforms(t) {
-			var stack = pokerTransforms(5, false), fan = pokerTransforms(5, true);
+		/** stackN → fanN 的插值帧变换表（t ∈ [0,1]；t=0 恒等 stackN、t=1 恒等 fanN）。
+		 *  fanN 的 rotate 中心 (8,12) 恒定、stackN 无 rotate——同一 "translate(tx,ty) rotate(θ 8 12)"
+		 *  结构下对 tx/ty/θ 做线性插值，端点与现有真实数据逐值一致。count 决定几何
+		 *  （3 张读 stack3/fan3、5 张读 stack5/fan5），插值公式与牌数无关。 */
+		function stepMorphTransforms(count, t) {
+			var stack = pokerTransforms(count, false), fan = pokerTransforms(count, true);
 			var out = {};
-			for (var i = 1; i <= 5; i++) {
+			for (var i = 1; i <= count; i++) {
 				// 解析 "translate(a, b) [rotate(deg cx cy)]"
 				var sm = /translate\(([-\d.]+)[, ]+([-\d.]+)\)/.exec(stack[i]) || [0, "0", "0"];
 				var fm = /translate\(([-\d.]+)[, ]+([-\d.]+)\)/.exec(fan[i]) || [0, "0", "0"];
@@ -610,11 +621,38 @@ window.__ModuleLoader__.load({
 			return 'url("data:image/svg+xml,' + encodeURIComponent(STEP_RUNNING_POKER_SVG)
 				.replace(/[()']/g, function (ch) { return '%' + ch.charCodeAt(0).toString(16).toUpperCase(); }) + '")';
 		})();
+		// morph 帧时间轴与帧序生成器（放在 factory 作用域：5 张 / 3 张两套共用同一
+		// 帧数、时长与缓动，只有几何不同）。
+		// 帧时间轴：keyframes 0% = 出发端点（与切换前显示同值，无缝起步）、每
+		// 100/17≈5.88% 一帧（discrete 在相邻对中点切换 → 有效 morph ≈353ms、总
+		// 400ms、≈42fps——8 帧版有肉眼台阶感，16 帧是"仍可接受体积"下的密度上限）、
+		// 100% 省略回落常驻端点（无缝收尾 = freeze 语义）。
+		var MORPH_FRAMES = 16;
+		function morphMaskDecl(uri) {
+			// keyframes 帧内只写标准 mask-image：32 帧 × 2 份 URI 的 -webkit- 双写会让
+			// 皮肤样式表膨胀近一倍；DSH 桌面端是新 Chromium（标准属性早已支持），
+			// 旧内核最坏退化 = 动画期间不换帧（直接端点），不是破图。
+			return 'mask-image:' + uri;
+		}
+		function stepMorphKeyframes(name, count, fromFan) {
+			var fromMask = stepCompletedGroupMask(count, !!fromFan);
+			var stops = ['0%{' + morphMaskDecl(fromMask) + '}'];
+			for (var k = 1; k <= MORPH_FRAMES; k++) {
+				var t = fromFan ? 1 - k / (MORPH_FRAMES + 1) : k / (MORPH_FRAMES + 1);
+				// 百分比 = k/(帧数+1)——随 MORPH_FRAMES 自适应（6 帧 → 12.5% 步进、
+				// 16 帧 → 5.882353%），永远不触达 100%（回落停靠点留给常驻端点）
+				stops.push((k * 100 / (MORPH_FRAMES + 1)).toFixed(6) + '%{' + morphMaskDecl(svgMaskUri(stepCompletedGroupSvg(count, stepMorphTransforms(count, t)))) + '}');
+			}
+			// 100% 省略：回落规则常驻端点（= to 端点），与末帧视觉一致
+			return '@keyframes ' + name + '{' + stops.join('') + '}';
+		}
 		/** 生成 Step Poker Skin 的 CSS（依赖注入的图标数据，只能在 ICON_DEFAULTS 就绪后调用）。
-		 *  规则不带任何 body 前缀——总闸是皮肤样式元素自身的 disabled（applyStepSkin）。
+		 *  规则不带任何 body 前缀——总闸是皮肤样式元素自身的 disabled。
 		 *  结构：官方图标内容隐藏 → ::before 卡牌位；completed 双态（收起牌堆/展开扇形）；
 		 *  每个官方 activity 一条 --tf-suit 变量规则（reduced-motion 的 running 回落）；
-		 *  running（shimmer 双契约）= 五牌面轮换，优先于 completed 双态。 */
+		 *  running（shimmer 双契约）= 五牌面轮换，优先于 completed 双态。
+		 *  牌数：默认/fallback = 5 张（静态规则）；3 张覆盖规则由牌数桥按官方 groupKey
+		 *  生成（buildStepCardRulesCss），资产（--tf-stack-3 / --tf-fan-3 / 3 张帧序）在这里预置。 */
 		function buildStepSkinCss() {
 			var rules = [];
 			// 统一牌规格（与 Turn 栏 .ccg-poker-icon 完全同款）：伪元素 24×24 = Turn 容器；
@@ -628,8 +666,13 @@ window.__ModuleLoader__.load({
 			// 静态单张花色牌（suitCardMask，10×14 视箱 = 牌外缘满视箱）的 mask-size：
 			// 缩放到与 Turn 五张牌同一外缘（含 stroke）
 			var suitCardSize = ((cardW + 0.7) * 1.5).toFixed(2) + "px " + ((cardH + 0.7) * 1.5).toFixed(2) + "px";
-			var stackMask = stepCompletedGroupMask(false);
-			var fanMask = stepCompletedGroupMask(true);
+			var stackMask = stepCompletedGroupMask(5, false);
+			var fanMask = stepCompletedGroupMask(5, true);
+			// 3 张牌端点资产：不进任何常驻规则，只作为 CSS 变量供"牌数桥"按
+			// [data-chat-group-key] 逐组覆盖（见 buildStepCardRulesCss）。默认不生效
+			// → 桥缺失/旧宿主/数据不可得时行为 = 五张 fallback（绝不猜 3 张）。
+			var stackMask3 = stepCompletedGroupMask(3, false);
+			var fanMask3 = stepCompletedGroupMask(3, true);
 			// stack ↔ fan morph：预采样插值帧（每帧 = 静态 SVG，牌与 occluder 都在当帧
 			// 插值位置）。为什么用帧序列而非 SMIL/transition：
 			//   · 同 URL 的 mask 图像在 Chromium 全页共享单一实例、SMIL 时间线从首次应用
@@ -639,30 +682,16 @@ window.__ModuleLoader__.load({
 			//   · CSS animation 每次规则命中都从头重放 → 帧序列放 keyframes 里即可做到
 			//     每次 aria-expanded 变化都完整 morph，且每帧的 occluder 逐帧同步 knockout。
 			// 帧时间轴：keyframes 0% = 出发端点（与切换前显示同值，无缝起步）、每
-			// 100/17≈5.88% 一帧（discrete 在相邻对中点切换 → 有效 morph ≈353ms、总
-			// 400ms、≈42fps——8 帧版有肉眼台阶感，16 帧是"仍可接受体积"下的密度上限）、
-			// 100% 省略回落常驻端点（无缝收尾 = freeze 语义）。
-			var MORPH_FRAMES = 16;
-			function morphMaskDecl(uri) {
-				// keyframes 帧内只写标准 mask-image：32 帧 × 2 份 URI 的 -webkit- 双写会让
-				// 皮肤样式表膨胀近一倍；DSH 桌面端是新 Chromium（标准属性早已支持），
-				// 旧内核最坏退化 = 动画期间不换帧（直接端点），不是破图。
-				return 'mask-image:' + uri;
-			}
-			function stepMorphKeyframes(name, fromFan) {
-				var fromMask = fromFan ? fanMask : stackMask;
-				var stops = ['0%{' + morphMaskDecl(fromMask) + '}'];
-				for (var k = 1; k <= MORPH_FRAMES; k++) {
-					var t = fromFan ? 1 - k / (MORPH_FRAMES + 1) : k / (MORPH_FRAMES + 1);
-					// 百分比 = k/(帧数+1)——随 MORPH_FRAMES 自适应（6 帧 → 12.5% 步进、
-					// 16 帧 → 5.882353%），永远不触达 100%（回落停靠点留给常驻端点）
-					stops.push((k * 100 / (MORPH_FRAMES + 1)).toFixed(6) + '%{' + morphMaskDecl(svgMaskUri(stepCompletedGroupSvg(stepMorphTransforms(t)))) + '}');
-				}
-				// 100% 省略：回落规则常驻端点（= to 端点），与末帧视觉一致
-				return '@keyframes ' + name + '{' + stops.join('') + '}';
-			}
-			rules.push(stepMorphKeyframes("tf-step-open", false));
-			rules.push(stepMorphKeyframes("tf-step-close", true));
+			// 100/17≈5.88% 一帧（有效 morph ≈353ms、总 400ms、≈42fps）、100% 省略
+			// 回落常驻端点（无缝收尾 = freeze 语义）。生成器在 factory 作用域。
+			// 5 张（默认/fallback）与 3 张两套完整 morph 帧序：帧数、时长、缓动完全一致，
+			// 只有几何不同。
+			rules.push(stepMorphKeyframes("tf-step-open", 5, false));
+			rules.push(stepMorphKeyframes("tf-step-close", 5, true));
+			rules.push(stepMorphKeyframes("tf-step-open-3", 3, false));
+			rules.push(stepMorphKeyframes("tf-step-close-3", 3, true));
+			// 3 张牌覆盖资产（data-URI 只声明一次；牌数桥的逐组规则只引用变量）
+			rules.push('[data-step-process]{--tf-stack-3:' + stackMask3 + ';--tf-fan-3:' + fanMask3 + '}');
 			rules.push('[data-step-process] [data-step-process-icon] > *{display:none}');
 			// 基础 = completed 收起：五张花色牌堆（closed = 牌收好未翻看）+ 收拢帧序动画
 			rules.push('[data-step-process] [data-step-process-icon]::before{content:"";position:absolute;inset:0;margin:auto;width:24px;height:24px;background-color:currentColor;-webkit-mask:' + stackMask + ' center/24px 24px no-repeat;mask:' + stackMask + ' center/24px 24px no-repeat;animation:tf-step-close .4s linear 1}');
@@ -745,6 +774,186 @@ window.__ModuleLoader__.load({
 				'[data-step-process] [data-step-process-icon]::before{animation:none}' +
 				completedFan + ' [data-step-process-icon]::before{animation:none}}');
 			return rules.join("\n");
+		}
+
+		// ---- Step 牌数桥（官方 group snapshot → 视觉选择器；纯只读，零分组重算） ----
+		// 规则：本 Process Group 的 toolCallCount = Σ 官方 summary.counts[].count
+		//         ≤ 3 → 3 张牌；≥ 4 → 5 张牌。取不到 = 5 张（绝不猜 3 张）。
+		//
+		// 数据路径（全部是官方现成 API，只读）：
+		//   组件 props.useConversation（官方 SessionStandardProps 成员；ui-conversation 经
+		//     ctx.uiSession.provide({hooks:['conversation']}) 下发给所有 session 作用域条目）
+		//   → ConversationSnapshot.views.grouped('chat')（ConversationViewSnapshotStore 公开契约）
+		//   → ConversationGroupedView.entries（{kind:'group', key: GroupKey}）
+		//   → groupSource(key) → ObservableSnapshot<GroupSnapshot<ProcessGroupData>|undefined>
+		//   → snapshot.data.summary.counts（{kind, count}[]，官方按 distinct callId 递归统计）
+		// 注：官方 conversation.view 的 keyedHooks.chatGroup 就是同一函数的封装
+		//   （ui-chat apply.ts：conversation.snapshot…views.grouped('chat').groupSource(key)）；
+		//   插件拿不到 conversation.view 的 keyedHooks 面（那是官方 ChatView 的 inject），
+		//   走的是每个 session 作用域条目都能拿到的标准 kit。差别只在取值方式，不在数据。
+		//
+		// 出口 = 官方稳定的结构化 DOM 事实 data-chat-group-key（ChatGroupSeat 组根上的官方属性）：
+		//   插件只在自己样式表里按该属性生成覆盖规则——不写官方 DOM、不加官方属性、
+		//   不替换 ChatGroupSeat/ProcessGroupHeader、不拥有 disclosure、不碰成员可见性、
+		//   不定义成员/分组。插件只做 "官方事实 → 视觉表现"。
+		var STEP_CARD_CSS_ID = "dsh-turn-fold/style-step-cards";
+		var STEP_CARD_SMALL_MAX = 3;
+		var STEP_CARD_COUNT_SMALL = 3;
+		var STEP_CARD_COUNT_LARGE = 5;
+		var stepCardStyleEl = null;
+		var stepCardRulesCache = null;
+		var stepCardLeaderToken = null;
+		/** 官方 counts → 本组 tool call 总数（求和，不是 counts.length）。 */
+		function stepCardToolCallCount(counts) {
+			if (!counts || typeof counts.length !== "number") return undefined;
+			var total = 0;
+			for (var i = 0; i < counts.length; i++) {
+				var item = counts[i];
+				var n = item ? item.count : undefined;
+				if (typeof n !== "number" || !isFinite(n) || n < 0) return undefined;
+				total += n;
+			}
+			return total;
+		}
+		/** 官方 group snapshot → 牌数；形状异常/缺席 → undefined（调用方回落 5 张）。 */
+		function stepCardCountOfGroup(snapshot) {
+			if (!snapshot || !snapshot.data || !snapshot.data.summary) return undefined;
+			var total = stepCardToolCallCount(snapshot.data.summary.counts);
+			if (total === undefined) return undefined;
+			return total <= STEP_CARD_SMALL_MAX ? STEP_CARD_COUNT_SMALL : STEP_CARD_COUNT_LARGE;
+		}
+		/** CSS 属性选择器里的字符串转义（groupKey 是 JSON 文本，含引号）。 */
+		function cssAttrValue(value) {
+			return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+		}
+		/** groupKey → 3 张牌覆盖规则。两条规则都必须：(a) 特异性压过同名静态端点规则，
+		 *  (b) 带 shimmer 排除子句——否则会把运行中的五牌面轮换 mask 压掉（软依赖：
+		 *  官方 shimmer 钩子改名 → 排除失效 → 最坏退化为 3 张牌堆/扇形，轮换不再显示）。
+		 *  组根同时带 data-step-process 与 data-chat-group-key（官方真实 DOM）。 */
+		function buildStepCardRulesCss(map) {
+			var rules = [];
+			if (map) {
+				for (var key in map) {
+					if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
+					if (map[key] !== STEP_CARD_COUNT_SMALL) continue;
+					var host = '[data-step-process][data-chat-group-key="' + cssAttrValue(key) + '"]';
+					var idle = ':not(:has([data-shimmer="true"])):not(:has([data-text-shimmer="true"]))';
+					rules.push(host + idle + ' [data-step-process-icon]::before' +
+						'{-webkit-mask-image:var(--tf-stack-3);mask-image:var(--tf-stack-3);animation-name:tf-step-close-3}');
+					rules.push(host + ' [data-process-activity][aria-expanded="true"]' + idle +
+						' [data-step-process-icon]::before' +
+						'{-webkit-mask-image:var(--tf-fan-3);mask-image:var(--tf-fan-3);animation-name:tf-step-open-3}');
+				}
+			}
+			return rules.join("\n");
+		}
+		/** 把逐组覆盖规则写进专属样式元素（幂等：内容不变不写）。 */
+		function writeStepCardRules(map) {
+			try {
+				if (!stepCardStyleEl) return;
+				var css = buildStepCardRulesCss(map);
+				if (css === stepCardRulesCache) return;
+				stepCardRulesCache = css;
+				stepCardStyleEl.textContent = css;
+			} catch (e) { /* 视觉增强可以坏，官方折叠不受影响 */ }
+		}
+		/** 官方会话快照 → 分组读端（身份稳定；数据更新不改变它，只改 entries/组快照）。 */
+		function selectChatGroupedView(snapshot) {
+			try {
+				if (!snapshot || !snapshot.views || typeof snapshot.views.grouped !== "function") return undefined;
+				return snapshot.views.grouped("chat");
+			} catch (e) { return undefined; }
+		}
+		/** 官方根渲染序列（含 {kind:'group', key}）——entries 身份变化 = 分组结构变化。 */
+		function selectChatGroupedEntries(snapshot) {
+			var grouped = selectChatGroupedView(snapshot);
+			return grouped ? grouped.entries : undefined;
+		}
+		/** 牌数桥 leader 判定：宿主里每个回合都有一个 turn-process 条目，但桥只需要一个
+		 *  订阅者（会话级）。第一个挂载的实例当 leader；leader 卸载 = 清空规则（回落
+		 *  5 张安全态），下一个挂载的实例接手。其余实例零订阅、零渲染。 */
+		function useStepCardBridgeLeader() {
+			var pair = react.useState(false);
+			var isLeader = pair[0], setIsLeader = pair[1];
+			react.useEffect(function () {
+				if (stepCardLeaderToken !== null) return undefined;
+				var token = {};
+				stepCardLeaderToken = token;
+				setIsLeader(true);
+				return function () {
+					if (stepCardLeaderToken !== token) return;
+					stepCardLeaderToken = null;
+					writeStepCardRules(null);
+				};
+			}, []);
+			return isLeader;
+		}
+		/** 一个 group key → 官方组快照 → 牌数（uSES 订阅官方 groupSource；source 身份稳定）。 */
+		function StepCardGroupProbe(props) {
+			var groupKey = props.groupKey;
+			var report = props.report;
+			var grouped = props.grouped;
+			var source = react.useMemo(function () {
+				try {
+					return grouped && typeof grouped.groupSource === "function" ? grouped.groupSource(groupKey) : undefined;
+				} catch (e) { return undefined; }
+			}, [grouped, groupKey]);
+			var snapshot = useSyncExternalStore(
+				source && typeof source.subscribe === "function" ? source.subscribe : subscribeNothing,
+				source && typeof source.getSnapshot === "function" ? source.getSnapshot : getUndefinedSnapshot
+			);
+			var count = stepCardCountOfGroup(snapshot);
+			react.useEffect(function () {
+				report(groupKey, count === undefined ? null : count);
+				return function () { report(groupKey, null); };
+			}, [groupKey, count, report]);
+			return null;
+		}
+		/** 会话级只读订阅者：官方 group entries → 每组一个 probe → 汇总 → 生成视觉选择器规则。
+		 *  不渲染任何 DOM、不持有 Fold 状态、不接管 click/hidden/搜索展开。 */
+		function StepCardRuleWriter(props) {
+			var useConversation = props.useConversation;
+			var entries = useConversation(selectChatGroupedEntries);
+			var grouped = useConversation(selectChatGroupedView);
+			var countsRef = react.useRef({});
+			var versionPair = react.useState(0);
+			var version = versionPair[0], setVersion = versionPair[1];
+			var report = react.useCallback(function (groupKey, count) {
+				var map = countsRef.current;
+				var had = Object.prototype.hasOwnProperty.call(map, groupKey);
+				if (count === null) {
+					if (!had) return;
+					delete map[groupKey];
+				} else {
+					if (had && map[groupKey] === count) return;
+					map[groupKey] = count;
+				}
+				setVersion(function (v) { return v + 1; });
+			}, []);
+			// version 驱动重写；entries 变化（增删组）时 probe 的 effect 也会补齐/清掉，
+			// 这里同时兜一次（防 entries 变了但计数没变的边界）。
+			react.useEffect(function () {
+				writeStepCardRules(countsRef.current);
+			}, [version, entries]);
+			var probes = [];
+			if (entries && grouped) {
+				for (var i = 0; i < entries.length; i++) {
+					var entry = entries[i];
+					if (!entry || entry.kind !== "group") continue;
+					probes.push(react.createElement(StepCardGroupProbe, {
+						key: entry.key, groupKey: entry.key, grouped: grouped, report: report
+					}));
+				}
+			}
+			return probes.length ? react.createElement(react.Fragment, null, probes) : null;
+		}
+		/** 牌数桥入口（由官方 turn-process 渲染器承载：插件既有的官方挂载点）。
+		 *  旧宿主 / 非 session 作用域 / 拿不到 useConversation → 不订阅、不产出规则
+		 *  → 默认 5 张牌（安全 fallback）。 */
+		function StepCardRulesBridge(props) {
+			var isLeader = useStepCardBridgeLeader();
+			if (!isLeader || typeof props.useConversation !== "function") return null;
+			return react.createElement(StepCardRuleWriter, { useConversation: props.useConversation });
 		}
 
 
@@ -864,12 +1073,26 @@ window.__ModuleLoader__.load({
 			skinTag.textContent = buildStepSkinCss();
 			document.head.appendChild(skinTag);
 			skinStyleEl = skinTag;
-		} else {
-			// 已存在（热重载/测试重复加载）：重新持有皮肤元素引用
-			skinStyleEl = document.querySelector('style[data-plugin-css="' + SKIN_CSS_ID + '"]');
+			} else {
+				// 已存在（热重载/测试重复加载）：重新持有皮肤元素引用
+				skinStyleEl = document.querySelector('style[data-plugin-css="' + SKIN_CSS_ID + '"]');
+			}
+			// 牌数桥样式元素：必须排在皮肤表之后（逐组覆盖规则与静态端点规则特异性接近，
+			// 靠"后者胜出"接管）；内容由 StepCardRulesBridge 写入，牌数不可得时保持空表
+			// → 静态规则原样生效 = 5 张 fallback。
+			if (skinStyleEl !== null) {
+				var cardsTag = document.querySelector('style[data-plugin-css="' + STEP_CARD_CSS_ID + '"]');
+				if (cardsTag === null) {
+					cardsTag = document.createElement("style");
+					cardsTag.dataset.plugin = "@winteries/dsh-turn-fold";
+					cardsTag.dataset.pluginCss = STEP_CARD_CSS_ID;
+					document.head.appendChild(cardsTag);
+				}
+				stepCardStyleEl = cardsTag;
+				stepCardRulesCache = cardsTag.textContent;
+			}
+			applyStepSkin();
 		}
-		applyStepSkin();
-	}
 
 		// ---- 运行中秒表时钟（Running Turn Bar 的耗时刷新） ----
 		// 运行中回合的 TurnLocation 只有 start 没有 end：耗时需要时钟驱动刷新。
@@ -2006,16 +2229,25 @@ window.__ModuleLoader__.load({
 			// 设置订阅（字段显隐/图标风格变化 → 所有栏立即重渲染）
 			useFieldVisibility();
 			useFoldIconStyle();
+			// Step 牌数桥：会话级只读订阅者，由本渲染器承载（插件既有的官方挂载点；
+			// 每个回合挂一份，leader 选举保证只有一个真的订阅与写规则）。
+			// 官方 turn-process 是 turn 级控制器节点、不是 Process Group 成员，所以桥
+			// 不从这里取"本组"数据——它订阅官方 group snapshot 全集，按官方 groupKey
+			// 生成视觉选择器（见 buildStepCardRulesCss）。
+			var cardBridge = react.createElement(StepCardRulesBridge, { useConversation: props.useConversation });
 			var liveNow = useLiveNow(running);
 			if (!clock) {
 				// 无法定位回合（异常数据）：渲染最小占位栏（仅官方 data 字段），不可折叠。
 				var data = node && node.data;
-				return react.createElement(TurnBarView, {
-					running: false, open: false, canToggle: false,
-					turnNumber: data && data.turn,
-					label: "",
-					round: turnRoundLabel(data && data.turn)
-				});
+				return react.createElement(react.Fragment, null,
+					react.createElement(TurnBarView, {
+						running: false, open: false, canToggle: false,
+						turnNumber: data && data.turn,
+						label: "",
+						round: turnRoundLabel(data && data.turn)
+					}),
+					cardBridge
+				);
 			}
 			var metrics = computeTurnMetrics(clock, stepDataList, tail, running ? liveNow : undefined);
 			var filtered = filterVisibleMetrics(metrics);
@@ -2025,13 +2257,16 @@ window.__ModuleLoader__.load({
 				// 运行中：状态表面（非交互）。无 Fold 状态、不隐藏任何成员、
 				// 不调用任何 setOpen——官方 liveProcess 阶段成员本来就展开显示。
 				var cardCountRunning = specCardCount(clock);
-				return react.createElement(TurnBarView, {
-					running: true,
-					turnNumber: clock.number,
-					label: label || (currentLocale() === "zh" ? "0秒" : "0s"),
-					poker: turnPokerIcon(cardCountRunning, true, false, clock.number),
-					round: round
-				});
+				return react.createElement(react.Fragment, null,
+					react.createElement(TurnBarView, {
+						running: true,
+						turnNumber: clock.number,
+						label: label || (currentLocale() === "zh" ? "0秒" : "0s"),
+						poker: turnPokerIcon(cardCountRunning, true, false, clock.number),
+						round: round
+					}),
+					cardBridge
+				);
 			}
 			// 回合结束：折叠语义全部来自官方 turnProcess。
 			var spec = turnProcess && turnProcess.spec ? turnProcess.spec : (clock.data && typeof clock.data.get === "function" ? clock.data.get("turn-process") : undefined);
@@ -2045,21 +2280,24 @@ window.__ModuleLoader__.load({
 			var foldable = !!(turnProcess && turnProcess.foldable);
 			var open = !foldable || (turnProcess && turnProcess.open === true);
 			var statusText = turnStatusLabel(clock.reason);
-			return react.createElement(TurnBarView, {
-				running: false,
-				open: open,
-				canToggle: canCollapse,
-				turnNumber: clock.number,
-				label: label,
-				statusText: statusText,
-				statusFailed: clock.reason === "error",
-				poker: turnPokerIcon(specCardCountFromSpec(spec), false, open, clock.number),
-				round: round,
-				onToggle: function () {
-					// 唯一合法的折叠通道：官方 owner state 的 setOpen。
-					if (turnProcess && typeof turnProcess.setOpen === "function") turnProcess.setOpen(!open);
-				}
-			});
+			return react.createElement(react.Fragment, null,
+				react.createElement(TurnBarView, {
+					running: false,
+					open: open,
+					canToggle: canCollapse,
+					turnNumber: clock.number,
+					label: label,
+					statusText: statusText,
+					statusFailed: clock.reason === "error",
+					poker: turnPokerIcon(specCardCountFromSpec(spec), false, open, clock.number),
+					round: round,
+					onToggle: function () {
+						// 唯一合法的折叠通道：官方 owner state 的 setOpen。
+						if (turnProcess && typeof turnProcess.setOpen === "function") turnProcess.setOpen(!open);
+					}
+				}),
+				cardBridge
+			);
 		}
 		/** useChat 的 selector：只取本 (turn, kind) 的 identity-stable 增量数据源——
 		 *  绝不返回整个 snapshot（架构守卫测试禁止内联 selector）。

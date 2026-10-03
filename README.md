@@ -87,18 +87,28 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
 - **牌身透明**的扑克卡（CSS mask，当前色描边 + 花色点，壁纸可透出）替换官方活动图标，
   牌尺寸与 Turn 栏扑克图标**同一设计语言**：伪元素 24×24（= Turn 容器）、16 视箱 mask
   按 24px 渲染（1.5px/单位），牌外缘 ≈9.62×13.05px、描边 1.05px，两侧逐像素一致；
-- **completed 双态图标**（Fold-state aware）：收起 = 五张花色牌堆（♠ ♥ ♦ ♣ + 鲸鱼，
-  closed = 牌收好未翻看），展开 = 五张扇形（open = 牌已翻看）——与运行态五牌面同序
-  同构，几何直接复用 Turn 栏的 stack5/fan5 变换表（`icons/default.json` 数据源）；
-  **开合有 morph 过渡**：预采样 stack5→fan5 插值帧（cubic-bezier(.22,1,.36,1) 采样、
-  400ms、每帧静态 SVG）经 CSS keyframes 逐帧换 mask-image——animation 每次状态变化
-  都从头重放（同 URL mask 图像的 SMIL 时间线在 Chromium 全页共享、重应用不 restart，
-  帧序列绕开该限制），帧内 occluder 逐帧同步 knockout；**重叠区用真 knockout 遮挡**：
-  每张下层牌一个内嵌 luminance mask，z 更高层牌以实心黑牌面（fill=black occluder）
-  把覆盖区从下层整体挖掉——牌身保持透明（壁纸/图片背景透出），下层 stroke 与 pip
-  绝不穿透上层牌（occluder 必须直接内联图形——Chromium 不渲染 `<mask>` 内容里的
-  `<use>` 引用）；**官方 chevron 在 Poker skin 下恒隐**（normal/hover/focus/active
-  一致显示 Poker，hover 变色与 focus ring 等官方交互不受影响）；
+- **completed 双态图标**（Fold-state aware）：收起 = 花色牌堆（closed = 牌收好未翻看），
+  展开 = 扇形（open = 牌已翻看）——与运行态牌面同序同构，几何直接复用 Turn 栏的
+  stack3/stack5 · fan3/fan5 变换表（`icons/default.json` 数据源）；**张数按本 Process
+  Group 的工具调用数决定**：官方 `summary.counts[].count` 求和 ≤3 → 3 张、≥4 → 5 张
+  （旧宿主 / 数据取不到 → 5 张安全回落，绝不猜 3 张）；
+  **开合有 morph 过渡**：预采样 stack↔fan 插值帧（cubic-bezier(.22,1,.36,1) 采样、
+  400ms、16 帧采样 = 17 关键帧、每帧静态 SVG）经 CSS keyframes 逐帧换 mask-image——
+  animation 每次状态变化都从头重放（同 URL mask 图像的 SMIL 时间线在 Chromium 全页共享、
+  重应用不 restart，帧序列绕开该限制），帧内 occluder 逐帧同步 knockout；**重叠区用真
+  knockout 遮挡**：每张下层牌一个内嵌 luminance mask，z 更高层牌以实心黑牌面
+  （fill=black occluder）把覆盖区从下层整体挖掉——牌身保持透明（壁纸/图片背景透出），
+  下层 stroke 与 pip 绝不穿透上层牌（occluder 必须直接内联图形——Chromium 不渲染
+  `<mask>` 内容里的 `<use>` 引用）；**官方 chevron 在 Poker skin 下恒隐**
+  （normal/hover/focus/active 一致显示 Poker，hover 变色与 focus ring 等官方交互不受影响）；
+- **牌数从哪来**（纯只读视觉桥，零分组重算）：数据源 = 官方现成 API——session 作用域
+  条目都能拿到的标准 kit `useConversation`（官方 `SessionStandardProps`，ui-conversation
+  经 `ctx.uiSession.provide` 下发）→ `ConversationSnapshot.views.grouped('chat')` →
+  `groupSource(key)` → `GroupSnapshot.data.summary.counts`（与官方
+  `ChatViewInjected.keyedHooks.chatGroup` 是同一个源）；出口 = 官方组根上的稳定 DOM 事实
+  `data-chat-group-key`，插件只在自己的样式表里按它生成覆盖规则。官方分组算法、成员判定、
+  open/closed、折叠交互、隐藏与搜索展开全部不重算、不接管；不写官方 DOM、不加官方属性。
+  官方未提供这些 API 的旧宿主上不产出任何规则 → 行为回落为 5 张；
 - 花色按官方 `data-process-activity` 值映射（`ACTIVITY_SUIT` 单一数据源生成 CSS）：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
@@ -112,9 +122,10 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   跟随主题。每 0.8s 一组：两张完整平面牌对角轻微错开再合拢（唯一的 rotate 是 ±3.1°
   二维平面小角度），中途 discrete 在中点切换上下层，四个动态蒙版把下层牌与上层牌
   重叠处的线条挖空（透明卡面仍透壁纸、不透下层牌）；五组相位连成 4s 完整循环：
-  diamond → club → spade → heart → deepseek →（回到 diamond）。回合结束 shimmer
-  消失 → 自动回落 completed 双态（收起牌堆 / 展开扇形），全程纯 CSS cascade、
-  零 JS 运行态。系统「减少动态效果」开启时运行态直接显示静态花色牌；
+  diamond → club → spade → heart → deepseek →（回到 diamond）。运行态与牌数无关——
+  本组只有一个工具也仍是五牌面轮换；回合结束 shimmer 消失 → 自动回落 completed 双态
+  （按本组工具数的 3/5 张收起牌堆 / 展开扇形），全程纯 CSS cascade、零 JS 运行态。
+  系统「减少动态效果」开启时运行态直接显示静态花色牌；
 - **软依赖**：全部选择器挂在官方 DOM 钩子上，总闸 = 皮肤 `<style>` 元素的
   `disabled` 属性（插件不写任何 `document.body` 全局状态）——DSH 改掉钩子时
   **最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。

@@ -212,8 +212,8 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
     assert.ok(fanLine.includes('animation:tf-step-open .4s linear 1'), 'open 规则应挂展开帧序动画（400ms 在 350-450ms 目标内）')
   })
 
-  it('morph 端点逐值等于现有真实数据：stepMorphTransforms(0)≡stack5、(1)≡fan5（不改几何）', () => {
-    const zero = T.stepMorphTransforms(0), one = T.stepMorphTransforms(1)
+  it('morph 端点逐值等于现有真实数据：stepMorphTransforms(5, 0)≡stack5、(5, 1)≡fan5（不改几何）', () => {
+    const zero = T.stepMorphTransforms(5, 0), one = T.stepMorphTransforms(5, 1)
     const stack = T.pokerTransforms(5, false), fan = T.pokerTransforms(5, true)
     for (let i = 1; i <= 5; i++) {
       // t=0：rotate 为 0（stack 无旋转）→ translate 必须等于 stack5
@@ -240,8 +240,8 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
 
   it('morph 每帧：5 张真实牌带插值变换 + 每个 occluder 与同层真实牌同步（逐帧 knockout）', () => {
     const t = 0.5
-    const tfs = T.stepMorphTransforms(t)
-    const frameUri = 'url("data:image/svg+xml,' + encodeURIComponent(T.stepCompletedGroupSvg(tfs)) + '")'
+    const tfs = T.stepMorphTransforms(5, t)
+    const frameUri = 'url("data:image/svg+xml,' + encodeURIComponent(T.stepCompletedGroupSvg(5, tfs)) + '")'
     const svg = decodeGroupMask(frameUri)
     // 5 张真实牌都在当帧插值位置（中间帧 ≠ 两个端点 → 必须带 rotate 或非端点 translate）
     const layers = [...svg.matchAll(/<g mask="url\(#scc-m\d\)"><g transform="([^"]+)">/g)].map((m) => m[1])
@@ -304,7 +304,7 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
   }
   it('遮挡 occluder 直接内联（mask 内容不得出现 <use>——Chromium 不渲染会导致下层穿透）', () => {
     for (const fan of [false, true]) {
-      const svg = decodeGroupMask(T.stepCompletedGroupMask(fan))
+      const svg = decodeGroupMask(T.stepCompletedGroupMask(5, fan))
       assert.ok(svg.startsWith('<svg'), '解码后应为 SVG 文本')
       const masks = [...svg.matchAll(/<mask id="scc-m(\d)"[\s\S]*?<\/mask>/g)]
       assert.equal(masks.length, 5, '五张 owner 各一个 mask（fan=' + fan + '）')
@@ -320,7 +320,7 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
   })
 
   it('遮挡覆盖下层 stroke 与 pip：occluder 是实心黑牌面（fill=#000 覆盖整个牌外缘，真 knockout）', () => {
-    const svg = decodeGroupMask(T.stepCompletedGroupMask(true))
+    const svg = decodeGroupMask(T.stepCompletedGroupMask(5, true))
     const mask1 = svg.match(/<mask id="scc-m1"[\s\S]*?<\/mask>/)[0]
     // 实心黑面挖空：上层覆盖区内的下层 stroke 与 pip 一并消失（与参考实现
     // mask rect fill="black"、Turn pokerDynamicMask fill="black" 同款）
@@ -335,7 +335,7 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
 
   it('背景保持透明：真实牌 rect fill=none（透壁纸）；mask occluder 实心黑（机制本体，非可见填充）', () => {
     for (const fan of [false, true]) {
-      const svg = decodeGroupMask(T.stepCompletedGroupMask(fan))
+      const svg = decodeGroupMask(T.stepCompletedGroupMask(5, fan))
       const maskStart = svg.indexOf('<mask ')
       // 真实牌形（defs 组）：rect 一律 fill="none"（牌身透明，壁纸/透明背景正确）
       for (const rect of svg.slice(0, maskStart).matchAll(/<rect [^/]*\/>/g)) {
