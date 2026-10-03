@@ -176,3 +176,76 @@ describe('组件渲染与降级', () => {
     T.setFoldIconStyle('poker')
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════
+// 3 张牌身份连续性：stack ↔ fan 是同一张牌，层级与身份都不交换
+// ══════════════════════════════════════════════════════════════════════
+// 旧实现 fan3 = { 1: -26°, 2: +26°, 3: 0° } ⇒ 收起时的顶牌 card3 展开后**留在中间**，
+// card2 跑到最右并（配合 order [1,3,2]）变成顶层——顶牌身份被顶替。
+// 正确映射与 fan5 同构：居中那张不带旋转，两侧对称，id 越大越靠右（顶牌向右展开）。
+describe('3 张牌身份连续性（stack ↔ fan 同一 card id）', () => {
+  const rotateOf = (s) => { const m = /rotate\(([-\d.]+) 8 12\)/.exec(s); return m ? Number(m[1]) : 0 }
+  const translateOf = (s) => { const m = /translate\(([-\d.]+), ([-\d.]+)\)/.exec(s); return { x: Number(m[1]), y: Number(m[2]) } }
+
+  it('stack3：card1 底（右下）、card2 中、card3 顶（左上）', () => {
+    const stack = T.pokerTransforms(3, false)
+    const [c1, c2, c3] = [translateOf(stack[1]), translateOf(stack[2]), translateOf(stack[3])]
+    assert.ok(c1.x > c2.x && c2.x > c3.x, 'x 递减：card1 最右、card3 最左')
+    assert.ok(c1.y > c2.y && c2.y > c3.y, 'y 递减：card1 最下、card3 最上（顶牌）')
+    assert.equal(rotateOf(stack[1]) + rotateOf(stack[2]) + rotateOf(stack[3]), 0, '牌堆无旋转')
+  })
+
+  it('fan3：card1 左（-26°）、card2 居中（0°）、card3 右（+26°）', () => {
+    const fan = T.pokerTransforms(3, true)
+    assert.equal(rotateOf(fan[1]), -26, 'card1 = 左牌')
+    assert.equal(rotateOf(fan[2]), 0, 'card2 = 中牌（居中不旋转）')
+    assert.equal(rotateOf(fan[3]), 26, 'card3 = 右牌（原顶牌向右展开）')
+  })
+
+  it('fan3 三张统一 translate(0, -0.18)（只改身份映射，不动几何量）', () => {
+    const fan = T.pokerTransforms(3, true)
+    for (const i of [1, 2, 3]) {
+      const t = translateOf(fan[i])
+      assert.equal(t.x, 0, 'card' + i + ' tx')
+      assert.equal(t.y, -0.18, 'card' + i + ' ty')
+    }
+  })
+
+  it('身份方向连续：底层牌向左、顶牌向右（与 fan5 同一规律）', () => {
+    const fan3 = T.pokerTransforms(3, true), fan5 = T.pokerTransforms(5, true)
+    assert.ok(rotateOf(fan3[1]) < 0 && rotateOf(fan3[3]) > 0, '3 张：id 小在左、id 大在右')
+    assert.ok(rotateOf(fan5[1]) < 0 && rotateOf(fan5[5]) > 0, '5 张同规律')
+    assert.equal(rotateOf(fan5[3]), 0, '5 张居中那张也不旋转（fan3 与 fan5 同构）')
+    // 每张牌在 stack 里越靠上（y 越小），fan 里越靠右（角度越大）——身份不被交换
+    const stack3 = T.pokerTransforms(3, false)
+    const order = [1, 2, 3].sort((a, b) => translateOf(stack3[b]).y - translateOf(stack3[a]).y)
+    const angles = order.map((i) => rotateOf(fan3[i]))
+    assert.deepEqual(angles, [-26, 0, 26], 'stack 从下到上 ↔ fan 从左到右一一对应：' + JSON.stringify(angles))
+  })
+
+  it('绘制顺序 = 身份序（开合一致）：card3 在两种状态下都是 z-top', () => {
+    assert.deepEqual(T.pokerPaintOrder(3), [1, 2, 3], '3 张 closed')
+    assert.deepEqual(T.pokerPaintOrder(5), [1, 2, 3, 4, 5], '5 张 closed')
+    // 旧 bug 的形态：3 张展开曾是 [1,3,2]（card2 压顶）
+    assert.notDeepEqual(T.pokerPaintOrder(3), [1, 3, 2], '不得再用 [1,3,2]')
+    const zOf = (count) => Object.fromEntries(T.pokerPaintOrder(count).map((id, index) => [id, index]))
+    for (const count of [3, 5]) {
+      const z = zOf(count)
+      assert.equal(z[count], count - 1, '最大 id 的牌必须最上层')
+      assert.ok(z[3] > z[2] && z[2] > z[1], 'z 随 id 递增')
+    }
+  })
+
+  it('iconConfig 数据源与代码 fallback 的 fan3 必须逐值一致（单一事实来源）', async () => {
+    const { readFileSync } = await import('node:fs')
+    const json = JSON.parse(readFileSync(new URL('../icons/default.json', import.meta.url), 'utf8'))
+    const embedded = T.ICON_DEFAULTS.pokerTransforms
+    assert.deepEqual(embedded.fan3, json.pokerTransforms.fan3, 'ICON_DEFAULTS 与 default.json 一致')
+    const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+    const fallback = /: t\.fan3 \|\| \{ ([^}]+) \}/.exec(source)
+    assert.ok(fallback, 'client.js 里存在 fan3 fallback')
+    for (const [id, value] of Object.entries(json.pokerTransforms.fan3)) {
+      assert.ok(fallback[1].includes(`${id}: "${value}"`), 'fallback 缺少/不匹配 card' + id + '：' + value)
+    }
+  })
+})

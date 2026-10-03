@@ -121,6 +121,22 @@ describe('Step 牌数 B：3 张几何 = Turn 栏 3 张同一设计系统', () =>
     for (let i = 1; i <= 3; i++) assert.equal(layers[i - 1], tfs[i], 'card' + i + ' = fan3 变换')
     assert.equal(layers.filter((t) => t.includes('rotate(')).length, 2, 'fan3 = 两侧各 ±26°、中间牌不转')
     assert.ok(layers.some((t) => t.includes('rotate(-26 8 12)')) && layers.some((t) => t.includes('rotate(26 8 12)')), '扇角必须复用 fan3 真实数据')
+    // 身份映射（不是位置）：card1 左、card2 居中、card3 右——顶牌向右展开
+    assert.ok(layers[0].includes('rotate(-26 8 12)'), 'card1 必须是左牌（-26°）')
+    assert.ok(!layers[1].includes('rotate('), 'card2 必须是中牌（不旋转）')
+    assert.ok(layers[2].includes('rotate(26 8 12)'), 'card3（原顶牌）必须是右牌（+26°）')
+  })
+
+  it('3 张扇形 knockout 跟随身份：card1 被 2/3 挖、card2 被 3 挖、card3 不被挖', () => {
+    const tfs = T.pokerTransforms(3, true)
+    const svg = decodeMask(T.stepCompletedGroupMask(3, true))
+    const cutsOf = (owner) => {
+      const mask = new RegExp('<mask id="scc-m' + owner + '"[\\s\\S]*?</mask>').exec(svg)[0]
+      return [...mask.matchAll(/<g transform="([^"]+)">/g)].map((m) => m[1]).filter((t) => !t.includes('scale('))
+    }
+    assert.deepEqual(cutsOf(1), [tfs[2], tfs[3]], 'card1 只被更高层（2、3）挖，且用它们自己的位姿')
+    assert.deepEqual(cutsOf(2), [tfs[3]], 'card2 只被 card3 挖')
+    assert.deepEqual(cutsOf(3), [], '顶牌 card3 不被任何牌挖')
   })
   it('3 张几何参数与 Turn 栏 3 张同源：hThree=8.5 / y=3.5 / pipScaleThree', () => {
     const svg = decodeMask(T.stepCompletedGroupMask(3, false))
@@ -667,6 +683,64 @@ describe('Step 牌数 G：morph easing 方向对称', () => {
       const line = css.split('\n').find((l) => l.includes('@keyframes ' + name + '{'))
       assert.ok(line, name + ' 缺失')
       assert.ok(!line.includes('animation-timing-function'), name + ' 不得在帧内再叠加缓动（easing 已进位姿采样）')
+    }
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// H. 3 张牌 morph 全程身份连续（card id 不因方向/进度而交换）
+// ══════════════════════════════════════════════════════════════════════
+describe('Step 牌数 H：3 张 morph 全程身份连续', () => {
+  const rot = (s) => { const m = /rotate\((-?[\d.]+) 8 12\)/.exec(s); return m ? Number(m[1]) : 0 }
+  const tx = (s) => { const m = /translate\(([-\d.]+), ([-\d.]+)\)/.exec(s); return { x: Number(m[1]), y: Number(m[2]) } }
+
+  it('open 与 close 的每一帧：card1 恒为负角（向左）、card2 恒不旋转（居中）、card3 恒为正角（向右）', () => {
+    for (const [label, fromFan] of [['open', false], ['close', true]]) {
+      for (let k = 1; k <= 16; k += 1) {
+        const tfs = T.stepMorphTransforms(3, T.stepMorphProgress(k / 17, fromFan))
+        assert.ok(rot(tfs[1]) <= 0, label + ' 帧' + k + '：card1 不得转为正角（身份被换）')
+        assert.equal(rot(tfs[2]), 0, label + ' 帧' + k + '：card2 必须始终居中不旋转')
+        assert.ok(rot(tfs[3]) >= 0, label + ' 帧' + k + '：card3（顶牌）不得转为负角（身份被换）')
+        assert.equal(Number(rot(tfs[1]).toFixed(6)), -Number(rot(tfs[3]).toFixed(6)), label + ' 帧' + k + '：card1/card3 对称')
+        // 三张的 y 都在从各自的 stack 偏移收敛到 fan 的同一位姿（-0.18），
+        // 因此中途 y 互不相同是正常的——身份由「哪张牌拿到哪条插值线」保证，
+        // 而不是靠三张位置相同。
+        assert.ok(Math.abs(tx(tfs[1]).y - tx(tfs[3]).y) < 4.1, label + ' 帧' + k + '：card1/card3 的 y 差不超过 stack 偏移量')
+      }
+    }
+  })
+
+  it('端点：open 起点 = stack3、终点 = 新 fan3；close 起点 = 新 fan3、终点 = stack3', () => {
+    const stack = T.pokerTransforms(3, false), fan = T.pokerTransforms(3, true)
+    assert.equal(rot(fan[1]), -26)
+    assert.equal(rot(fan[2]), 0)
+    assert.equal(rot(fan[3]), 26)
+    for (const i of [1, 2, 3]) {
+      assert.equal(tx(T.stepMorphTransforms(3, T.stepMorphProgress(0, false))[i]).y, tx(stack[i]).y, 'open 起点 = stack')
+      const endOpen = T.stepMorphTransforms(3, T.stepMorphProgress(1, false))[i]
+      assert.equal(tx(endOpen).y, tx(fan[i]).y, 'open 终点 ty = fan3')
+      assert.equal(rot(endOpen), rot(fan[i]), 'open 终点 rotate = fan3')
+      const startClose = T.stepMorphTransforms(3, T.stepMorphProgress(0, true))[i]
+      assert.equal(rot(startClose), rot(fan[i]), 'close 起点 = fan3')
+      assert.equal(rot(T.stepMorphTransforms(3, T.stepMorphProgress(1, true))[i]), 0, 'close 终点 = stack3（无旋转）')
+    }
+  })
+
+  it('每帧绘制序 = 身份序（card3 恒为最上层，逐帧 occlusion 跟随身份）', () => {
+    for (const fromFan of [false, true]) {
+      for (const k of [1, 8, 16]) {
+        const tfs = T.stepMorphTransforms(3, T.stepMorphProgress(k / 17, fromFan))
+        const svg = decodeMask('url("data:image/svg+xml,' + encodeURIComponent(T.stepCompletedGroupSvg(3, tfs)) + '")')
+        const layers = layerTransformsOf(svg)
+        assert.deepEqual(layers, [tfs[1], tfs[2], tfs[3]], '绘制序恒为 card1 → card2 → card3')
+        const maskOf = (owner) => {
+          const block = new RegExp('<mask id="scc-m' + owner + '"[^]*?</mask>').exec(svg)[0]
+          return [...block.matchAll(/<g transform="([^"]+)">/g)].map((m) => m[1]).filter((t) => !t.includes('scale('))
+        }
+        assert.deepEqual(maskOf(1), [tfs[2], tfs[3]], 'card1 被 2/3 挖')
+        assert.deepEqual(maskOf(2), [tfs[3]], 'card2 被 3 挖')
+        assert.deepEqual(maskOf(3), [], 'card3 不被挖（恒顶层）')
+      }
     }
   })
 })

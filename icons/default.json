@@ -53,8 +53,8 @@
     },
     "fan3": {
       "1": "translate(0, -0.18) rotate(-26 8 12)",
-      "2": "translate(0, -0.18) rotate(26 8 12)",
-      "3": "translate(0, -0.18)"
+      "2": "translate(0, -0.18)",
+      "3": "translate(0, -0.18) rotate(26 8 12)"
     },
     "fan5": {
       "1": "translate(0, -0.608) rotate(-32 8 12)",

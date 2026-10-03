@@ -90,6 +90,7 @@ const TEST_EXPORTS = [
   'buildPokerSVGBase',
   'buildPokerSpinSVG',
   'pokerTransforms',
+  'pokerPaintOrder',
   'foldSuitFor',
   'pokerFacePool',
   'POKER_PIPS',

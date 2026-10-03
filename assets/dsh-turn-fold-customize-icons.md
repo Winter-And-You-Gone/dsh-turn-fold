@@ -38,7 +38,10 @@ Write a complete icon package (same shape as `icons/default.json`, including `me
     "heart":   { ... }, "diamond": { ... }, "club": { ... }
   },
   "pokerSVGBase":    { ... },          // card face base
-  "pokerTransforms": { ... },          // stack/fan geometry
+  "pokerTransforms": { ... },          // stack/fan geometry（牌身份连续：同一 card id
+                                       //  在 stack 与 fan 里是同一张牌、层级不变——
+                                       //  stack 的顶牌（最大 id）在 fan 里必须是最右那张，
+                                       //  与 fan5 同构：居中那张不旋转、两侧对称）
   "pokerSpin":       { ... },          // flip animation
   "pokerAnimSVG":    "...",            // running 5-face rotation animation (largest block)
   "pokerSpinDeepseek":"..."            // DeepSeek face

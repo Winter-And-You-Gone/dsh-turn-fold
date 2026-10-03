@@ -109,7 +109,10 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   按 24px 渲染（1.5px/单位），牌外缘 ≈9.62×13.05px、描边 1.05px，两侧逐像素一致；
 - **completed 双态图标**（Fold-state aware）：收起 = 花色牌堆（closed = 牌收好未翻看），
   展开 = 扇形（open = 牌已翻看）——与运行态牌面同序同构，几何直接复用 Turn 栏的
-  stack3/stack5 · fan3/fan5 变换表（`icons/default.json` 数据源）；**张数按本 Process
+  stack3/stack5 · fan3/fan5 变换表（`icons/default.json` 数据源）；**牌身份连续**：
+  同一 card id 在 stack 与 fan 里是同一张牌、层级不变——stack3 的顶牌 card3 在 fan3
+  里是最右那张（与 fan5 同构：居中那张不旋转、两侧对称、id 越大越靠右），展开时
+  它从左上顶牌位置一路向右、始终压在最上层；**张数按本 Process
   Group 的工具调用数决定**：官方 `summary.counts[].count` 求和 ≤3 → 3 张、≥4 → 5 张
   （旧宿主 / 数据取不到 → 5 张安全回落，绝不猜 3 张）；
   **开合有 morph 过渡**：预采样 stack↔fan 插值帧（cubic-bezier(.22,1,.36,1) 采样、
@@ -241,6 +244,8 @@ npm run check      # 语法检查 client.js / index.js
 选择器可切回官方 chevron）：
 
 - **完成态**：收起为牌堆（本回合工具+子代理 ≤3 用 3 张、>3 用 5 张），展开变扇形；
+  **牌身份连续**：绘制顺序恒为身份序 1…N（开合一致），stack 的顶牌就是 fan 最右那张，
+  同一张牌在开合全程保持自己的层级——不会出现"展开后中间那张变成顶牌"的身份交换；
 - **牌面池**：♠ ♥ ♦ ♣ + DeepSeek 鲸鱼 Logo **五选一**，每回合按回合号随机记忆（重渲染不变）；
 - **运行态**：对角线轴翻牌（四花色循环、Logo 背面），SVG 原生动画，SMIL 不随重渲染重启；
 - **遮挡**：luminance mask 按上层牌变换动态挖空下层覆盖区，牌身透明（壁纸/透明背景下正确）；

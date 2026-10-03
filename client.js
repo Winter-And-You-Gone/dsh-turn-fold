@@ -338,6 +338,7 @@ window.__ModuleLoader__.load({
 		var ICONS_STORAGE_KEY = "dsh-turn-fold:icons";
 		var ICON_DEFAULTS = /*__ICON_DEFAULTS__*/ 
 
+
 {
   "meta": {
     "version": 1,
@@ -393,8 +394,8 @@ window.__ModuleLoader__.load({
     },
     "fan3": {
       "1": "translate(0, -0.18) rotate(-26 8 12)",
-      "2": "translate(0, -0.18) rotate(26 8 12)",
-      "3": "translate(0, -0.18)"
+      "2": "translate(0, -0.18)",
+      "3": "translate(0, -0.18) rotate(26 8 12)"
     },
     "fan5": {
       "1": "translate(0, -0.608) rotate(-32 8 12)",
@@ -1642,18 +1643,33 @@ window.__ModuleLoader__.load({
 				'<defs>' + defs + '</defs>' + parts.join("") + '</svg>';
 		}
 		/** 扇形/牌堆变换表（中心对齐 (8,8)；card-3 纯 translate 防过渡 bug）。
-		 *  变换表从 iconConfig.pokerTransforms 读取，可被图标包覆盖。 */
+		 *  变换表从 iconConfig.pokerTransforms 读取，可被图标包覆盖。
+		 *  **牌身份连续**：同一 card id 在 stack 与 fan 里是同一张牌，层级不变——
+		 *  stack3 的顶牌 card3 在 fan3 里必须是最右那张（与 fan5 同构：居中那张不带旋转，
+		 *  两侧对称展开、id 越大越靠右）。 */
 		function pokerTransforms(count, fan) {
 			var five = count > 3;
 			var t = (iconConfig && iconConfig.pokerTransforms) || {};
 			if (fan) {
 				return five
 					? t.fan5 || { 1: "translate(0, -0.608) rotate(-32 8 12)", 2: "translate(0, -0.608) rotate(-16 8 12)", 3: "translate(0, -0.608)", 4: "translate(0, -0.608) rotate(16 8 12)", 5: "translate(0, -0.608) rotate(32 8 12)" }
-					: t.fan3 || { 1: "translate(0, -0.18) rotate(-26 8 12)", 2: "translate(0, -0.18) rotate(26 8 12)", 3: "translate(0, -0.18)" };
+					: t.fan3 || { 1: "translate(0, -0.18) rotate(-26 8 12)", 2: "translate(0, -0.18)", 3: "translate(0, -0.18) rotate(26 8 12)" };
 			}
 			return five
 				? t.stack5 || { 1: "translate(1.6, 1.6)", 2: "translate(0.8, 0.8)", 3: "translate(0, 0)", 4: "translate(-0.8, -0.8)", 5: "translate(-1.6, -1.6)" }
 				: t.stack3 || { 1: "translate(1, 2.25)", 2: "translate(0, 0.25)", 3: "translate(-1, -1.75)" };
+		}
+		/** 牌的绘制顺序（index 越大越在上，同时决定 mask 遮挡集合）。
+		 *  **开合两态共用同一顺序** = 牌身份连续性：同一张牌在 morph 全过程中保持自己的
+		 *  层级，最右的牌（最大 id，也是 stack 的顶牌）永远最后绘制。
+		 *  旧实现给 3 张展开用了 [1,3,2]（让当时的"最右牌"card2 压顶），配合旧的
+		 *  fan3（card2 在右、card3 居中）造成顶牌身份在展开时被 card2 顶替——
+		 *  位置与遮挡同时交换。fan3 修正为 card3 在右后，顺序回归身份序即可。 */
+		function pokerPaintOrder(count) {
+			var n = count > 3 ? 5 : 3;
+			var order = [];
+			for (var i = 1; i <= n; i++) order.push(i);
+			return order;
 		}
 		/** 扑克牌堆/扇形图标组件：开合时逐张牌从牌堆变形为扇形（或反向），CSS transition 驱动形变；
 		 *  mask 遮挡方案的 occluder 与真实牌使用同一套绝对 transform + 过渡，动画期间逐帧对齐。 */
@@ -1672,8 +1688,9 @@ window.__ModuleLoader__.load({
 				if (!svg) return;
 				var five = count > 3;
 				var n = five ? 5 : 3;
-				// 叠放顺序：牌堆顶牌最后画；扇形最右的牌最后画（右手握牌）
-				var order = open ? (five ? [1, 2, 3, 4, 5] : [1, 3, 2]) : (five ? [1, 2, 3, 4, 5] : [1, 2, 3]);
+				// 叠放顺序 = 牌身份序（1 < 2 < 3 / 1 … 5），开合两态一致：
+				// stack 的顶牌与 fan 最右的牌是同一张（最大 id），morph 全程不换身份。
+				var order = pokerPaintOrder(count);
 				// z-order 映射：index 越大越在上（越后画）
 				var z = {};
 				for (var zi = 0; zi < order.length; zi++) z[order[zi]] = zi;
