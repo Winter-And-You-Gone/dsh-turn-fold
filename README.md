@@ -260,8 +260,14 @@ npm run check      # 语法检查 client.js / index.js
 - **迁移**：旧设置里的 `foldIcon` / `stepSkin` 任一为 `native` → 升级后 `iconStyle=native`
   （老用户不会突然重新出现扑克）；两者都是 poker → poker；新字段存在时优先。
   迁移只发生在读取层；下一次保存只写 `iconStyle`（并保留 localStorage 里的未知字段）。
-- 切换**无需刷新页面**：Turn 组件订阅 `useIconStyle()` 重渲染换前导图标；Step 由
-  `applyIconStyle()` 同步两张样式表的 `disabled` 总闸。
+- 切换**无需刷新页面**：`iconStyle` 的 React 订阅**只有一处**（EnhancedTurnProcessView
+  无条件调用一次），随后以普通字符串 prop 下传给 TurnBarView 与前导图标工厂
+  `turnPokerIcon(iconStyle, …)`——TurnBarView 的 `canToggle` 会随回合生命周期变化，
+  若在它内部订阅就成了条件 Hook（Rules of Hooks 违规），因此源码有静态守卫锁死这一点；
+  Step 由 `applyIconStyle()` 同步两张样式表的 `disabled` 总闸。
+- 旧字段清理：`foldIcon` / `stepSkin` 只在读取时用于一次性迁移；下一次真实保存
+  （改字段显隐或切图标模式）时 `saveSettings()` 会**删除**这两个键并写入 `iconStyle`，
+  其余未知字段原样保留（启动阶段不写盘）。
 
 ### 扑克模式细节（iconStyle = poker）
 

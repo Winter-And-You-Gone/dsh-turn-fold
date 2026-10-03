@@ -7,6 +7,7 @@
 //   native → Turn 官方风格 chevron（保留全部增强字段）+ Step 完全恢复官方图标
 // 旧 foldIcon/stepSkin 只在 load 层做一次性迁移，运行时不再维护两套状态。
 import { describe, it, beforeEach } from 'node:test'
+import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import { loadPlugin } from './helpers/loader.mjs'
 import dom, { sharedWindow, sharedDocument } from './helpers/dom.mjs'
@@ -155,5 +156,137 @@ describe('iconStyle C：native = 官方图标原样（Step）', () => {
     T.setIconStyle('poker')
     assert.equal(skinEl().disabled, false)
     assert.equal(cardEl().disabled, false)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// D. legacy key 真正删除 + 未知字段保留 + 启动不写盘
+// ══════════════════════════════════════════════════════════════════════
+describe('iconStyle D：legacy key 一次性清理', () => {
+  function loadWith(stored) {
+    sharedWindow.localStorage.setItem(T.SETTINGS_KEY, JSON.stringify(stored))
+    return loadPlugin({ window: sharedWindow }).test
+  }
+  const stored = () => JSON.parse(sharedWindow.localStorage.getItem(T.SETTINGS_KEY))
+
+  beforeEach(() => { sharedWindow.localStorage.removeItem(T.SETTINGS_KEY) })
+
+  it('load 只读：启动阶段不写 localStorage（legacy key 原样留着，等下一次真实保存）', () => {
+    sharedWindow.localStorage.setItem(T.SETTINGS_KEY, JSON.stringify({ foldIcon: 'native', stepSkin: 'poker', foo: 123 }))
+    const loaded = loadPlugin({ window: sharedWindow }).test
+    assert.equal(loaded.settings.iconStyle, 'native', '迁移在内存里生效')
+    const raw = sharedWindow.localStorage.getItem(T.SETTINGS_KEY)
+    assert.equal(raw.includes('"foldIcon"'), true, '启动阶段不得改写磁盘（保持只读）')
+    sharedWindow.localStorage.removeItem(T.SETTINGS_KEY)
+  })
+
+  it('下一次真实保存：删除 foldIcon / stepSkin，重写 iconStyle，保留未知字段与 fields', () => {
+    sharedWindow.localStorage.setItem(T.SETTINGS_KEY, JSON.stringify({
+      fields: { duration: false, ttft: true }, foldIcon: 'native', stepSkin: 'poker', foo: 123, futureSetting: 'x',
+    }))
+    const loaded = loadPlugin({ window: sharedWindow }).test
+    assert.equal(loaded.settings.iconStyle, 'native')
+    assert.equal(loaded.settings.fields.duration, false, '旧 fields 值照常读入')
+
+    loaded.setFieldVisible('tokens', false)         // 触发一次真实保存
+    const saved = stored()
+    assert.equal('foldIcon' in saved, false, 'foldIcon 必须被删除')
+    assert.equal('stepSkin' in saved, false, 'stepSkin 必须被删除')
+    assert.equal(saved.iconStyle, 'native', 'iconStyle 已写入')
+    assert.equal(saved.foo, 123, '未知字段保留')
+    assert.equal(saved.futureSetting, 'x', '未知字段保留')
+    assert.equal(saved.fields.duration, false, 'fields 原值保持')
+    assert.equal(saved.fields.tokens, false, 'fields 新值写入')
+    sharedWindow.localStorage.removeItem(T.SETTINGS_KEY)
+  })
+
+  it('四类迁移 + 清理组合', () => {
+    const cases = [
+      [{ foldIcon: 'native', stepSkin: 'poker' }, 'native'],
+      [{ foldIcon: 'poker', stepSkin: 'native' }, 'native'],
+      [{ foldIcon: 'poker', stepSkin: 'poker' }, 'poker'],
+      [{ iconStyle: 'poker', foldIcon: 'native', stepSkin: 'native' }, 'poker'],
+    ]
+    for (const [before, expected] of cases) {
+      sharedWindow.localStorage.setItem(T.SETTINGS_KEY, JSON.stringify(before))
+      const loaded = loadPlugin({ window: sharedWindow }).test
+      assert.equal(loaded.settings.iconStyle, expected, JSON.stringify(before))
+      loaded.setFieldVisible('cacheHit', false)
+      const saved = stored()
+      assert.equal('foldIcon' in saved, false, '清理 foldIcon: ' + JSON.stringify(before))
+      assert.equal('stepSkin' in saved, false, '清理 stepSkin: ' + JSON.stringify(before))
+      assert.equal(saved.iconStyle, expected)
+      assert.equal(saved.fields.cacheHit, false)
+      loaded.setFieldVisible('cacheHit', true)
+      sharedWindow.localStorage.removeItem(T.SETTINGS_KEY)
+    }
+  })
+
+  it('fields 在 iconStyle 迁移前后逐字段一致（不被迁移改写）', () => {
+    sharedWindow.localStorage.setItem(T.SETTINGS_KEY, JSON.stringify({
+      fields: { duration: true, ttft: false, tokens: true, tokensPerSecond: false, cacheHit: true }, foldIcon: 'native',
+    }))
+    const loaded = loadPlugin({ window: sharedWindow }).test
+    assert.deepEqual(loaded.settings.fields, { duration: true, ttft: false, tokens: true, tokensPerSecond: false, cacheHit: true })
+    loaded.setIconStyle('poker')
+    assert.deepEqual(loaded.settings.fields, { duration: true, ttft: false, tokens: true, tokensPerSecond: false, cacheHit: true })
+    sharedWindow.localStorage.removeItem(T.SETTINGS_KEY)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// E. 源码静态守卫：Hook 调用形状
+// ══════════════════════════════════════════════════════════════════════
+describe('iconStyle E：源码静态守卫（Hook 调用形状）', () => {
+  const source = () => readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  it('禁止任何 "if (... useIconStyle(...))" 形式的条件 Hook', () => {
+    const lines = source().split('\n')
+    for (const line of lines) {
+      const code = line.split('//')[0]
+      if (!code.includes('useIconStyle(')) continue
+      assert.ok(!/^\s*(if|for|while|switch|\}|\?)\s*[^\n]*useIconStyle\(/.test(code),
+        '条件分支里不得调用 useIconStyle：' + line.trim())
+      assert.ok(!/\?[^:]*useIconStyle\(|&&[^&]*useIconStyle\(|\|\|[^|]*useIconStyle\(/.test(code),
+        '不得在逻辑表达式里调用 useIconStyle：' + line.trim())
+    }
+  })
+  it('TurnBarView 函数体内不得出现 useIconStyle（订阅只在 EnhancedTurnProcessView）', () => {
+    const lines = source().split('\n')
+    const start = lines.findIndex((l) => /^\s*function TurnBarView\(/.test(l))
+    assert.ok(start > 0, 'TurnBarView 必须在')
+    let end = -1
+    for (let i = start + 1; i < lines.length; i += 1) {
+      if (/^\t\tfunction [A-Za-z_$]/.test(lines[i])) { end = i; break }
+    }
+    assert.ok(end > start, 'TurnBarView 边界可定位')
+    const body = lines.slice(start, end).join('\n')
+    assert.ok(!body.includes('useIconStyle'), 'TurnBarView 不得自行订阅图标模式（canToggle 会变 → 条件 Hook 风险）')
+    assert.ok(body.includes('props.iconStyle'), 'TurnBarView 必须从 prop 读 iconStyle')
+  })
+  it('EnhancedTurnProcessView 只有一处 useIconStyle()，且位于全部条件 return 之前', () => {
+    const lines = source().split('\n')
+    const start = lines.findIndex((l) => /^\s*function EnhancedTurnProcessView\(/.test(l))
+    let end = lines.length
+    for (let i = start + 1; i < lines.length; i += 1) {
+      if (/^\t\tfunction [A-Za-z_$]/.test(lines[i])) { end = i; break }
+    }
+    const body = lines.slice(start, end)
+    const calls = body.filter((l) => l.split('//')[0].includes('useIconStyle('))
+    assert.equal(calls.length, 1, '只允许一处订阅：' + JSON.stringify(calls))
+    const callIndex = body.findIndex((l) => l.split('//')[0].includes('useIconStyle('))
+    const firstReturn = body.findIndex((l) => /^\s*return react\.createElement/.test(l))
+    assert.ok(firstReturn === -1 || callIndex < firstReturn, '订阅必须早于任何条件 return')
+  })
+  it('turnPokerIcon 为纯函数：签名首参为 iconStyle，函数体内不读全局设置', () => {
+    const lines = source().split('\n')
+    const start = lines.findIndex((l) => /function turnPokerIcon\(/.test(l))
+    assert.ok(start > 0, 'turnPokerIcon 必须在')
+    assert.ok(/function turnPokerIcon\(iconStyle,/.test(lines[start]), '首参必须是 iconStyle：' + lines[start].trim())
+    let end = -1
+    for (let i = start + 1; i < lines.length; i += 1) {
+      if (/^\t\tfunction [A-Za-z_$]/.test(lines[i])) { end = i; break }
+    }
+    const body = lines.slice(start, end + 1).join('\n')
+    assert.ok(!body.includes('getIconStyle()'), '纯函数不得读全局 iconStyle')
   })
 })

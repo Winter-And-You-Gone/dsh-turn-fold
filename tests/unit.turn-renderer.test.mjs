@@ -262,3 +262,167 @@ describe('历史会话渲染：durable projection 用真实回合数据救回首
     assert.ok(label.includes('141tok/s'), 'durable 真实 decode-speed 必须出现：' + label)
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════
+// 同一实例状态机（不 remount）：Hook 顺序 + 图标/字段/Fold 全程正确
+// ══════════════════════════════════════════════════════════════════════
+// 为什么必须"同实例"：TurnBarView 的 canToggle 随回合生命周期变化
+// （running→settled），此前 `if (canToggle && useIconStyle() === "poker")` 会让
+// hook 数量在两次 render 之间变化 —— Rules of Hooks 违规（"Rendered more hooks
+// than during the previous render"）。本轮把 iconStyle 订阅收敛到
+// EnhancedTurnProcessView 一处、以普通 prop 下传；这个用例走完整生命周期，
+// 全程复用同一个 root / 同一个组件实例（不 unmount、不重新 mount）。
+describe('同一实例状态机：running → settled → open → native → poker', () => {
+  function runningProps(overrides = {}) {
+    const p = subscriptionProps({ status: 'open', startTime: T0, endTime: null, reason: undefined, steps: [], stepsData: [], tail: undefined }, overrides)
+    return { node: p.node, turnProcess: p.turnProcess, useTurnData: p.useTurnData, useChat: p.useChat }
+  }
+  const leadingChevron = () => container.querySelector('.ccg-turn-bar-main > svg[aria-hidden=true]')
+  const pokIcon = () => container.querySelector('.ccg-poker-icon')
+  const rightChevron = () => container.querySelector('.ccg-turn-bar-chevron')
+  const label = () => barLabel()
+
+  it('A→F 全程：无 Hook 顺序错误，图标/字段/Fold 语义逐步正确', () => {
+    const hookErrors = []
+    const originalError = console.error
+    console.error = function () {
+      hookErrors.push([...arguments].map(String).join(' '))
+    }
+    try {
+      // A. running · poker · canToggle=false
+      renderView(runningProps())
+      assert.ok(container.querySelector('[data-tf-running]'), 'A: running 栏在')
+      assert.ok(pokIcon(), 'A: 运行中前导 = 翻牌 Poker')
+      assert.equal(rightChevron(), null, 'A: running 无右侧折叠箭头')
+      assert.equal(container.querySelector('button.ccg-turn-bar-main'), null, 'A: running 是静态 div')
+      const aLabel = label()
+      clickMainStatic()
+      assert.deepEqual(setOpenCalls, [], 'A: running 无 setOpen 通道')
+      assert.ok(aLabel.includes('耗时') && aLabel.includes('token'), 'A: 字段槽位在')
+
+      // B. settled closed · poker · canToggle=true
+      renderView(closedProps())
+      assert.ok(pokIcon(), 'B: 收起 = 牌堆 Poker')
+      assert.ok(rightChevron(), 'B: poker 有右侧折叠箭头')
+      assert.equal(container.querySelector('button.ccg-turn-bar-main').getAttribute('aria-expanded'), 'false')
+      const bLabel = label()
+      assert.ok(bLabel.includes('首字0.8s') && bLabel.includes('370,202 token') && bLabel.includes('263tok/s') && bLabel.includes('缓存93.99%') && bLabel.includes('22分34秒'), 'B: 字段齐全：' + bLabel)
+      assert.ok(container.querySelector('.ccg-turn-bar-right').textContent.includes('第13轮'), 'B: 第 N 轮在')
+      assert.ok(container.querySelector('.ccg-gear-button'), 'B: 齿轮在')
+      clickMain()
+      assert.deepEqual(setOpenCalls, [true], 'B: 点击只调 setOpen(true)')
+
+      // C. settled open · poker
+      renderView(closedProps({ open: true }))
+      const cBar = container.querySelector('button.ccg-turn-bar-main')
+      assert.equal(cBar.getAttribute('data-open'), 'true', 'C: 展开视觉')
+      const motion = [...container.querySelectorAll('.ccg-poker-motion')].map((m) => m.getAttribute('transform') || '')
+      assert.ok(motion.some((t) => t.includes('rotate')), 'C: 展开 = 扇形（含 rotate 的位姿）')
+      clickMain()
+      assert.deepEqual(setOpenCalls, [true, false], 'C: 点击只调 setOpen(false)')
+
+      // D. settled open · native
+      act(() => { T.setIconStyle('native') })
+      renderView(closedProps({ open: true }))
+      assert.equal(pokIcon(), null, 'D: native 无 Poker')
+      const dChevron = leadingChevron()
+      assert.ok(dChevron, 'D: native 前导 = 自有 chevron')
+      assert.ok(String(dChevron.getAttribute('style')).includes('rotate(180deg)'), 'D: 展开态 chevron 向上')
+      assert.equal(rightChevron(), null, 'D: native 无右侧第二个 chevron')
+      const dLabel = label()
+      assert.ok(dLabel.includes('22分34秒') && dLabel.includes('首字0.8s') && dLabel.includes('370,202 token') && dLabel.includes('263tok/s') && dLabel.includes('缓存93.99%'), 'D: 增强字段全保留：' + dLabel)
+      assert.ok(container.querySelector('.ccg-turn-bar-right').textContent.includes('第13轮'), 'D: 第 N 轮在')
+      assert.ok(container.querySelector('.ccg-gear-button'), 'D: 齿轮在')
+
+      // E. settled closed · native
+      renderView(closedProps())
+      const eChevron = leadingChevron()
+      assert.ok(eChevron, 'E: native 收起仍有前导 chevron')
+      assert.ok(!String(eChevron.getAttribute('style')).includes('rotate(180deg)'), 'E: 收起态 chevron 向下（无旋转）')
+      assert.equal(rightChevron(), null, 'E: native 仍无右侧箭头')
+      clickMain()
+      assert.deepEqual(setOpenCalls, [true, false, true], 'E: native 点击同样只调 setOpen(true)')
+
+      // F. 切回 poker
+      act(() => { T.setIconStyle('poker') })
+      renderView(closedProps())
+      assert.ok(pokIcon(), 'F: 切回后 Poker 恢复')
+      assert.ok(rightChevron(), 'F: 右侧折叠箭头恢复')
+      assert.equal(leadingChevron(), null, 'F: native chevron 退场')
+
+      // 形状稳定性：iconStyle 每次切换都会重渲染全部栏，但不产生任何 hook 顺序告警
+      assert.deepEqual(hookErrors.filter((message) => /hook/i.test(message)), [], 'React 不得报 hook 顺序问题：' + hookErrors.join(' | '))
+      assert.deepEqual(hookErrors, [], 'React 不得有任何 console.error：' + hookErrors.join(' | '))
+    } finally {
+      console.error = originalError
+      act(() => { T.setIconStyle('poker') })
+    }
+  })
+
+  it('同一实例连续 rerender 50 次（running↔settled + open↔closed + poker↔native）无告警', () => {
+    const hookErrors = []
+    const originalError = console.error
+    console.error = function () { hookErrors.push([...arguments].map(String).join(' ')) }
+    try {
+      for (let i = 0; i < 50; i += 1) {
+        const running = i % 3 === 0
+        act(() => { T.setIconStyle(i % 2 === 0 ? 'poker' : 'native') })
+        renderView(running ? runningProps() : closedProps({ open: i % 4 === 0 }))
+      }
+      assert.deepEqual(hookErrors, [], '50 次状态往返不得有任何 React 告警：' + hookErrors.slice(0, 3).join(' | '))
+    } finally {
+      console.error = originalError
+      act(() => { T.setIconStyle('poker') })
+    }
+  })
+
+  function clickMainStatic() {
+    const el = container.querySelector('[data-tf-running]')
+    if (!el) return
+    act(() => { el.dispatchEvent(new sharedWindow.MouseEvent('click', { bubbles: true })) })
+  }
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// StrictMode：effect mount/unmount/replay 下的状态一致性
+// ══════════════════════════════════════════════════════════════════════
+describe('StrictMode 严格验收（effect 双调用）', () => {
+  function renderStrict(props) {
+    act(() => {
+      root.render(react.createElement(react.StrictMode, null,
+        react.createElement(T.EnhancedTurnProcessView, props)))
+    })
+  }
+  it('同一实例在 StrictMode 下走完 running→settled→native→poker，无告警、图标与总闸一致', () => {
+    const errors = []
+    const originalError = console.error
+    console.error = function () { errors.push([...arguments].map(String).join(' ')) }
+    const skinEl = sharedDocument.querySelector('style[data-plugin-css="' + T.SKIN_CSS_ID + '"]')
+    const cardEl = sharedDocument.querySelector('style[data-plugin-css="' + T.STEP_CARD_CSS_ID + '"]')
+    try {
+      const p1 = subscriptionProps({ status: 'open', startTime: T0, endTime: null, reason: undefined, steps: [], stepsData: [], tail: undefined })
+      renderStrict({ node: p1.node, turnProcess: p1.turnProcess, useTurnData: p1.useTurnData, useChat: p1.useChat })
+      assert.ok(container.querySelector('[data-tf-running]'), 'StrictMode: running 栏在')
+
+      renderStrict(closedProps())
+      assert.ok(container.querySelector('.ccg-poker-icon'), 'StrictMode: poker 前导在')
+      assert.equal(skinEl.disabled, false, 'StrictMode: poker 总闸开')
+
+      act(() => { T.setIconStyle('native') })
+      assert.equal(container.querySelector('.ccg-poker-icon'), null, 'StrictMode: native 无 Poker（订阅未被 StrictMode 打乱）')
+      assert.ok(container.querySelector('.ccg-turn-bar-main > svg[aria-hidden=true]'), 'StrictMode: native 前导 chevron 在')
+      assert.equal(skinEl.disabled, true, 'StrictMode: Step 皮肤表同步禁用')
+      assert.equal(cardEl.disabled, true, 'StrictMode: 牌数桥表同步禁用')
+
+      act(() => { T.setIconStyle('poker') })
+      assert.ok(container.querySelector('.ccg-poker-icon'), 'StrictMode: 切回 poker 立即恢复')
+      assert.equal(skinEl.disabled, false)
+      assert.equal(cardEl.disabled, false)
+
+      assert.deepEqual(errors, [], 'StrictMode 下不得有任何 React 告警：' + errors.slice(0, 3).join(' | '))
+    } finally {
+      console.error = originalError
+      act(() => { T.setIconStyle('poker') })
+    }
+  })
+})

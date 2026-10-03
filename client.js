@@ -225,6 +225,10 @@ window.__ModuleLoader__.load({
 						if (parsedPrevious && typeof parsedPrevious === "object") merged = parsedPrevious;
 					}
 				} catch (e) { /* 旧值损坏：直接覆盖 */ }
+				// 旧双字段（foldIcon / stepSkin）在 load 层已迁移进 iconStyle，这里一次性
+				// 删除——下一次真实保存后不再永久残留（未知字段保留）。
+				delete merged.foldIcon;
+				delete merged.stepSkin;
 				merged.fields = settings.fields;
 				merged.iconStyle = settings.iconStyle;
 				store.setItem(SETTINGS_KEY, JSON.stringify(merged));
@@ -1740,8 +1744,8 @@ window.__ModuleLoader__.load({
 		 *  native 模式：官方风格折叠 chevron（收起向下、展开 rotate(180deg) 向上，
 		 *  几何对齐官方 IconChevronDownOutlineRegular）；running 与不可折叠的回合
 		 *  官方本就不渲染折叠 chevron → 不渲染前导图标（官方 presentation 原样）。 */
-		function turnPokerIcon(cardCount, running, open, turn, canCollapse) {
-			if (getIconStyle() !== "poker") {
+		function turnPokerIcon(iconStyle, cardCount, running, open, turn, canCollapse) {
+			if (iconStyle !== "poker") {
 				if (running || !canCollapse) return undefined;
 				// 元素带 key（进 TurnBarView 的 kids 数组）——React 数组子元素必须有 key
 				return react.createElement(NativeChevronIcon, { key: "native", open: open });
@@ -1924,12 +1928,13 @@ window.__ModuleLoader__.load({
 				kids.push(" · ");
 			}
 			kids.push(react.createElement("span", { key: "label", className: "ccg-turn-bar-label" }, titleContent));
+			var iconStyle = props.iconStyle; // 由父组件订阅一次后下传（本组件禁止条件调用 Hook）
 			var rightKids = [];
 			if (round) rightKids.push(react.createElement("span", { key: "round" }, round));
 			// 右侧折叠提示箭头只在 poker 模式出现（poker 的前导位是牌堆/扇形/翻牌，
 			// 折叠提示放在右侧）。native 模式的前导位本身就是官方语义的折叠 chevron
 			//（收起向下/展开 rotate(180deg)），再保留右侧箭头会变成两个 chevron。
-			if (canToggle && useIconStyle() === "poker") {
+			if (canToggle && iconStyle === "poker") {
 				rightKids.push(react.createElement("span", { key: "chevron", className: "ccg-turn-bar-chevron" },
 					react.createElement(NativeChevronIcon, { size: 14 })));
 			}
@@ -2294,9 +2299,14 @@ window.__ModuleLoader__.load({
 						? stepLoc.data.get("assistant-step") : undefined);
 				}
 			}
-			// 设置订阅（字段显隐/图标风格变化 → 所有栏立即重渲染）
+			// 设置订阅（字段显隐/图标风格变化 → 所有栏立即重渲染）。
+			// iconStyle 在本组件只订阅这一次（无条件、位于全部条件 return 之前），
+			// 之后作为**普通字符串 prop** 下传给 TurnBarView 与前导图标工厂——
+			// TurnBarView 不得再自行 useIconStyle()：它的 canToggle 随回合生命周期
+			// 变化，条件调用 Hook 会让 hook 数量在 running→settled 之间变化
+			//（Rules of Hooks 违规，可能触发 "Rendered more hooks…"）。
 			useFieldVisibility();
-			useIconStyle();
+			var iconStyle = useIconStyle();
 			// Step 牌数桥：会话级只读订阅者，由本渲染器承载（插件既有的官方挂载点；
 			// 每个回合挂一份，leader 选举保证只有一个真的订阅与写规则）。
 			// 官方 turn-process 是 turn 级控制器节点、不是 Process Group 成员，所以桥
@@ -2310,6 +2320,7 @@ window.__ModuleLoader__.load({
 				return react.createElement(react.Fragment, null,
 					react.createElement(TurnBarView, {
 						running: false, open: false, canToggle: false,
+						iconStyle: iconStyle,
 						turnNumber: data && data.turn,
 						label: "",
 						round: turnRoundLabel(data && data.turn)
@@ -2328,9 +2339,10 @@ window.__ModuleLoader__.load({
 				return react.createElement(react.Fragment, null,
 					react.createElement(TurnBarView, {
 						running: true,
+						iconStyle: iconStyle,
 						turnNumber: clock.number,
 						label: label || (currentLocale() === "zh" ? "0秒" : "0s"),
-						poker: turnPokerIcon(cardCountRunning, true, false, clock.number, false),
+						poker: turnPokerIcon(iconStyle, cardCountRunning, true, false, clock.number, false),
 						round: round
 					}),
 					cardBridge
@@ -2351,13 +2363,14 @@ window.__ModuleLoader__.load({
 			return react.createElement(react.Fragment, null,
 				react.createElement(TurnBarView, {
 					running: false,
+					iconStyle: iconStyle,
 					open: open,
 					canToggle: canCollapse,
 					turnNumber: clock.number,
 					label: label,
 					statusText: statusText,
 					statusFailed: clock.reason === "error",
-					poker: turnPokerIcon(specCardCountFromSpec(spec), false, open, clock.number, canCollapse),
+					poker: turnPokerIcon(iconStyle, specCardCountFromSpec(spec), false, open, clock.number, canCollapse),
 					round: round,
 					onToggle: function () {
 						// 唯一合法的折叠通道：官方 owner state 的 setOpen。
