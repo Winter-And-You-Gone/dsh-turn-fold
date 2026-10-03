@@ -43,6 +43,8 @@ const TEST_EXPORTS = [
   'stepCompletedGroupMask',
   'stepCompletedGroupSvg',
   'stepMorphTransforms',
+  'stepMorphProgress',
+  'MORPH_FRAMES',
   'stepMorphKeyframes',
   'cssBezierEase',
   // Step 牌数桥（官方 group snapshot → 视觉选择器；只读）

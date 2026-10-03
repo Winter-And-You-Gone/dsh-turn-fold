@@ -223,9 +223,10 @@ describe('Step 牌数 D：3 张 morph 与 5 张同规格（16 帧 / 400ms）', (
       for (let k = 1; k <= 16; k++) {
         assert.ok(kf.includes((k * 100 / 17).toFixed(6) + '%{mask-image:url("data:image/svg+xml'), name + ' 帧 ' + k + ' 缺失')
       }
-      // 末帧（16/17）应等于插值到 t = 1/17（close 方向）或 16/17（open 方向）
-      const lastT = from === 1 ? 1 / 17 : 16 / 17
-      const lastUri = 'url("data:image/svg+xml,' + encodeURIComponent(T.stepCompletedGroupSvg(3, T.stepMorphTransforms(3, lastT))) + '")'
+      // 末帧（k=16，u=16/17）几何 = stepMorphTransforms(3, stepMorphProgress(u, fromFan))
+      const lastU = 16 / 17
+      const lastUri = 'url("data:image/svg+xml,' + encodeURIComponent(
+        T.stepCompletedGroupSvg(3, T.stepMorphTransforms(3, T.stepMorphProgress(lastU, from === 1)))) + '")'
       assert.ok(kf.includes((16 * 100 / 17).toFixed(6) + '%{mask-image:' + lastUri + '}'), name + ' 帧序列用 3 张插值几何')
       void to
     }
@@ -526,5 +527,146 @@ describe('Step 牌数 F：零回归', () => {
     const decodeMs = TURN13_STEP_TIMINGS.reduce((sum, t) => sum + (t.completedTime - t.firstTokenTime), 0)
     const outTokens = TURN13_USAGE_STEPS.reduce((sum, u) => sum + u.outputTokens, 0)
     assert.equal(T.formatTokPerSec(outTokens / (decodeMs / 1000)), TURN13_EXPECT_TPS)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// G. morph easing 方向：close 必须是同一 easing 的镜像（1-E(u)），不是时间反转（E(1-u)）
+// ══════════════════════════════════════════════════════════════════════
+describe('Step 牌数 G：morph easing 方向对称', () => {
+  const E = (x) => T.cssBezierEase(x)
+  const U = (k) => k / (T.MORPH_FRAMES + 1)
+  const num = (s, re) => { const m = re.exec(s); return m ? Number(m[1]) : 0 }
+  const tx = (s) => num(s, /translate\(([-\d.]+)/)
+  const ty = (s) => num(s, /translate\([-\d.]+, ([-\d.]+)\)/)
+  const degOf = (s) => num(s, /rotate\(([-\d.]+) 8 12\)/)
+
+  it('open 几何进度 = E(u)：u = 0 / .25 / .5 / .75 / 1 逐值', () => {
+    assert.equal(T.stepMorphProgress(0, false), 0, 'u=0 → 0（stack）')
+    for (const u of [0.25, 0.5, 0.75]) assert.equal(T.stepMorphProgress(u, false), E(u), 'u=' + u + ' → E(u)')
+    assert.equal(T.stepMorphProgress(1, false), 1, 'u=1 → 1（fan）')
+  })
+  it('close 几何进度 = 1 - E(u)：u = 0 / .25 / .5 / .75 / 1 逐值', () => {
+    assert.equal(T.stepMorphProgress(0, true), 1, 'u=0 → 1（fan）')
+    for (const u of [0.25, 0.5, 0.75]) assert.equal(T.stepMorphProgress(u, true), 1 - E(u), 'u=' + u + ' → 1-E(u)')
+    assert.equal(T.stepMorphProgress(1, true), 0, 'u=1 → 0（stack）')
+  })
+  it('close 不是时间反转：1-E(u) ≠ E(1-u)（多个中间点）', () => {
+    for (const u of [0.25, 0.5, 0.75]) {
+      assert.notEqual(T.stepMorphProgress(u, true), E(1 - u), 'u=' + u + ' 的 close 进度不得等于 E(1-u)')
+    }
+    // 差异的量级：u=0.25 时正确式已走掉 ~76%，时间反转只走掉 ~0.3%
+    assert.ok(T.stepMorphProgress(0.25, true) < 0.3, 'close 前段应已走掉大半：' + T.stepMorphProgress(0.25, true))
+    assert.ok(E(1 - 0.25) > 0.99, '（对照）时间反转式此时几乎没动：' + E(1 - 0.25))
+  })
+  it('手感对称：openProgress(u) + closeProgress(u) = 1（多采样点）', () => {
+    for (const u of [0, 1 / 17, 0.25, 0.5, 0.75, 16 / 17, 1]) {
+      assert.ok(Math.abs(T.stepMorphProgress(u, false) + T.stepMorphProgress(u, true) - 1) < 1e-12,
+        'u=' + u + ' 两方向进度必须互补（同一 easing）')
+    }
+  })
+  it('两个方向都"起步快、后段减速"：逐帧位移单调递减，且两方向首帧位移相同', () => {
+    const deltasOf = (fromFan) => {
+      const p0 = fromFan ? 1 : 0
+      let prev = p0
+      const out = []
+      for (let k = 1; k <= T.MORPH_FRAMES; k++) {
+        const p = T.stepMorphProgress(U(k), fromFan)
+        out.push(Math.abs(p - prev))
+        prev = p
+      }
+      return out
+    }
+    const open = deltasOf(false), close = deltasOf(true)
+    for (const [label, deltas] of [['open', open], ['close', close]]) {
+      for (const d of deltas) assert.ok(d > 0, label + ' 每帧都必须朝目标前进')
+      for (let i = 1; i < deltas.length; i++) {
+        assert.ok(deltas[i] <= deltas[i - 1] + 1e-12,
+          label + ' 位移必须单调递减（起手最快、后段减速）：帧' + (i + 1) + ' ' + deltas[i] + ' > 帧' + i + ' ' + deltas[i - 1])
+      }
+      assert.ok(deltas[0] > 0.2, label + ' 首帧位移必须已很明显（≈24%）：' + deltas[0])
+      assert.ok(deltas[deltas.length - 1] < 0.02, label + ' 末帧位移必须很小（平滑收尾）：' + deltas[deltas.length - 1])
+    }
+    assert.ok(Math.abs(open[0] - close[0]) < 1e-12, 'open / close 首帧位移必须相同')
+    assert.ok(Math.abs(open[8] - close[8]) < 1e-12, 'open / close 中段位移必须相同')
+    // 对照：旧实现（时间反转 E(1-u)）的首帧位移几乎为 0 —— 这就是"收起前段偏慢"的根因
+    assert.ok(Math.abs((1 - E(16 / 17)) - 0) < 0.01, '（对照）时间反转式首帧几乎不动：' + (1 - E(16 / 17)))
+  })
+  it('几何 helper 不再偷偷做 easing：progress=0.5 恰为端点中点（不是 E(0.5)）', () => {
+    for (const count of [3, 5]) {
+      const stack = T.pokerTransforms(count, false), fan = T.pokerTransforms(count, true)
+      const mid = T.stepMorphTransforms(count, 0.5)
+      for (let i = 1; i <= count; i++) {
+        const wantX = (tx(stack[i]) + tx(fan[i])) / 2, wantY = (ty(stack[i]) + ty(fan[i])) / 2
+        assert.ok(Math.abs(tx(mid[i]) - wantX) < 1e-3, 'count=' + count + ' card' + i + ' tx 必须线性中点')
+        assert.ok(Math.abs(ty(mid[i]) - wantY) < 1e-3, 'count=' + count + ' card' + i + ' ty 必须线性中点')
+      }
+      // 若 helper 里仍套 easing，mid 会落在 E(0.5)≈0.961 处（远离中点）
+      assert.ok(Math.abs(E(0.5) - 0.5) > 0.4, '（对照）E(0.5) 明显偏离线性中点')
+    }
+  })
+  it('端点：open 起点 stack3/5、终点 fan3/5；close 起点 fan3/5、终点 stack3/5', () => {
+    for (const count of [3, 5]) {
+      const stack = T.pokerTransforms(count, false), fan = T.pokerTransforms(count, true)
+      const atStack = T.stepMorphTransforms(count, 0), atFan = T.stepMorphTransforms(count, 1)
+      for (let i = 1; i <= count; i++) {
+        assert.equal(atStack[i], 'translate(' + tx(stack[i]).toFixed(3) + ', ' + ty(stack[i]).toFixed(3) + ')',
+          count + ' 张 progress=0 必须是 stack')
+        assert.ok(Math.abs(degOf(atStack[i])) < 1e-9, 'stack 端点不得带旋转')
+        assert.ok(Math.abs(tx(atFan[i]) - tx(fan[i])) < 1e-3 && Math.abs(ty(atFan[i]) - ty(fan[i])) < 1e-3,
+          count + ' 张 progress=1 的 translate 必须是 fan')
+        assert.ok(Math.abs(degOf(atFan[i]) - degOf(fan[i])) < 1e-3, count + ' 张 progress=1 的 rotate 必须是 fan')
+      }
+      // 端点映射：open 0→1 / close 1→0
+      assert.equal(T.stepMorphProgress(0, false), 0)
+      assert.equal(T.stepMorphProgress(1, false), 1)
+      assert.equal(T.stepMorphProgress(0, true), 1)
+      assert.equal(T.stepMorphProgress(1, true), 0)
+    }
+  })
+  it('keyframes 层：0% = 出发点端点，末帧已贴近目标端点，100% 仍省略', () => {
+    for (const count of [3, 5]) {
+      for (const fromFan of [false, true]) {
+        const name = 'kf-probe-' + count + '-' + fromFan
+        const kf = T.stepMorphKeyframes(name, count, fromFan)
+        assert.ok(kf.includes('0%{mask-image:' + T.stepCompletedGroupMask(count, fromFan) + '}'),
+          name + ' 0% 必须是出发点端点（open=stack / close=fan）')
+        assert.ok(!/100%\{/.test(kf), name + ' 100% 仍省略（回落常驻端点，freeze 语义不变）')
+        const lastProgress = T.stepMorphProgress(16 / 17, fromFan)
+        const target = fromFan ? 0 : 1
+        assert.ok(Math.abs(lastProgress - target) < 0.01, name + ' 末帧必须已贴近目标端点：' + lastProgress)
+        assert.equal((kf.match(/mask-image:/g) || []).length, 17, name + ' 必须仍是 1 端点 + 16 中间帧')
+      }
+    }
+    assert.equal(T.MORPH_FRAMES, 16, 'MORPH_FRAMES 必须仍是 16')
+  })
+  it('close 方向的帧内 knockout 仍逐帧同步（几何改了，遮挡必须跟着改）', () => {
+    for (const count of [3, 5]) {
+      for (const k of [3, 9, 16]) {
+        const progress = T.stepMorphProgress(k / 17, true)
+        const tfs = T.stepMorphTransforms(count, progress)
+        const svg = decodeMask('url("data:image/svg+xml,' + encodeURIComponent(T.stepCompletedGroupSvg(count, tfs)) + '")')
+        const layers = layerTransformsOf(svg)
+        assert.equal(layers.length, count, count + ' 张 close 帧真实牌层数')
+        for (let i = 1; i <= count; i++) assert.equal(layers[i - 1], tfs[i], '真实牌 card' + i + ' = 该帧几何')
+        const mask1 = svg.match(/<mask id="scc-m1"[\s\S]*?<\/mask>/)[0]
+        const occ = [...mask1.matchAll(/<g transform="([^"]+)">/g)].map((m) => m[1])
+        for (let j = 2; j <= count; j++) {
+          assert.equal(occ[j - 2], tfs[j], 'owner-1 的 occluder 必须与同帧 card' + j + ' 同步')
+        }
+      }
+    }
+  })
+  it('动画时长与 easing 来源不变：皮肤里仍是 .4s linear，且 keyframes 不含额外缓动', () => {
+    const css = skinCss()
+    const base = css.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
+    assert.ok(base.includes('animation:tf-step-close .4s linear 1'), 'closed 收拢仍是 400ms linear')
+    const fan = css.split('\n').find((l) => l.includes('[aria-expanded="true"]') && l.includes('animation:tf-step-open .4s linear 1'))
+    assert.ok(fan, 'open 展开仍是 400ms linear')
+    for (const name of ['tf-step-open', 'tf-step-close', 'tf-step-open-3', 'tf-step-close-3']) {
+      const line = css.split('\n').find((l) => l.includes('@keyframes ' + name + '{'))
+      assert.ok(line, name + ' 缺失')
+      assert.ok(!line.includes('animation-timing-function'), name + ' 不得在帧内再叠加缓动（easing 已进位姿采样）')
+    }
   })
 })

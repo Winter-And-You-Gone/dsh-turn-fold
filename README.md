@@ -95,7 +95,13 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   **开合有 morph 过渡**：预采样 stack↔fan 插值帧（cubic-bezier(.22,1,.36,1) 采样、
   400ms、16 帧采样 = 17 关键帧、每帧静态 SVG）经 CSS keyframes 逐帧换 mask-image——
   animation 每次状态变化都从头重放（同 URL mask 图像的 SMIL 时间线在 Chromium 全页共享、
-  重应用不 restart，帧序列绕开该限制），帧内 occluder 逐帧同步 knockout；**重叠区用真
+  重应用不 restart，帧序列绕开该限制），帧内 occluder 逐帧同步 knockout；
+  **easing 只作用于"几何进度"、开合互为镜像**：帧时间进度 u=0→1 先过同一 easing
+  得到几何进度（展开 `progress = E(u)`、收起 `progress = 1 - E(u)`），几何 helper 只做
+  线性插值——两个方向因此都是"起手最快、后段减速、柔和停住"（实测前 100ms 走掉 ≈74%、
+  后 100ms ≈0.25%），与 Turn 栏 `transition: transform .45s cubic-bezier(.22,1,.36,1)`
+  同一手感。**不是时间反转** `E(1-u)`：那会让收起起手速度为 0、收尾最陡（前 100ms 仅 ≈0.25%、
+  后 100ms ≈74%），观感"前慢后急"，与展开相反；**重叠区用真
   knockout 遮挡**：每张下层牌一个内嵌 luminance mask，z 更高层牌以实心黑牌面
   （fill=black occluder）把覆盖区从下层整体挖掉——牌身保持透明（壁纸/图片背景透出），
   下层 stroke 与 pip 绝不穿透上层牌（occluder 必须直接内联图形——Chromium 不渲染
