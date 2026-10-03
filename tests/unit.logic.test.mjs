@@ -24,6 +24,8 @@ beforeEach(() => {
   for (const key of T.FIELD_KEYS) T.setFieldVisible(key, true)
   T.settings.foldIcon = 'poker'
   T.settings.stepSkin = 'poker'
+  // 运行时 TTFT 观察缓存是模块级（跨用例共享）——每个用例从干净状态开始
+  T.observedTtft.clear()
 })
 
 describe('turnClockOf（官方 TurnLocation 读取）', () => {
@@ -397,5 +399,115 @@ describe('字段显隐（filterVisibleMetrics + 持久化）', () => {
     T2.setFieldVisible('tokens', true)
     T2.setStepSkin('poker')
     T2.setFoldIconStyle('poker')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// durable Turn 指标（插件 projection "turnFoldMetrics"）与观察缓存
+// ══════════════════════════════════════════════════════════════════════
+// 背景：客户端 assistant 节点的 finalNode.timing.firstTokenTime 只由 live chunk
+// 记录（官方 assistant.ts:146/154），刷新/历史重建后为 null —— TTFT 与 decode
+// 分母同时消失。durable projection 由 host 按落盘事件折叠，reload 后仍在。
+describe('durable Turn 指标（reload / 历史会话的数据来源）', () => {
+  const closedClock = (steps) => ({ number: 13, startMs: T0, endMs: T1, status: 'closed', reason: 'completed', data: null, steps })
+
+  it('settle 后客户端无 timing（历史重建形态）→ durable 提供 TTFT 与 decode TPS', () => {
+    const noTiming = makeStepData(1, { usage: { outputTokens: 200 } })
+    const metrics = T.computeTurnMetrics(closedClock([makeStep(1, noTiming, T0)]), [noTiming], undefined, undefined,
+      { ttftMs: 4200, decodeMs: 2000, decodeTokens: 200 }, 'sess-1')
+    assert.equal(metrics.ttftMs, 4200, 'TTFT 来自 durable（不是 —）')
+    assert.equal(metrics.tokensPerSecond, 100, 'TPS = 200 tok / 2s')
+  })
+
+  it('durable 的 TTFT 优先于客户端 exact（同一谓词，但 durable 跨 reload 存在）', () => {
+    const settled = makeStepData(1, {
+      usage: { outputTokens: 200 },
+      timing: { stepStartTime: T0, firstTokenTime: T0 + 800, completedTime: T0 + 3000 },
+    })
+    const metrics = T.computeTurnMetrics(closedClock([makeStep(1, settled, T0)]), [settled], undefined, undefined,
+      { ttftMs: 750, decodeMs: 2200, decodeTokens: 200 }, 'sess-1')
+    assert.equal(metrics.ttftMs, 750)
+    assert.equal(metrics.tokensPerSecond, 200 / 2.2)
+  })
+
+  it('durable 只有 TTFT、没有 decode → TPS 仍由客户端 step 聚合（两者互补，不互相拖累）', () => {
+    const settled = makeStepData(1, {
+      usage: { outputTokens: 100 },
+      timing: { stepStartTime: T0, firstTokenTime: T0 + 500, completedTime: T0 + 1500 },
+    })
+    const metrics = T.computeTurnMetrics(closedClock([makeStep(1, settled, T0)]), [settled], undefined, undefined,
+      { ttftMs: 480, decodeMs: 0, decodeTokens: 0 }, 'sess-1')
+    assert.equal(metrics.ttftMs, 480, 'durable 的 exact TTFT 生效')
+    assert.equal(metrics.tokensPerSecond, 100, 'decode 回落到客户端聚合（100 tok / 1s）')
+  })
+
+  it('durable 缺失（旧宿主 / projection 未注册）→ 现有客户端路径完全不变', () => {
+    const settled = makeStepData(1, {
+      usage: { outputTokens: 100 },
+      timing: { stepStartTime: T0, firstTokenTime: T0 + 800, completedTime: T0 + 1800 },
+    })
+    const metrics = T.computeTurnMetrics(closedClock([makeStep(1, settled, T0)]), [settled], undefined, undefined, undefined, 'sess-1')
+    assert.equal(metrics.ttftMs, 800)
+    assert.equal(metrics.tokensPerSecond, 100)
+  })
+
+  it('durable 只影响 TTFT / TPS：token 总数、缓存命中、耗时保持官方值', () => {
+    const settled = makeStepData(1, { usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: 30 } })
+    const base = { number: 13, startMs: T0, endMs: T1, status: 'closed', reason: 'completed', data: null, steps: [makeStep(1, settled, T0)] }
+    const without = T.computeTurnMetrics(base, [settled], { tokenUsage: OFFICIAL_TOKEN_USAGE }, undefined, undefined, 'sess-1')
+    const withDurable = T.computeTurnMetrics(base, [settled], { tokenUsage: OFFICIAL_TOKEN_USAGE }, undefined,
+      { ttftMs: 123, decodeMs: 1000, decodeTokens: 77 }, 'sess-1')
+    assert.equal(withDurable.tokens, without.tokens)
+    assert.equal(withDurable.outputTokens, without.outputTokens)
+    assert.equal(withDurable.cacheHitPercent, without.cacheHitPercent)
+    assert.equal(withDurable.durationMs, without.durationMs)
+  })
+
+  it('selectDurableTurnMetrics 只取本回合那一条（不做整表订阅）', () => {
+    const select = T.selectDurableTurnMetrics(13)
+    const row13 = { ttftMs: 1, decodeMs: 2, decodeTokens: 3 }
+    assert.equal(select({ turns: { 13: row13, 14: { decodeMs: 9, decodeTokens: 9 } } }), row13)
+    assert.equal(select({ turns: {} }), undefined)
+    assert.equal(select(undefined), undefined)
+    assert.equal(T.selectDurableTurnMetrics(undefined)({ turns: { 13: row13 } }), undefined)
+  })
+})
+
+describe('观察到的真实 TTFT 缓存（settle 后不无缘无故退回 —）', () => {
+  const openClock = (steps) => ({ number: 13, startMs: T0, endMs: undefined, status: 'open', reason: undefined, data: null, steps })
+  const closedClock = (steps) => ({ number: 13, startMs: T0, endMs: T1, status: 'closed', reason: 'completed', data: null, steps })
+
+  it('running 观察到 provisional，settle 后 exact 与 durable 都缺失 → 继续显示该真实值', () => {
+    const running = makeRunningStepData(1, { time: T0 + 1300 })
+    const step1 = makeStep(1, running, T0 + 100)
+    const first = T.computeTurnMetrics(openClock([step1]), [running], undefined, Date.now(), undefined, 'sess-9')
+    assert.equal(first.ttftMs, 1200, 'provisional 可见首字延迟')
+    // settle：客户端快照换成无 timing 的形态（历史重建），且 durable 不可用
+    const noTiming = makeStepData(1, { usage: { outputTokens: 10 } })
+    const second = T.computeTurnMetrics(closedClock([makeStep(1, noTiming, T0 + 100)]), [noTiming], undefined, undefined, undefined, 'sess-9')
+    assert.equal(second.ttftMs, 1200, '不得退回 —（该值本次运行真实观察过）')
+  })
+
+  it('从未观察过该回合 → 保持 —（不估算、不插值、不跨回合借值）', () => {
+    const noTiming = makeStepData(1, { usage: { outputTokens: 10 } })
+    const metrics = T.computeTurnMetrics(closedClock([makeStep(1, noTiming, T0)]), [noTiming], undefined, undefined, undefined, 'sess-fresh')
+    assert.equal(metrics.ttftMs, undefined)
+    assert.equal(T.readObservedTtft('sess-fresh', 13), null)
+  })
+
+  it('durable 到达时用 durable（缓存不掩盖更新更全的来源）', () => {
+    T.rememberObservedTtft('sess-10', 13, 1200)
+    const noTiming = makeStepData(1, { usage: { outputTokens: 10 } })
+    const metrics = T.computeTurnMetrics(closedClock([makeStep(1, noTiming, T0)]), [noTiming], undefined, undefined,
+      { ttftMs: 900, decodeMs: 500, decodeTokens: 10 }, 'sess-10')
+    assert.equal(metrics.ttftMs, 900)
+  })
+
+  it('缓存按 session + turn 隔离', () => {
+    T.rememberObservedTtft('sess-a', 13, 111)
+    assert.equal(T.readObservedTtft('sess-a', 13), 111)
+    assert.equal(T.readObservedTtft('sess-a', 14), null)
+    assert.equal(T.readObservedTtft('sess-b', 13), null)
+    assert.equal(T.readObservedTtft(undefined, 13), null)
   })
 })

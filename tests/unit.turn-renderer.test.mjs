@@ -98,6 +98,8 @@ function closedProps(overrides = {}) {
 beforeEach(() => {
   sharedWindow.localStorage.clear()
   setOpenCalls.length = 0
+  // 运行时 TTFT 观察缓存是模块级（跨用例共享）——每个用例从干净状态开始
+  T.observedTtft.clear()
   act(() => { T.setPopupOpen(false, null) })
   mount()
 })
@@ -449,5 +451,88 @@ describe('兼容与降级（transcript 模式 / 异常宿主）', () => {
       useChat: makeUseChat(makeStepsSource([])),
     })
     assert.ok(barLabel().includes('370,202 token'), barLabel())
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// durable Turn 指标接入渲染器（reload / 历史会话路径）
+// ══════════════════════════════════════════════════════════════════════
+describe('Turn Bar 的 durable 指标（插件 projection，历史重建后不再是 —）', () => {
+  const projectionOf = (row) => (key, selector) => selector({ turns: row === undefined ? {} : { 13: row } })
+
+  it('客户端无 timing（历史重建形态）+ durable 有值 → 标签显示首字与 tok/s', () => {
+    const noTiming = makeStepData(1, { usage: { inputTokens: 10, outputTokens: 100 } })
+    const p = subscriptionProps({
+      status: 'closed', startTime: T0, endTime: T1, reason: 'completed',
+      steps: [makeStep(1, noTiming, T0)], stepsData: [noTiming],
+      tail: { tokenUsage: OFFICIAL_TOKEN_USAGE },
+    })
+    renderView({ ...p, useProjection: projectionOf({ ttftMs: 4200, decodeMs: 2000, decodeTokens: 100 }), sessionId: 'sess-x' })
+    const label = barLabel()
+    assert.ok(label.includes('首字4.2s'), 'durable TTFT 必须出现在标签里：' + label)
+    assert.ok(label.includes('50tok/s'), 'durable decode 必须给出 tok/s：' + label)
+    assert.ok(!label.includes('首字—'), '不得再显示缺证据占位：' + label)
+  })
+
+  it('无 durable 且客户端无 timing → 保持 首字—（缺证据就明说，不造值）', () => {
+    const noTiming = makeStepData(1, { usage: { inputTokens: 10, outputTokens: 100 } })
+    const p = subscriptionProps({
+      status: 'closed', startTime: T0, endTime: T1, reason: 'completed',
+      steps: [makeStep(1, noTiming, T0)], stepsData: [noTiming],
+      tail: { tokenUsage: OFFICIAL_TOKEN_USAGE },
+    })
+    renderView({ ...p, useProjection: projectionOf(undefined), sessionId: 'sess-y' })
+    const label = barLabel()
+    assert.ok(label.includes('首字—'), '无证据时保持 —：' + label)
+    assert.ok(label.includes('— tok/s'), '无 decode 证据时保留缺值占位：' + label)
+  })
+
+  it('旧宿主（无 useProjection prop）不崩、且回落到客户端数据', () => {
+    const settled = makeStepData(1, {
+      usage: { inputTokens: 10, outputTokens: 100 },
+      timing: { stepStartTime: T0, firstTokenTime: T0 + 800, completedTime: T0 + 1800 },
+    })
+    const p = subscriptionProps({
+      status: 'closed', startTime: T0, endTime: T1, reason: 'completed',
+      steps: [makeStep(1, settled, T0)], stepsData: [settled],
+      tail: { tokenUsage: OFFICIAL_TOKEN_USAGE },
+    })
+    renderView(p)
+    const label = barLabel()
+    assert.ok(label.includes('首字0.8s'), '客户端 exact 仍生效：' + label)
+    assert.ok(label.includes('100tok/s'), '客户端 decode 聚合仍生效：' + label)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// 真实回合数据（落盘事件夹具）驱动的渲染：reload / 历史会话路径
+// ══════════════════════════════════════════════════════════════════════
+describe('历史会话渲染：durable projection 用真实回合数据救回首字与 tok/s', () => {
+  it('客户端无 timing + durable 有真实值 → 标签显示 首字1.5s / 141tok/s', async () => {
+    const { readFileSync } = await import('node:fs')
+    const host = await import('../index.js')
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/real-turn-slice.json', import.meta.url), 'utf8'))
+    let state = host.turnFoldInit()
+    for (const event of fixture.events) state = host.turnFoldApply(state, event)
+    const view = host.turnFoldMetricsProjection.wire.view(state)
+    const start = fixture.events.find((event) => event.type === 'step/start')
+    const row = view.turns[String(start.data.turn)]
+    assert.deepEqual(row, { ttftMs: 1508, decodeMs: 2219, decodeTokens: 313 }, '夹具真实值')
+
+    // 历史重建形态：客户端 step 数据只有 usage，没有 finalNode.timing
+    const noTiming = makeStepData(1, { usage: { inputTokens: 10, outputTokens: 313 } })
+    const p = subscriptionProps({
+      status: 'closed', startTime: T0, endTime: T1, reason: 'completed',
+      steps: [makeStep(1, noTiming, T0)], stepsData: [noTiming],
+      tail: { tokenUsage: OFFICIAL_TOKEN_USAGE },
+    })
+    renderView({
+      ...p,
+      sessionId: 'sess-real',
+      useProjection: (key, selector) => selector({ turns: { 13: row } }),
+    })
+    const label = barLabel()
+    assert.ok(label.includes('首字1.5s'), 'durable 真实 TTFT 必须出现：' + label)
+    assert.ok(label.includes('141tok/s'), 'durable 真实 decode-speed 必须出现：' + label)
   })
 })

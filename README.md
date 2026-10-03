@@ -63,13 +63,33 @@
   全部数值均为官方真实数据，**绝不伪造**（没有估算 token、假增长；无数据 = `—`）。
 - **指标来源（全部官方真实数据）**：
   - 耗时：`TurnLocation.start.time → end.time`（运行中用实时时钟补足）；
-  - 首字（TTFT）：第一个请求 settle 后读官方 `finalNode.timing`
+  - 首字（TTFT）：**durable 优先**——插件自己的官方 projection `turnFoldMetrics`
+    （见下方「durable Turn 指标」）给出该回合稳定步的首字延迟
     （`firstTokenTime - stepStartTime`，与官方统计同款语义）；
+    其次客户端 `finalNode.timing`（只在本次页面 live 流过时才有）；运行中官方
+    timing 未就绪时给 provisional 可见首字延迟（`data.time - stepStartTime`，
+    页面内观察过就记住，settle 后 exact 缺失时继续显示、不退回 `—`）；
   - Token / 缓存命中：回合结束后优先 turn-tail 的官方聚合 `tokenUsage`
     （`deriveTurnTokenUsage` 折叠全部计费 attempt，含被重试请求；缓存分母 = prompt 侧
     总量），运行中/缺失时按 step usage 累加（官方 step data store 与节点可见性无关，
     隐藏纯工具步骤同样计入）；
-  - tok/s：真实输出 token / 真实耗时（耗时 ≥1s 才显示，避免开场瞬时速率）。
+  - tok/s：**decode-speed**（与官方 StatsPills 同一定义）——
+    `Σ outputTokens ÷ Σ(completedTime − firstTokenTime)`，只统计首字/完成时间/outputTokens
+    三项齐备的 step；TTFT、tool 执行、step 间等待、整个回合墙钟时长都不进分母。
+    decode 证据同样 **durable 优先**（projection）、客户端 step 聚合兜底。
+- **durable Turn 指标（`turnFoldMetrics` projection，为什么需要）**：官方客户端的
+  `finalNode.timing.firstTokenTime` 只在收到 `assistant/live-chunk`（客户端瞬态事件、
+  **不落盘**）时记录（`ui-chat/.../assistant.ts:146,154`），`settleMessage()` 与历史重建用的
+  `fallbackState()` 都不从落盘的 `assistant/message.stream` 恢复它 —— 于是**刷新页面或打开
+  历史会话后首字与 tok/s 同时消失**（显示 `首字—` / `— tok/s`），而官方底部 sessionStats
+  仍有这两个值（它用 `assistantStreamFirstTokenTime(event.data.stream)` 做 durable 折叠）。
+  插件因此在宿主半边注册自己的 projection（官方公开扩展面
+  `ctx.sessionProjections.register`，unit 归插件所有、只读、返回同一引用不产生多余广播），
+  用与官方 sessionStats **逐条相同**的事件语义折叠出 per-turn 指标，由 host 经 projection
+  wire 推给客户端，前端用 `useProjection('turnFoldMetrics')` 读取 —— LIVE / SETTLED /
+  RELOAD / HISTORY 四条路径数据来源一致。旧宿主没有该服务时整个注册跳过，前端自动回落到
+  客户端 step 数据（退化 = 重载后这两个字段为 `—`，不伪造）。每回合只存 3 个数字，
+  上限 2000 回合（超出后最旧回合降级为 `—`）。
 - **滚轮数字动画**：运行中数值变化时逐位滚动（里程表效果，回弹缓动）；完整文案有
   sr-only 副本（读屏无障碍）；系统「减少动态效果」时自动退化为静态数字。
 - **回合栏下常驻分隔线**（`--dsw-alias-line-secondary` token 链式回退，随主题适配）。
@@ -369,4 +389,7 @@ git push --follow-tags
   - 0 秒占位条从「user 消息正下方」改为挂在官方 `turn-process` 节点上：回合开始
     （turn/start 投影）即出现；发送消息到 turn/start 之间的窗口（通常亚秒级）由官方
     "Deep diving..." 状态行呈现；
-  - 运行中首字（TTFT）仅在第一个请求 settle 后显示官方 timing 值（渲染时刻近似已删除）。
+  - 运行中首字（TTFT）先给 **provisional 可见首字延迟**（官方 `data.time` −
+    step/start，无渲染时刻近似、无估算），settle 后被 **exact** 覆盖；exact 的稳定来源是
+    插件的 durable projection（reload / 历史会话后仍在），客户端 timing 与页面内观察缓存
+    依次兜底——详见「指标来源」。

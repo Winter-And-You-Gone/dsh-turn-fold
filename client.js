@@ -1288,6 +1288,32 @@ window.__ModuleLoader__.load({
 				}
 			}
 		}
+		// ---- 观察到的真实 TTFT（运行时缓存；只解决"settle 后不无缘无故退回 —"） ----
+		// 只缓存**真实观察过**的数值（客户端 exact / running provisional / durable），
+		// 绝不估算、绝不插值；页面刷新后自然清空（reload / 历史会话的正确性由
+		// durable projection 负责，不靠这个缓存）。
+		var OBSERVED_TTFT_MAX = 500;
+		var observedTtft = new Map();
+		function observedTtftKey(sessionId, turn) {
+			return String(sessionId === undefined ? "" : sessionId) + ":" + String(turn);
+		}
+		function rememberObservedTtft(sessionId, turn, ms) {
+			if (typeof ms !== "number" || !isFinite(ms) || ms < 0 || typeof turn !== "number") return;
+			var key = observedTtftKey(sessionId, turn);
+			if (observedTtft.has(key)) observedTtft.delete(key);
+			observedTtft.set(key, ms);
+			while (observedTtft.size > OBSERVED_TTFT_MAX) {
+				var oldest = observedTtft.keys().next();
+				if (oldest.done) break;
+				observedTtft.delete(oldest.value);
+			}
+		}
+		function readObservedTtft(sessionId, turn) {
+			if (typeof turn !== "number") return null;
+			var value = observedTtft.get(observedTtftKey(sessionId, turn));
+			return typeof value === "number" ? value : null;
+		}
+
 		/** 汇总回合指标：{ durationMs, ttftMs, tokens, outputTokens, tokensPerSecond, cacheHitPercent }。
 		 *
 		 *  数据源优先级（全部为官方真实数据，无任何伪造增长）：
@@ -1299,10 +1325,17 @@ window.__ModuleLoader__.load({
 		 *  TTFT/tool 执行/step 间等待不进分母（turn-metrics.assistantStepReading）。
 		 *  Turn Bar 只聚合当前 Turn 的 step；官方底部是整个 Session 的 sessionStats——
 		 *  同一定义、不同范围，数值不同是正常的。
-		 *  TTFT 两层值：settled 用官方 exact（finalNode.timing），running 时若官方
-		 *  firstVisibleTime（data.time）与 step/start 时间齐备则给 provisional
-		 *  "可见首字延迟"，settled 后被 exact 校正——缺任一时间戳就保持 `—`。 */
-		function computeTurnMetrics(clock, stepDataList, tail, liveNow) {
+		 *
+		 *  TTFT 数据源（exact 优先，绝不估算）：
+		 *  ① durable：插件自己的官方 projection「turnFoldMetrics」——host 按落盘事件
+		 *     （step/start + assistant/attempt/assistant/message 的 compact stream）折叠，
+		 *     与官方 sessionStats 用同一个 first-token 谓词；**reload / 历史会话后仍存在**；
+		 *  ② 客户端 exact：finalNode.timing（同一谓词，但只在本次页面里 live 流过时才有）；
+		 *  ③ running provisional：官方 firstVisibleTime（data.time，第一个可见 text/reasoning
+		 *     block）− step/start 时间 = "可见首字延迟"，settled 后被 exact 校正；
+		 *  ④ 运行时缓存：本次页面真实观察过的值，settle 后 exact 缺失时继续显示它（不退回 —）。
+		 *  decode 同理：durable 的 decodeMs/decodeTokens 优先，客户端 step 聚合兜底。 */
+		function computeTurnMetrics(clock, stepDataList, tail, liveNow, durable, sessionId) {
 			if (!clock) return null;
 			var durationMs;
 			if (typeof clock.startMs === "number") {
@@ -1338,11 +1371,23 @@ window.__ModuleLoader__.load({
 				outputTokens = acc.output;
 				cacheHit = billedInput > 0 ? cacheHitPercent(acc.input, acc.cacheRead, acc.cacheWrite) : undefined;
 			}
+			// decode 证据：durable（官方 projection）优先，客户端 step 聚合兜底
+			var decodeMs = acc.decodeMs, decodeTokens = acc.decodeTokens;
+			if (durable && (durable.decodeMs > 0 || durable.decodeTokens > 0)) {
+				decodeMs = durable.decodeMs;
+				decodeTokens = durable.decodeTokens;
+			}
+			// TTFT：durable exact → 客户端 exact → running provisional → 运行时缓存
+			var ttftMs = null;
+			if (durable && typeof durable.ttftMs === "number") ttftMs = durable.ttftMs;
+			else if (acc.ttft !== null) ttftMs = acc.ttft;
+			if (ttftMs === null) ttftMs = readObservedTtft(sessionId, clock.number);
+			else rememberObservedTtft(sessionId, clock.number, ttftMs);
 			// tok/s：官方 decode-speed 语义（与整个 Turn 墙钟时长无关）
-			var tps = acc.decodeMs > 0 ? acc.decodeTokens / (acc.decodeMs / 1000) : undefined;
-			if (durationMs === undefined && tokens === undefined && acc.ttft === null && tps === undefined) return null;
+			var tps = decodeMs > 0 ? decodeTokens / (decodeMs / 1000) : undefined;
+			if (durationMs === undefined && tokens === undefined && ttftMs === null && tps === undefined) return null;
 			var result = { durationMs: durationMs, tokens: tokens, outputTokens: outputTokens, tokensPerSecond: tps, cacheHitPercent: cacheHit };
-			if (acc.ttft !== null) result.ttftMs = acc.ttft;
+			if (ttftMs !== null) result.ttftMs = ttftMs;
 			return result;
 		}
 
@@ -2232,6 +2277,17 @@ window.__ModuleLoader__.load({
 			if (useChat) {
 				stepsSource = useChat(selectTurnNodeSource(number, "assistant-step"));
 			}
+			// ③ durable per-turn 指标：插件自己注册的官方 projection（host 侧按落盘事件
+			//    折叠，经 projection wire 推给客户端）。这是 reload / 历史会话下 TTFT 与
+			//    decode-speed 的唯一可靠来源——客户端 assistant 节点的
+			//    finalNode.timing.firstTokenTime 只由 live chunk 记录，历史重建时为 null
+			//    （官方 assistant.ts 的 settleMessage/fallbackState 都不恢复它）。
+			//    旧宿主 / projection 未注册 → undefined → 自动回落到客户端 step 数据。
+			//    订阅面 = 本回合的那一条记录（具名 selector，不订阅整表）。
+			var useProjection = props.useProjection;
+			var durableTurn = typeof useProjection === "function"
+				? useProjection("turnFoldMetrics", selectDurableTurnMetrics(number))
+				: undefined;
 			var stepDataList = useSyncExternalStore(
 				stepsSource && typeof stepsSource.subscribe === "function" ? stepsSource.subscribe : subscribeNothing,
 				stepsSource && typeof stepsSource.getSnapshot === "function" ? stepsSource.getSnapshot : getUndefinedSnapshot
@@ -2268,7 +2324,7 @@ window.__ModuleLoader__.load({
 					cardBridge
 				);
 			}
-			var metrics = computeTurnMetrics(clock, stepDataList, tail, running ? liveNow : undefined);
+			var metrics = computeTurnMetrics(clock, stepDataList, tail, running ? liveNow : undefined, durableTurn, props.sessionId);
 			var filtered = filterVisibleMetrics(metrics);
 			var label = turnHeaderLabel(filtered);
 			var round = turnRoundLabel(clock.number);
@@ -2330,6 +2386,16 @@ window.__ModuleLoader__.load({
 					}
 				} catch (e) { /* 存储未就绪 */ }
 				return null;
+			};
+		}
+		/** useProjection 的 selector：只取本回合那一条 durable 记录（具名、最小切片）。
+		 *  projection 值形如 { turns: { "<turn>": { ttftMs?, decodeMs, decodeTokens } } }，
+		 *  单条记录只在它自己变化时换引用 → 本栏不会因别的回合更新而重渲染。 */
+		function selectDurableTurnMetrics(turn) {
+			return function (metrics) {
+				if (turn === undefined) return undefined;
+				var turns = metrics && metrics.turns;
+				return turns ? turns[String(turn)] : undefined;
 			};
 		}
 		/** uSES 空源兜底（stepsSource 缺失时恒 undefined，不订阅任何东西）。 */
