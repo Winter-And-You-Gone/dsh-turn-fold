@@ -33,7 +33,7 @@ function mount(el) {
 
 beforeEach(() => {
   sharedWindow.localStorage.clear()
-  T.setFoldIconStyle('poker')
+  T.setIconStyle('poker')
 })
 
 afterEach(() => {
@@ -165,15 +165,20 @@ describe('组件渲染与降级', () => {
     assert.ok(container.querySelectorAll('.ccg-roll-cell').length >= 3, '数字位滚动窗')
   })
 
-  it('turnPokerIcon：poker 风格运行中→翻牌、结束→牌堆；native→undefined', () => {
+  it('turnPokerIcon：poker 风格运行中→翻牌、结束→牌堆；native→官方几何 chevron（running/不可折叠→undefined）', () => {
     // 渲染层 smoke：返回元素类型正确
-    const live = T.turnPokerIcon(4, true, false, 13)
+    const live = T.turnPokerIcon(4, true, false, 13, true)
     assert.ok(live, '运行中返回翻牌图标元素')
-    const closed = T.turnPokerIcon(4, false, false, 13)
+    const closed = T.turnPokerIcon(4, false, false, 13, true)
     assert.ok(closed, '结束返回牌堆图标元素')
-    T.setFoldIconStyle('native')
-    assert.equal(T.turnPokerIcon(4, false, false, 13), undefined)
-    T.setFoldIconStyle('poker')
+    T.setIconStyle('native')
+    const chevron = T.turnPokerIcon(4, false, false, 13, true)
+    assert.ok(chevron, 'native 结束且可折叠 → 官方风格 chevron 元素')
+    assert.equal(chevron.props.open, false, '收起态向下')
+    assert.ok(T.turnPokerIcon(4, false, true, 13, true).props.open, '展开态 rotate(180deg)')
+    assert.equal(T.turnPokerIcon(4, true, false, 13, true), undefined, 'native 运行中无前导图标（官方如此）')
+    assert.equal(T.turnPokerIcon(4, false, false, 13, false), undefined, 'native 不可折叠（Verbose）无 chevron（官方如此）')
+    T.setIconStyle('poker')
   })
 })
 

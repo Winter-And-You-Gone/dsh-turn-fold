@@ -21,8 +21,8 @@ function skinEl() {
 
 beforeEach(() => {
   window.localStorage.clear()
-  T.settings.stepSkin = 'poker'
-  T.applyStepSkin()
+  T.settings.iconStyle = 'poker'
+  T.applyIconStyle()
 })
 
 describe('Turn 栏样式（兄弟交互结构）', () => {
@@ -51,9 +51,9 @@ describe('Step Poker Skin（官方结构 + 软 DOM 依赖 + style.disabled 总�
 
   it('applyStepSkin / setStepSkin 切换 disabled；默认 poker = 启用', () => {
     assert.equal(skinEl().disabled, false, '默认 poker 启用')
-    T.setStepSkin('native')
+    T.setIconStyle('native')
     assert.equal(skinEl().disabled, true, 'native 禁用皮肤')
-    T.setStepSkin('poker')
+    T.setIconStyle('poker')
     assert.equal(skinEl().disabled, false, '改回 poker 重新启用')
   })
 

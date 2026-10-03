@@ -24,8 +24,8 @@
 4. **真实指标承诺**：全部数值来自官方真实数据（`TurnLocation.start/end`、step 的
    `usage` 与 `finalNode.timing`、turn-tail 的官方聚合 `tokenUsage`）。**没有伪造增长**——
    旧版的 +1/+11 动画偏移已删除：真实数据变化时数字才滚动，真实数据不变时数字不变；
-5. **插件设置**：回合栏字段显隐（耗时/首字/Token/tok/s/缓存命中）、前导图标风格
-   （扑克牌 / 官方图标）、Step 皮（扑克 / 官方图标），持久化到
+5. **插件设置**：回合栏字段显隐（耗时/首字/Token/tok/s/缓存命中）+ **统一折叠栏图标模式**
+   `iconStyle`（动态扑克牌 / 官方图标，一个设置同时管 Turn 与 Step），持久化到
    `localStorage['dsh-turn-fold:settings']`。**与官方 transcriptView 完全解耦**——
    官方 Compact / Standard / Detailed / Verbose 四档照常工作，插件只增强其 UI。
 
@@ -238,10 +238,32 @@ npm run check      # 语法检查 client.js / index.js
 > 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
 > `npm test` 中内置）；普通 Linux/macOS CI 同样可用该参数（Node ≥ 22.9）。
 
-## 折叠图标（扑克牌）
+## 折叠栏图标（统一模式）
 
-回合栏前导图标默认为**动态扑克牌**（回合栏右侧 ⚙ 齿轮 → 弹窗里的「回合栏图标」
-选择器可切回官方 chevron）：
+设置弹窗里只有一个**统一图标模式**选择器（回合栏右侧 ⚙ 齿轮 →「折叠栏图标」），
+一个设置同时决定 Turn 前导图标与 Step 皮，不再提供"Turn=官方 / Step=扑克"这类
+不一致组合（旧的双字段 `foldIcon` / `stepSkin` 在读取时自动迁移，见下）：
+
+- **动态扑克牌（poker，默认）**：
+  - Turn：完成态 = 牌堆/扇形（本回合工具+子代理 ≤3 用 3 张、>3 用 5 张），运行态 = 翻牌动画；
+  - Step：completed = 扑克牌堆/扇形（张数按 Process Group 工具数），running = 五牌面轮换。
+- **官方图标（native）**：
+  - Turn：**保留插件增强栏的全部内容**（耗时/首字/token/tok/s/缓存/第 N 轮/齿轮/durable
+    指标/官方 Fold 行为——仍然是 `EnhancedTurnProcessView` 渲染，**不**切回官方
+    TurnProcessNodeView），只把前导图标换成官方风格的折叠 chevron：几何逐值对齐官方
+    `IconChevronDownOutlineRegular`（viewBox 16、stroke 1、size 14），收起向下、展开
+    `rotate(180deg)` 向上（官方 CSS 同款 100ms 过渡）；运行中/不可折叠的回合官方本就
+    没有折叠 chevron，前导位留空；
+  - Step：**完全恢复官方 ProcessGroupHeader 自己的图标**——activity icon、hover/focus
+    chevron、open/closed 方向、shimmer、title、disclosure 全部原样（实现 = 停用插件的
+    两张皮肤样式表 `disabled=true`，官方 DOM 一个字节不动）。
+- **迁移**：旧设置里的 `foldIcon` / `stepSkin` 任一为 `native` → 升级后 `iconStyle=native`
+  （老用户不会突然重新出现扑克）；两者都是 poker → poker；新字段存在时优先。
+  迁移只发生在读取层；下一次保存只写 `iconStyle`（并保留 localStorage 里的未知字段）。
+- 切换**无需刷新页面**：Turn 组件订阅 `useIconStyle()` 重渲染换前导图标；Step 由
+  `applyIconStyle()` 同步两张样式表的 `disabled` 总闸。
+
+### 扑克模式细节（iconStyle = poker）
 
 - **完成态**：收起为牌堆（本回合工具+子代理 ≤3 用 3 张、>3 用 5 张），展开变扇形；
   **牌身份连续**：绘制顺序恒为身份序 1…N（开合一致），stack 的顶牌就是 fan 最右那张，

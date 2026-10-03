@@ -89,18 +89,12 @@ window.__ModuleLoader__.load({
 				fieldCacheHit: "缓存命中",
 				fieldCacheHitDesc: "缓存命中百分比",
 				fieldSettingsDone: "完成",
-				// 折叠图标样式选择（Turn 栏前导图标）
-				foldIconLabel: "回合栏图标",
+				// 统一折叠栏图标模式（Turn 前导图标 + Step 皮共用一个设置）
+				foldIconLabel: "折叠栏图标",
 				foldIconPoker: "动态扑克牌",
-				foldIconPokerDesc: "牌堆 / 扇形 / 运行中翻牌动画",
+				foldIconPokerDesc: "回合栏与步骤栏使用扑克牌动画",
 				foldIconNative: "官方图标",
-				foldIconNativeDesc: "官方折叠箭头",
-				// Step 分组栏皮肤（官方结构 + 插件 CSS 皮）
-				stepSkinLabel: "步骤栏皮肤",
-				stepSkinPoker: "扑克牌面",
-				stepSkinPokerDesc: "按活动类型映射花色（♥ 思考 · ♠ 读取 · ♦ 编辑 · ♣ 命令 · 鲸鱼 编排）",
-				stepSkinNative: "官方图标",
-				stepSkinNativeDesc: "官方活动图标原样显示",
+				foldIconNativeDesc: "回合栏使用官方折叠箭头风格，步骤栏恢复官方活动图标",
 			},
 			en: {
 				ariaTurn: "Expand turn",
@@ -122,18 +116,12 @@ window.__ModuleLoader__.load({
 				fieldCacheHit: "Cache hit",
 				fieldCacheHitDesc: "Cache hit percentage",
 				fieldSettingsDone: "Done",
-				// Turn bar leading icon style
-				foldIconLabel: "Turn bar icon",
-				foldIconPoker: "Animated poker cards",
-				foldIconPokerDesc: "Stack / fan / live flip animation",
-				foldIconNative: "Native icon",
-				foldIconNativeDesc: "Official fold chevron",
-				// Step group bar skin (official structure + plugin CSS skin)
-				stepSkinLabel: "Step bar skin",
-				stepSkinPoker: "Poker suits",
-				stepSkinPokerDesc: "Activity-to-suit mapping (♥ think · ♠ read · ♦ edit · ♣ command · whale orchestration)",
-				stepSkinNative: "Native icons",
-				stepSkinNativeDesc: "Show official activity icons as-is",
+				// Unified fold-icon mode (one setting drives Turn leading icon + Step skin)
+				foldIconLabel: "Fold icons",
+				foldIconPoker: "Poker",
+				foldIconPokerDesc: "Turn and Step bars use the poker animation",
+				foldIconNative: "Native",
+				foldIconNativeDesc: "Turn keeps enhanced fields with an official-style chevron; Step restores official activity icons",
 			}
 		};
 		/** 取当前语言下的文案；缺失键回退英文，再缺失返回键名本身。 */
@@ -158,25 +146,34 @@ window.__ModuleLoader__.load({
 
 		// ---- 自有 UI 原语（零宿主包依赖） ----
 		// 官方插件实践（cordis-plugin-development/references/practices.md）：不要运行时
-		// require 任何 Harness Client 包。Turn 栏 native 风格的 chevron 用插件自己的
-		// SVG（外观对齐官方 IconChevronDownOutline 的描边折线）；通知只用 console.warn。
+		// require 任何 Harness Client 包。native 模式的折叠 chevron 用插件自己的 SVG，
+		// 几何**逐值对齐官方 IconChevronDownOutlineRegular**（ui-primitives icons/index.tsx）：
+		// viewBox 0 0 16 16、size 14、fill none、stroke currentColor、
+		// strokeWidth = ICON_REGULAR_STROKE = 1、
+		// path "M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6"；
+		// 展开态 = 官方同款 transform rotate(180deg)（TurnProcessNodeView.module.css：
+		// .root[data-open] .chevron，transition transform 100ms ease）。
 		// SVG 属性必须用 React 驼峰命名（strokeWidth/strokeLinecap/strokeLinejoin）：
 		// 连字符形式 React 会逐条报 "Invalid DOM property"。
-		/** 自有 chevron（14×14 描边折线）：points 区分方向——
-		 *  下箭头 "3 5.5 7 9.5 11 5.5" / 右箭头 "5.5 3 9.5 7 5.5 11"。 */
 		function NativeChevronIcon(props) {
+			var open = props.open === true;
 			return react.createElement("svg", {
-				viewBox: "0 0 14 14",
+				viewBox: "0 0 16 16",
 				width: props.size || 14,
 				height: props.size || 14,
 				fill: "none",
 				stroke: "currentColor",
-				strokeWidth: "1.6",
+				strokeWidth: props.strokeWidth || 1,
 				strokeLinecap: "round",
 				strokeLinejoin: "round",
-				"aria-hidden": "true"
+				"aria-hidden": "true",
+				style: props.open === undefined ? undefined : {
+					transform: open ? "rotate(180deg)" : undefined,
+					transition: "transform 100ms ease"
+				}
 			},
-				react.createElement("polyline", { points: props.points || "3 5.5 7 9.5 11 5.5" })
+				// 官方 down 折线（展开由 rotate(180deg) 翻成向上，与官方 CSS 同机制）
+				react.createElement("path", { d: "M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6" })
 			);
 		}
 
@@ -189,7 +186,10 @@ window.__ModuleLoader__.load({
 		// 折叠语义决定，插件不再自行统计）。
 		var FIELD_KEYS = ["duration", "ttft", "tokens", "tokensPerSecond", "cacheHit"];
 		var FIELD_DEFAULTS = { duration: true, ttft: true, tokens: true, tokensPerSecond: true, cacheHit: true };
-		var settings = { fields: Object.assign({}, FIELD_DEFAULTS), foldIcon: "poker", stepSkin: "poker" };
+		// 统一图标模式：Turn 前导图标与 Step 皮的唯一开关（一个设置管两处，
+		// 不再允许 Turn=poker/Step=native 这类不一致组合）。
+		var ICON_STYLES = ["poker", "native"];
+		var settings = { fields: Object.assign({}, FIELD_DEFAULTS), iconStyle: "poker" };
 		(function loadSettings() {
 			try {
 				var raw = (typeof window !== "undefined" && window.localStorage && window.localStorage.getItem(SETTINGS_KEY)) || "";
@@ -202,16 +202,32 @@ window.__ModuleLoader__.load({
 								if (typeof parsed.fields[fk] === "boolean") settings.fields[fk] = parsed.fields[fk];
 							}
 						}
-						if (parsed.foldIcon === "poker" || parsed.foldIcon === "native") settings.foldIcon = parsed.foldIcon;
-						if (parsed.stepSkin === "poker" || parsed.stepSkin === "native") settings.stepSkin = parsed.stepSkin;
+						// 统一图标模式：新字段优先；旧双字段（foldIcon / stepSkin）只作一次性
+						// 迁移读取——任一曾明确选过 native，升级后保持 native（老用户不会突然
+						// 重新出现 Poker）。迁移只发生在 load 层，运行时不再维护两套状态。
+						if (parsed.iconStyle === "poker" || parsed.iconStyle === "native") settings.iconStyle = parsed.iconStyle;
+						else if (parsed.foldIcon === "native" || parsed.stepSkin === "native") settings.iconStyle = "native";
 					}
 				}
 			} catch (e) { /* localStorage 不可用或数据损坏：走默认 */ }
 		})();
 		function saveSettings() {
 			try {
-				(typeof window !== "undefined" && window.localStorage) &&
-					window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+				var store = typeof window !== "undefined" && window.localStorage;
+				if (!store) return;
+				// 合并保存：不主动清空用户 localStorage 里的其它未知字段，
+				// 只覆盖本插件管理的两个键（fields / iconStyle）。
+				var merged = {};
+				try {
+					var previous = store.getItem(SETTINGS_KEY);
+					if (previous) {
+						var parsedPrevious = JSON.parse(previous);
+						if (parsedPrevious && typeof parsedPrevious === "object") merged = parsedPrevious;
+					}
+				} catch (e) { /* 旧值损坏：直接覆盖 */ }
+				merged.fields = settings.fields;
+				merged.iconStyle = settings.iconStyle;
+				store.setItem(SETTINGS_KEY, JSON.stringify(merged));
 			} catch (e) { /* 忽略写入失败 */ }
 		}
 
@@ -261,71 +277,46 @@ window.__ModuleLoader__.load({
 			return result;
 		}
 
-		// -- Turn 栏前导图标风格（poker / native） --
-		var FOLD_ICON_STYLES = ["poker", "native"];
-		var foldIconListeners = new Set();
-		var foldIconVersion = 0;
-		function subscribeFoldIcon(fn) {
-			foldIconListeners.add(fn);
-			return function () { foldIconListeners.delete(fn); };
+		// -- 统一图标模式（poker / native）：Turn 前导图标 + Step 皮的唯一状态 --
+		// 一套 listeners / version / notify 同时驱动两处：Turn 组件经 useIconStyle()
+		// 重渲染换前导图标，Step 皮经 applyIconStyle() 切样式表总闸——运行时不可能
+		// 再出现 Turn 与 Step 不同步的组合。
+		var iconStyleListeners = new Set();
+		var iconStyleVersion = 0;
+		function subscribeIconStyle(fn) {
+			iconStyleListeners.add(fn);
+			return function () { iconStyleListeners.delete(fn); };
 		}
-		function notifyFoldIcon() {
-			foldIconVersion++;
+		function notifyIconStyle() {
+			iconStyleVersion++;
 			var fns = [];
-			foldIconListeners.forEach(function (fn) { fns.push(fn); });
+			iconStyleListeners.forEach(function (fn) { fns.push(fn); });
 			for (var i = 0; i < fns.length; i++) fns[i]();
 		}
-		function getFoldIconVersion() { return foldIconVersion; }
-		function setFoldIconStyle(style) {
-			if (FOLD_ICON_STYLES.indexOf(style) === -1) return;
-			if (settings.foldIcon === style) return;
-			settings.foldIcon = style;
+		function getIconStyleVersion() { return iconStyleVersion; }
+		function setIconStyle(style) {
+			if (ICON_STYLES.indexOf(style) === -1) return;
+			if (settings.iconStyle === style) return;
+			settings.iconStyle = style;
 			saveSettings();
-			notifyFoldIcon();
+			applyIconStyle();
+			notifyIconStyle();
 		}
-		function getFoldIconStyle() { return settings.foldIcon; }
-		/** 订阅折叠图标样式变化（组件内调用以触发重渲染）。 */
-		function useFoldIconStyle() {
-			useSyncExternalStore(subscribeFoldIcon, getFoldIconVersion);
-			return settings.foldIcon;
+		function getIconStyle() { return settings.iconStyle; }
+		/** 订阅图标模式变化（组件内调用以触发重渲染）。 */
+		function useIconStyle() {
+			useSyncExternalStore(subscribeIconStyle, getIconStyleVersion);
+			return settings.iconStyle;
 		}
-
-		// -- Step 分组栏皮肤（poker / native；纯 CSS，经皮肤样式元素的 disabled 总闸切换） --
-		var stepSkinListeners = new Set();
-		var stepSkinVersion = 0;
-		function subscribeStepSkin(fn) {
-			stepSkinListeners.add(fn);
-			return function () { stepSkinListeners.delete(fn); };
-		}
-		function notifyStepSkin() {
-			stepSkinVersion++;
-			var fns = [];
-			stepSkinListeners.forEach(function (fn) { fns.push(fn); });
-			for (var i = 0; i < fns.length; i++) fns[i]();
-		}
-		function getStepSkinVersion() { return stepSkinVersion; }
-		function setStepSkin(skin) {
-			if (skin !== "poker" && skin !== "native") return;
-			if (settings.stepSkin === skin) return;
-			settings.stepSkin = skin;
-			saveSettings();
-			applyStepSkin();
-			notifyStepSkin();
-		}
-		function getStepSkin() { return settings.stepSkin; }
-		/** 订阅 Step 皮肤变化（组件内调用以触发重渲染）。 */
-		function useStepSkin() {
-			useSyncExternalStore(subscribeStepSkin, getStepSkinVersion);
-			return settings.stepSkin;
-		}
-		/** 把皮肤开关同步到皮肤样式元素的 disabled 属性——CSS 皮的唯一开关
-		 *  （不写 document.body：官方实践禁止在组件外写 DOM；skinStyleEl 由 CSS
-		 *  注入段创建并持有，native 时 disabled=true 官方图标原样显示）。 */
-		function applyStepSkin() {
+		/** 统一视觉应用：Step 皮的两张样式表（皮肤 + 牌数桥）随 iconStyle 总闸启停——
+		 *  native 时 disabled=true，官方 ProcessGroupHeader 自己的 activity icon /
+		 *  chevron / shimmer / title / disclosure 原样恢复（插件不改官方 DOM）。
+		 *  Turn 没有 DOM 副作用：组件经 useIconStyle() 重渲染决定前导图标。 */
+		function applyIconStyle() {
 			try {
-				var native = settings.stepSkin !== "poker";
+				var native = settings.iconStyle !== "poker";
 				if (skinStyleEl !== null) skinStyleEl.disabled = native;
-				// 牌数桥样式表同受皮肤总闸控制（native = 官方图标原样，桥规则一并停用）
+				// 牌数桥样式表同受总闸控制（native = 官方图标原样，桥规则一并停用）
 				if (stepCardStyleEl) stepCardStyleEl.disabled = native;
 			} catch (e) { /* 忽略 */ }
 		}
@@ -1111,7 +1102,7 @@ window.__ModuleLoader__.load({
 				stepCardStyleEl = cardsTag;
 				stepCardRulesCache = cardsTag.textContent;
 			}
-			applyStepSkin();
+			applyIconStyle();
 		}
 
 		// ---- 运行中秒表时钟（Running Turn Bar 的耗时刷新） ----
@@ -1744,9 +1735,17 @@ window.__ModuleLoader__.load({
 		}
 		/** Turn 栏前导图标：native 风格（foldIconStyle="native"）返回官方 chevron；
 		 *  poker 风格运行中返回翻牌动画、结束后返回牌堆/扇形。 */
-		function turnPokerIcon(cardCount, running, open, turn) {
-			if (getFoldIconStyle() !== "poker") return undefined;
-			// 元素带 key（进 TurnBarView 的 kids 数组）——React 数组子元素必须有 key
+		/** Turn 栏前导图标（前导位 = Poker 与 native chevron 共用的同一槽位）。
+		 *  poker 模式：运行中翻牌动画、结束后牌堆/扇形。
+		 *  native 模式：官方风格折叠 chevron（收起向下、展开 rotate(180deg) 向上，
+		 *  几何对齐官方 IconChevronDownOutlineRegular）；running 与不可折叠的回合
+		 *  官方本就不渲染折叠 chevron → 不渲染前导图标（官方 presentation 原样）。 */
+		function turnPokerIcon(cardCount, running, open, turn, canCollapse) {
+			if (getIconStyle() !== "poker") {
+				if (running || !canCollapse) return undefined;
+				// 元素带 key（进 TurnBarView 的 kids 数组）——React 数组子元素必须有 key
+				return react.createElement(NativeChevronIcon, { key: "native", open: open });
+			}
 			if (running) return react.createElement(PokerSpinIcon, { key: "poker" });
 			return react.createElement(PokerIcon, { key: "poker", count: cardCount, suit: foldSuitFor("turn:" + turn), open: open });
 		}
@@ -1927,9 +1926,12 @@ window.__ModuleLoader__.load({
 			kids.push(react.createElement("span", { key: "label", className: "ccg-turn-bar-label" }, titleContent));
 			var rightKids = [];
 			if (round) rightKids.push(react.createElement("span", { key: "round" }, round));
-			if (canToggle) {
+			// 右侧折叠提示箭头只在 poker 模式出现（poker 的前导位是牌堆/扇形/翻牌，
+			// 折叠提示放在右侧）。native 模式的前导位本身就是官方语义的折叠 chevron
+			//（收起向下/展开 rotate(180deg)），再保留右侧箭头会变成两个 chevron。
+			if (canToggle && useIconStyle() === "poker") {
 				rightKids.push(react.createElement("span", { key: "chevron", className: "ccg-turn-bar-chevron" },
-					react.createElement(NativeChevronIcon, { size: 14, points: "3 5.5 7 9.5 11 5.5" })));
+					react.createElement(NativeChevronIcon, { size: 14 })));
 			}
 			if (rightKids.length > 0) {
 				kids.push(react.createElement("span", { key: "right", className: "ccg-turn-bar-right" }, rightKids));
@@ -2120,50 +2122,25 @@ window.__ModuleLoader__.load({
 			items.push(react.createElement(PokerSpinIcon, { key: "spin" }));
 			return items;
 		}
-		function FoldIconSelector() {
-			var current = useFoldIconStyle();
+		/** 统一图标模式选择器（折叠栏图标）：一个设置同时管 Turn 前导图标与 Step 皮，
+		 *  不再提供"Turn=native / Step=poker"这类不一致组合。 */
+		function IconStyleSelector() {
+			var current = useIconStyle();
 			return react.createElement(GearOptionSelector, {
 				current: current,
 				labelKey: "foldIconLabel",
-				onSelect: setFoldIconStyle,
+				onSelect: setIconStyle,
 				options: [
 					{ value: "poker", labelKey: "foldIconPoker", descKey: "foldIconPokerDesc", previews: pokerPreviews },
 					{
 						value: "native", labelKey: "foldIconNative", descKey: "foldIconNativeDesc",
 						previews: function () {
+							// 官方语义：收起 = down chevron；展开 = 同一图标 rotate(180deg) 朝上
 							return [
-								react.createElement(NativeChevronIcon, { key: "right", size: 14, points: "5.5 3 9.5 7 5.5 11" }),
-								react.createElement(NativeChevronIcon, { key: "down", size: 14, points: "3 5.5 7 9.5 11 5.5" })
+								react.createElement(NativeChevronIcon, { key: "down", size: 14 }),
+								react.createElement(NativeChevronIcon, { key: "up", size: 14, open: true })
 							];
 						}
-					}
-				]
-			});
-		}
-		/** Step 皮预览：左=扑克牌面（heart 卡 + club 卡），右=官方 chevron。 */
-		function stepSkinPreviews(suit) {
-			var image = suitMaskImage(suit);
-			var card = react.createElement("span", {
-				key: "card",
-				style: {
-					display: "inline-block", width: "12px", height: "17px", backgroundColor: "currentColor",
-					WebkitMask: image + " center/contain no-repeat",
-					mask: image + " center/contain no-repeat"
-				}
-			});
-			return [card];
-		}
-		function StepSkinSelector() {
-			var current = useStepSkin();
-			return react.createElement(GearOptionSelector, {
-				current: current,
-				labelKey: "stepSkinLabel",
-				onSelect: setStepSkin,
-				options: [
-					{ value: "poker", labelKey: "stepSkinPoker", descKey: "stepSkinPokerDesc", previews: function () { return stepSkinPreviews("heart").concat(stepSkinPreviews("club")); } },
-					{
-						value: "native", labelKey: "stepSkinNative", descKey: "stepSkinNativeDesc",
-						previews: function () { return [react.createElement(NativeChevronIcon, { key: "n", size: 14, points: "3 5.5 7 9.5 11 5.5" })]; }
 					}
 				]
 			});
@@ -2244,8 +2221,7 @@ window.__ModuleLoader__.load({
 					react.createElement("div", { className: "ccg-gear-popup-hint" }, _T("fieldSettingsHint")),
 					react.createElement("div", { className: "ccg-gear-popup-fields" }, fields),
 					react.createElement("div", { className: "ccg-gear-divider", "aria-hidden": "true" }),
-					react.createElement(FoldIconSelector, null),
-					react.createElement(StepSkinSelector, null),
+					react.createElement(IconStyleSelector, null),
 					react.createElement("div", { className: "ccg-gear-popup-foot" },
 						react.createElement("button", {
 							className: "ccg-gear-popup-btn",
@@ -2320,7 +2296,7 @@ window.__ModuleLoader__.load({
 			}
 			// 设置订阅（字段显隐/图标风格变化 → 所有栏立即重渲染）
 			useFieldVisibility();
-			useFoldIconStyle();
+			useIconStyle();
 			// Step 牌数桥：会话级只读订阅者，由本渲染器承载（插件既有的官方挂载点；
 			// 每个回合挂一份，leader 选举保证只有一个真的订阅与写规则）。
 			// 官方 turn-process 是 turn 级控制器节点、不是 Process Group 成员，所以桥
@@ -2354,7 +2330,7 @@ window.__ModuleLoader__.load({
 						running: true,
 						turnNumber: clock.number,
 						label: label || (currentLocale() === "zh" ? "0秒" : "0s"),
-						poker: turnPokerIcon(cardCountRunning, true, false, clock.number),
+						poker: turnPokerIcon(cardCountRunning, true, false, clock.number, false),
 						round: round
 					}),
 					cardBridge
@@ -2381,7 +2357,7 @@ window.__ModuleLoader__.load({
 					label: label,
 					statusText: statusText,
 					statusFailed: clock.reason === "error",
-					poker: turnPokerIcon(specCardCountFromSpec(spec), false, open, clock.number),
+					poker: turnPokerIcon(specCardCountFromSpec(spec), false, open, clock.number, canCollapse),
 					round: round,
 					onToggle: function () {
 						// 唯一合法的折叠通道：官方 owner state 的 setOpen。
@@ -2440,7 +2416,7 @@ window.__ModuleLoader__.load({
 		exports.apply = function (ctx) {
 			// Step 皮总闸：皮肤样式元素的 disabled（幂等；模块初始化时已同步过一次，
 			// 此处兜底宿主时序）。不写 document.body attribute——官方实践禁止组件外 DOM 写入。
-			applyStepSkin();
+			applyIconStyle();
 			ctx.inject(["slots"], function (scope) {
 				var slotsSvc = scope.slots;
 				safeRegisterSlot(slotsSvc, {

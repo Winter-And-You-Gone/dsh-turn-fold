@@ -270,7 +270,7 @@ describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）',
     return { host, cleanup: () => host.remove() }
   }
 
-  beforeEach(() => { T.settings.stepSkin = 'poker'; T.applyStepSkin() })
+  beforeEach(() => { T.settings.iconStyle = 'poker'; T.applyIconStyle() })
 
   for (const shape of ['0.1.7-rc.2', '0.2.0-rc.2']) {
     it(shape + ' 官方 DOM → running 选择器命中（任一 shimmer 契约），轮换 mask 规则到位', () => {

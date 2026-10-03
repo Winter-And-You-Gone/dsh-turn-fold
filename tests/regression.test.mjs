@@ -187,7 +187,7 @@ describe('降级要求（UI 增强可坏，Fold 不能被拖坏）', () => {
   it('设置数据损坏 → 回退默认值，不抛错', () => {
     sharedWindow.localStorage.setItem(T.SETTINGS_KEY, '{broken json')
     const { test: T2 } = loadPlugin({ window: sharedWindow })
-    assert.equal(T2.settings.stepSkin, 'poker')
+    assert.equal(T2.settings.iconStyle, 'poker')
     assert.equal(T2.settings.fields.tokens, true)
   })
 

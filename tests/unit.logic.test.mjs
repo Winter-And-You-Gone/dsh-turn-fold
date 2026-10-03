@@ -22,8 +22,8 @@ beforeEach(() => {
   window.localStorage.clear()
   // 恢复默认字段显隐（设置在模块级持久化，测试间互不污染）
   for (const key of T.FIELD_KEYS) T.setFieldVisible(key, true)
-  T.settings.foldIcon = 'poker'
-  T.settings.stepSkin = 'poker'
+  T.settings.iconStyle = 'poker'
+  T.settings.iconStyle = 'poker'
   // 运行时 TTFT 观察缓存是模块级（跨用例共享）——每个用例从干净状态开始
   T.observedTtft.clear()
 })
@@ -379,26 +379,26 @@ describe('字段显隐（filterVisibleMetrics + 持久化）', () => {
 
   it('设置写入 localStorage（dsh-turn-fold:settings）', () => {
     T.setFieldVisible('tokens', false)
-    T.setFoldIconStyle('native')
+    T.setIconStyle('native')
     const raw = window.localStorage.getItem(T.SETTINGS_KEY)
     assert.ok(raw)
     const parsed = JSON.parse(raw)
     assert.equal(parsed.fields.tokens, false)
-    assert.equal(parsed.foldIcon, 'native')
+    assert.equal(parsed.iconStyle, 'native')
   })
 
   it('重新加载插件时从 localStorage 恢复', () => {
     T.setFieldVisible('tokens', false)
-    T.setStepSkin('native')
+    T.setIconStyle('native')
     const { test: T2, window: win2 } = loadPlugin({ window })
     assert.equal(T2.settings.fields.tokens, false)
-    assert.equal(T2.settings.stepSkin, 'native')
+    assert.equal(T2.settings.iconStyle, 'native')
     assert.equal(T2.settings.fields.duration, true)
     assert.equal(win2, window)
     // 还原（后续测试依赖默认态）
     T2.setFieldVisible('tokens', true)
-    T2.setStepSkin('poker')
-    T2.setFoldIconStyle('poker')
+    T2.setIconStyle('poker')
+    T2.setIconStyle('poker')
   })
 })
 

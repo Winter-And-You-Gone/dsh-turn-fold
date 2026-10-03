@@ -49,8 +49,8 @@ function openPopup() {
 beforeEach(() => {
   sharedWindow.localStorage.clear()
   for (const key of T.FIELD_KEYS) T.setFieldVisible(key, true)
-  T.setFoldIconStyle('poker')
-  T.setStepSkin('poker')
+  T.setIconStyle('poker')
+  T.setIconStyle('poker')
   act(() => { T.setPopupOpen(false, null) })
   container = sharedDocument.createElement('div')
   sharedDocument.body.appendChild(container)
@@ -79,7 +79,7 @@ describe('设置面板（Turn 栏自身 React 树内）', () => {
     const boxes = container.querySelectorAll('input[type=checkbox]')
     assert.equal(boxes.length, T.FIELD_KEYS.length)
     const selectors = [...container.querySelectorAll('.ccg-gear-icon-selector-label')].map((l) => l.textContent)
-    assert.ok(selectors.includes('回合栏图标') && selectors.includes('步骤栏皮肤'))
+    assert.ok(selectors.includes('折叠栏图标'), '统一图标选择器存在')
     assert.equal(gear().getAttribute('aria-expanded'), 'true')
   })
 
@@ -127,36 +127,36 @@ describe('设置面板（Turn 栏自身 React 树内）', () => {
   })
 })
 
-describe('图标风格 / Step 皮选择器', () => {
+describe('统一图标模式选择器（iconStyle）', () => {
   it('点击选项行切换 foldIcon 并持久化', () => {
     openPopup()
     const options = container.querySelectorAll('.ccg-gear-icon-option')
-    assert.ok(options.length >= 4, '两个选择器各两项')
+    assert.ok(options.length === 2, '统一选择器共两项（poker / native）')
     act(() => { options[1].dispatchEvent(new sharedWindow.MouseEvent('click', { bubbles: true })) })
-    assert.equal(T.getFoldIconStyle(), 'native')
+    assert.equal(T.getIconStyle(), 'native')
     const saved = JSON.parse(sharedWindow.localStorage.getItem(T.SETTINGS_KEY))
-    assert.equal(saved.foldIcon, 'native')
-    act(() => { T.setFoldIconStyle('poker') })
+    assert.equal(saved.iconStyle, 'native')
+    act(() => { T.setIconStyle('poker') })
   })
 
-  it('点击 Step 皮选项切换 stepSkin 并同步皮肤元素 disabled', () => {
+  it('native → 皮肤元素同步禁用；poker → 恢复（同一设置管两处）', () => {
     const skinEl = document.querySelector('style[data-plugin-css="' + T.SKIN_CSS_ID + '"]')
     openPopup()
     const selectors = container.querySelectorAll('.ccg-gear-icon-selector')
     const stepSelector = selectors[selectors.length - 1]
     const options = stepSelector.querySelectorAll('.ccg-gear-icon-option')
     act(() => { options[1].dispatchEvent(new sharedWindow.MouseEvent('click', { bubbles: true })) })
-    assert.equal(T.getStepSkin(), 'native')
+    assert.equal(T.getIconStyle(), 'native')
     assert.equal(skinEl.disabled, true, '皮肤元素被禁用（总闸）')
     assert.equal(container.querySelector('[data-tf-step-skin]'), null, '不再使用 body 属性总闸')
-    act(() => { T.setStepSkin('poker') })
+    act(() => { T.setIconStyle('poker') })
     assert.equal(skinEl.disabled, false)
   })
 
   it('非法值被忽略（不抛错、不改状态）', () => {
-    T.setFoldIconStyle('fancy')
-    T.setStepSkin('neon')
-    assert.equal(T.getFoldIconStyle(), 'poker')
-    assert.equal(T.getStepSkin(), 'poker')
+    T.setIconStyle('fancy')
+    T.setIconStyle('neon')
+    assert.equal(T.getIconStyle(), 'poker')
+    assert.equal(T.getIconStyle(), 'poker')
   })
 })
