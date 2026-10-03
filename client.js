@@ -1003,8 +1003,6 @@ window.__ModuleLoader__.load({
 				/* 失败态：状态词标红（与官方错误色 token 一致） */
 				".ccg-turn-bar-status.ccg-turn-status-failed{color:var(--dsw-alias-state-error-primary,#ef4444)}",
 				".ccg-turn-bar-right{flex:none;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}",
-				".ccg-turn-bar-chevron{display:inline-flex;align-items:center;flex:none;color:var(--dsw-alias-label-tertiary,#6b7280);transition:transform .12s ease}",
-				".ccg-turn-bar-main[data-open] .ccg-turn-bar-chevron{transform:rotate(90deg)}",
 				/* 齿轮：独立 <button>，与主按钮兄弟——只负责设置，Tab 次序紧随主按钮 */
 				".ccg-gear-button{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:24px;background:none;border:none;padding:0;margin:0;cursor:pointer;color:var(--dsw-alias-label-tertiary,#9ca3af);border-radius:4px;transition:color .15s ease}",
 				".ccg-gear-button:hover{color:var(--dsw-alias-label-primary,#1f2328)}",
@@ -1928,16 +1926,8 @@ window.__ModuleLoader__.load({
 				kids.push(" · ");
 			}
 			kids.push(react.createElement("span", { key: "label", className: "ccg-turn-bar-label" }, titleContent));
-			var iconStyle = props.iconStyle; // 由父组件订阅一次后下传（本组件禁止条件调用 Hook）
 			var rightKids = [];
 			if (round) rightKids.push(react.createElement("span", { key: "round" }, round));
-			// 右侧折叠提示箭头只在 poker 模式出现（poker 的前导位是牌堆/扇形/翻牌，
-			// 折叠提示放在右侧）。native 模式的前导位本身就是官方语义的折叠 chevron
-			//（收起向下/展开 rotate(180deg)），再保留右侧箭头会变成两个 chevron。
-			if (canToggle && iconStyle === "poker") {
-				rightKids.push(react.createElement("span", { key: "chevron", className: "ccg-turn-bar-chevron" },
-					react.createElement(NativeChevronIcon, { size: 14 })));
-			}
 			if (rightKids.length > 0) {
 				kids.push(react.createElement("span", { key: "right", className: "ccg-turn-bar-right" }, rightKids));
 			}
@@ -2320,7 +2310,6 @@ window.__ModuleLoader__.load({
 				return react.createElement(react.Fragment, null,
 					react.createElement(TurnBarView, {
 						running: false, open: false, canToggle: false,
-						iconStyle: iconStyle,
 						turnNumber: data && data.turn,
 						label: "",
 						round: turnRoundLabel(data && data.turn)
@@ -2339,7 +2328,6 @@ window.__ModuleLoader__.load({
 				return react.createElement(react.Fragment, null,
 					react.createElement(TurnBarView, {
 						running: true,
-						iconStyle: iconStyle,
 						turnNumber: clock.number,
 						label: label || (currentLocale() === "zh" ? "0秒" : "0s"),
 						poker: turnPokerIcon(iconStyle, cardCountRunning, true, false, clock.number, false),
@@ -2363,7 +2351,6 @@ window.__ModuleLoader__.load({
 			return react.createElement(react.Fragment, null,
 				react.createElement(TurnBarView, {
 					running: false,
-					iconStyle: iconStyle,
 					open: open,
 					canToggle: canCollapse,
 					turnNumber: clock.number,

@@ -279,7 +279,8 @@ describe('同一实例状态机：running → settled → open → native → po
   }
   const leadingChevron = () => container.querySelector('.ccg-turn-bar-main > svg[aria-hidden=true]')
   const pokIcon = () => container.querySelector('.ccg-poker-icon')
-  const rightChevron = () => container.querySelector('.ccg-turn-bar-chevron')
+  // 右侧区域只允许「第 N 轮」文本：不得再有任何箭头图形（原 .ccg-turn-bar-chevron 已删除）
+  const rightSvg = () => container.querySelector('.ccg-turn-bar-right svg')
   const label = () => barLabel()
 
   it('A→F 全程：无 Hook 顺序错误，图标/字段/Fold 语义逐步正确', () => {
@@ -293,7 +294,7 @@ describe('同一实例状态机：running → settled → open → native → po
       renderView(runningProps())
       assert.ok(container.querySelector('[data-tf-running]'), 'A: running 栏在')
       assert.ok(pokIcon(), 'A: 运行中前导 = 翻牌 Poker')
-      assert.equal(rightChevron(), null, 'A: running 无右侧折叠箭头')
+      assert.equal(rightSvg(), null, 'A: running 右侧无箭头')
       assert.equal(container.querySelector('button.ccg-turn-bar-main'), null, 'A: running 是静态 div')
       const aLabel = label()
       clickMainStatic()
@@ -303,7 +304,7 @@ describe('同一实例状态机：running → settled → open → native → po
       // B. settled closed · poker · canToggle=true
       renderView(closedProps())
       assert.ok(pokIcon(), 'B: 收起 = 牌堆 Poker')
-      assert.ok(rightChevron(), 'B: poker 有右侧折叠箭头')
+      assert.equal(rightSvg(), null, 'B: poker 右侧不再有折叠箭头（Fold 状态由 Poker 自身表达）')
       assert.equal(container.querySelector('button.ccg-turn-bar-main').getAttribute('aria-expanded'), 'false')
       const bLabel = label()
       assert.ok(bLabel.includes('首字0.8s') && bLabel.includes('370,202 token') && bLabel.includes('263tok/s') && bLabel.includes('缓存93.99%') && bLabel.includes('22分34秒'), 'B: 字段齐全：' + bLabel)
@@ -328,7 +329,7 @@ describe('同一实例状态机：running → settled → open → native → po
       const dChevron = leadingChevron()
       assert.ok(dChevron, 'D: native 前导 = 自有 chevron')
       assert.ok(String(dChevron.getAttribute('style')).includes('rotate(180deg)'), 'D: 展开态 chevron 向上')
-      assert.equal(rightChevron(), null, 'D: native 无右侧第二个 chevron')
+      assert.equal(rightSvg(), null, 'D: native 右侧无箭头（唯一 chevron 在左侧）')
       const dLabel = label()
       assert.ok(dLabel.includes('22分34秒') && dLabel.includes('首字0.8s') && dLabel.includes('370,202 token') && dLabel.includes('263tok/s') && dLabel.includes('缓存93.99%'), 'D: 增强字段全保留：' + dLabel)
       assert.ok(container.querySelector('.ccg-turn-bar-right').textContent.includes('第13轮'), 'D: 第 N 轮在')
@@ -339,7 +340,7 @@ describe('同一实例状态机：running → settled → open → native → po
       const eChevron = leadingChevron()
       assert.ok(eChevron, 'E: native 收起仍有前导 chevron')
       assert.ok(!String(eChevron.getAttribute('style')).includes('rotate(180deg)'), 'E: 收起态 chevron 向下（无旋转）')
-      assert.equal(rightChevron(), null, 'E: native 仍无右侧箭头')
+      assert.equal(rightSvg(), null, 'E: native 右侧仍无箭头')
       clickMain()
       assert.deepEqual(setOpenCalls, [true, false, true], 'E: native 点击同样只调 setOpen(true)')
 
@@ -347,7 +348,7 @@ describe('同一实例状态机：running → settled → open → native → po
       act(() => { T.setIconStyle('poker') })
       renderView(closedProps())
       assert.ok(pokIcon(), 'F: 切回后 Poker 恢复')
-      assert.ok(rightChevron(), 'F: 右侧折叠箭头恢复')
+      assert.equal(rightSvg(), null, 'F: 切回 poker 右侧同样无箭头')
       assert.equal(leadingChevron(), null, 'F: native chevron 退场')
 
       // 形状稳定性：iconStyle 每次切换都会重渲染全部栏，但不产生任何 hook 顺序告警
@@ -424,5 +425,92 @@ describe('StrictMode 严格验收（effect 双调用）', () => {
       console.error = originalError
       act(() => { T.setIconStyle('poker') })
     }
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// 唯一 Fold icon：每种模式/状态最多一个折叠图标，右侧不再有辅助箭头
+// ══════════════════════════════════════════════════════════════════════
+// 旧实现给 poker 模式在齿轮左侧又加了一个 .ccg-turn-bar-chevron（随 open/closed
+// 转向）——Poker 自身已经用「牌堆 = 收起 / 扇形 = 展开」表达 Fold 状态，右侧箭头
+// 是冗余信息且紧贴齿轮像多出来的控件。本轮删除该渲染与配套 CSS。
+describe('唯一 Fold icon（Poker 右侧不再有折叠箭头）', () => {
+  const runningProps = () => {
+    const p = subscriptionProps({ status: 'open', startTime: T0, endTime: null, reason: undefined, steps: [], stepsData: [], tail: undefined })
+    return { node: p.node, turnProcess: p.turnProcess, useTurnData: p.useTurnData, useChat: p.useChat }
+  }
+  const rightArea = () => container.querySelector('.ccg-turn-bar-right')
+  const rightIcons = () => container.querySelectorAll('.ccg-turn-bar-right svg, .ccg-turn-bar-chevron')
+  const leadingChevron = () => container.querySelector('.ccg-turn-bar-main > svg[aria-hidden=true]')
+
+  it('poker + settled closed：[Poker] [字段] [第N轮] [齿轮]，右侧无箭头', () => {
+    T.setIconStyle('poker')
+    try {
+      renderView(closedProps())
+      assert.ok(container.querySelector('.ccg-poker-icon'), '前导 = 牌堆 Poker')
+      assert.equal(container.querySelector('.ccg-turn-bar-chevron'), null, '旧右侧箭头类不得出现')
+      assert.equal(rightIcons().length, 0, '右侧区域不得含任何箭头图形')
+      assert.ok(rightArea().textContent.includes('第13轮'), '第 N 轮保留')
+      assert.ok(container.querySelector('.ccg-gear-button'), '齿轮保留')
+      assert.ok(barLabel().includes('首字0.8s') && barLabel().includes('263tok/s'), '字段保留：' + barLabel())
+    } finally { act(() => { T.setIconStyle('poker') }) }
+  })
+
+  it('poker + settled open：扇形 Poker，右侧仍无箭头', () => {
+    T.setIconStyle('poker')
+    try {
+      renderView(closedProps({ open: true }))
+      const motion = [...container.querySelectorAll('.ccg-poker-motion')].map((m) => m.getAttribute('transform') || '')
+      assert.ok(motion.some((t) => t.includes('rotate')), '前导 = 扇形（Poker 表达展开态）')
+      assert.equal(rightIcons().length, 0, '展开态右侧同样无箭头')
+      assert.ok(rightArea().textContent.includes('第13轮'), '第 N 轮保留')
+    } finally { act(() => { T.setIconStyle('poker') }) }
+  })
+
+  it('poker + running：翻牌 Poker，右侧无箭头、非 button', () => {
+    T.setIconStyle('poker')
+    try {
+      renderView(runningProps())
+      assert.ok(container.querySelector('.ccg-poker-icon'), '前导 = 翻牌 Poker')
+      assert.equal(rightIcons().length, 0, 'running 右侧无箭头')
+      assert.equal(container.querySelector('button.ccg-turn-bar-main'), null, 'running 仍是静态 div')
+    } finally { act(() => { T.setIconStyle('poker') }) }
+  })
+
+  it('native + closed：唯一 chevron 在左侧（朝下），右侧无箭头', () => {
+    act(() => { T.setIconStyle('native') })
+    try {
+      renderView(closedProps())
+      const chevron = leadingChevron()
+      assert.ok(chevron, '左侧前导 chevron 存在')
+      assert.ok(!String(chevron.getAttribute('style')).includes('rotate(180deg)'), '收起态朝下')
+      assert.equal(rightIcons().length, 0, '右侧无第二个箭头')
+      assert.ok(rightArea().textContent.includes('第13轮'), '第 N 轮保留')
+      assert.ok(container.querySelector('.ccg-gear-button'), '齿轮保留')
+    } finally { act(() => { T.setIconStyle('poker') }) }
+  })
+
+  it('native + open：唯一 chevron 在左侧（rotate(180deg) 朝上），右侧无箭头', () => {
+    act(() => { T.setIconStyle('native') })
+    try {
+      renderView(closedProps({ open: true }))
+      const chevron = leadingChevron()
+      assert.ok(chevron, '左侧前导 chevron 存在')
+      assert.ok(String(chevron.getAttribute('style')).includes('rotate(180deg)'), '展开态朝上')
+      assert.equal(rightIcons().length, 0, '右侧无第二个箭头')
+    } finally { act(() => { T.setIconStyle('poker') }) }
+  })
+
+  it('native + running & 不可折叠：本就无 Fold icon，右侧也无箭头', () => {
+    act(() => { T.setIconStyle('native') })
+    try {
+      renderView(runningProps())
+      assert.equal(leadingChevron(), null, 'native running 无前导 icon')
+      assert.equal(rightIcons().length, 0, 'running 右侧无箭头')
+      renderView(closedProps({ foldable: false }))
+      assert.equal(leadingChevron(), null, '不可折叠（Verbose 语义）无前导 chevron')
+      assert.equal(rightIcons().length, 0, '不可折叠右侧无箭头')
+      assert.ok(rightArea().textContent.includes('第13轮'), '第 N 轮仍保留')
+    } finally { act(() => { T.setIconStyle('poker') }) }
   })
 })

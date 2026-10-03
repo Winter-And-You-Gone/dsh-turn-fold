@@ -261,7 +261,6 @@ describe('iconStyle E：源码静态守卫（Hook 调用形状）', () => {
     assert.ok(end > start, 'TurnBarView 边界可定位')
     const body = lines.slice(start, end).join('\n')
     assert.ok(!body.includes('useIconStyle'), 'TurnBarView 不得自行订阅图标模式（canToggle 会变 → 条件 Hook 风险）')
-    assert.ok(body.includes('props.iconStyle'), 'TurnBarView 必须从 prop 读 iconStyle')
   })
   it('EnhancedTurnProcessView 只有一处 useIconStyle()，且位于全部条件 return 之前', () => {
     const lines = source().split('\n')
@@ -276,6 +275,10 @@ describe('iconStyle E：源码静态守卫（Hook 调用形状）', () => {
     const callIndex = body.findIndex((l) => l.split('//')[0].includes('useIconStyle('))
     const firstReturn = body.findIndex((l) => /^\s*return react\.createElement/.test(l))
     assert.ok(firstReturn === -1 || callIndex < firstReturn, '订阅必须早于任何条件 return')
+  })
+  it('死代码守卫：client.js 不再引用已删除的右侧折叠箭头', () => {
+    const src = source()
+    assert.ok(!src.includes('ccg-turn-bar-chevron'), 'client.js 不得再出现 ccg-turn-bar-chevron（渲染与 CSS 均已删除）')
   })
   it('turnPokerIcon 为纯函数：签名首参为 iconStyle，函数体内不读全局设置', () => {
     const lines = source().split('\n')

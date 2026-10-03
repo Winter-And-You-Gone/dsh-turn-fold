@@ -28,16 +28,18 @@ beforeEach(() => {
 describe('Turn 栏样式（兄弟交互结构）', () => {
   it('核心类全部注入：row / main / gear-button / divider', () => {
     const css = baseCss()
-    for (const cls of ['.ccg-turn-wrap{', '.ccg-turn-row{', '.ccg-turn-bar-main{', '.ccg-turn-bar-label{', '.ccg-turn-bar-right{', '.ccg-turn-bar-chevron{', '.ccg-gear-button{', '.ccg-turn-divider{']) {
+    for (const cls of ['.ccg-turn-wrap{', '.ccg-turn-row{', '.ccg-turn-bar-main{', '.ccg-turn-bar-label{', '.ccg-turn-bar-right{', '.ccg-gear-button{', '.ccg-turn-divider{']) {
       assert.ok(css.includes(cls), '缺少 ' + cls)
     }
   })
 
-  it('旧的单按钮结构类已删除；非交互态钩子（data-tf-static / data-open 旋转箭头）保留', () => {
+  it('旧的单按钮结构类已删除；非交互态钩子保留；右侧折叠箭头 CSS 已彻底移除', () => {
     const css = baseCss()
     assert.ok(!css.includes('.ccg-turn-bar{'), '旧 .ccg-turn-bar 单按钮类必须删除')
     assert.ok(css.includes('[data-tf-static]'))
-    assert.ok(css.includes('.ccg-turn-bar-main[data-open] .ccg-turn-bar-chevron'))
+    // 右侧折叠箭头（Poker 模式下紧贴齿轮的冗余 chevron）连同 CSS 一起删除，Fold 状态只由前导表达
+    assert.ok(!css.includes('.ccg-turn-bar-chevron'), '不得残留右侧箭头 CSS（死 CSS 守卫）')
+    assert.ok(!css.includes('[data-open] .ccg-turn-bar-chevron'), '不得残留 data-open 旋转规则')
     assert.ok(css.includes('.ccg-gear-button:focus-visible'), '齿轮有键盘焦点样式')
   })
 })
