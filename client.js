@@ -638,19 +638,25 @@ window.__ModuleLoader__.load({
 			//   · mask-image 是离散属性，transition/两个静态 URI 之间无中间帧；
 			//   · CSS animation 每次规则命中都从头重放 → 帧序列放 keyframes 里即可做到
 			//     每次 aria-expanded 变化都完整 morph，且每帧的 occluder 逐帧同步 knockout。
-			// 帧时间轴：keyframes 0% = 出发端点（与切换前显示同值，无缝起步）、每 12.5% 一帧
-			// （discrete 在相邻对中点切换 → 有效 morph ≈350ms，总 400ms、20fps）、100% 省略
-			// 回落常驻端点（无缝收尾 = freeze 语义）。
-			var MORPH_FRAMES = 6;
+			// 帧时间轴：keyframes 0% = 出发端点（与切换前显示同值，无缝起步）、每
+			// 100/17≈5.88% 一帧（discrete 在相邻对中点切换 → 有效 morph ≈353ms、总
+			// 400ms、≈42fps——8 帧版有肉眼台阶感，16 帧是"仍可接受体积"下的密度上限）、
+			// 100% 省略回落常驻端点（无缝收尾 = freeze 语义）。
+			var MORPH_FRAMES = 16;
 			function morphMaskDecl(uri) {
-				return '-webkit-mask-image:' + uri + ';mask-image:' + uri;
+				// keyframes 帧内只写标准 mask-image：32 帧 × 2 份 URI 的 -webkit- 双写会让
+				// 皮肤样式表膨胀近一倍；DSH 桌面端是新 Chromium（标准属性早已支持），
+				// 旧内核最坏退化 = 动画期间不换帧（直接端点），不是破图。
+				return 'mask-image:' + uri;
 			}
 			function stepMorphKeyframes(name, fromFan) {
 				var fromMask = fromFan ? fanMask : stackMask;
 				var stops = ['0%{' + morphMaskDecl(fromMask) + '}'];
 				for (var k = 1; k <= MORPH_FRAMES; k++) {
 					var t = fromFan ? 1 - k / (MORPH_FRAMES + 1) : k / (MORPH_FRAMES + 1);
-					stops.push((k * 12.5) + '%{' + morphMaskDecl(svgMaskUri(stepCompletedGroupSvg(stepMorphTransforms(t)))) + '}');
+					// 百分比 = k/(帧数+1)——随 MORPH_FRAMES 自适应（6 帧 → 12.5% 步进、
+					// 16 帧 → 5.882353%），永远不触达 100%（回落停靠点留给常驻端点）
+					stops.push((k * 100 / (MORPH_FRAMES + 1)).toFixed(6) + '%{' + morphMaskDecl(svgMaskUri(stepCompletedGroupSvg(stepMorphTransforms(t)))) + '}');
 				}
 				// 100% 省略：回落规则常驻端点（= to 端点），与末帧视觉一致
 				return '@keyframes ' + name + '{' + stops.join('') + '}';
@@ -965,11 +971,41 @@ window.__ModuleLoader__.load({
 				steps: Array.isArray(turn.steps) ? turn.steps : []
 			};
 		}
-		/** 累加一个 assistant-step 数据的 usage 与 TTFT 证据（acc 为可变累加器）。
+		/** step 号 → step/start 事件时间。官方 StepLocation.start 与
+		 *  AssistantTiming.stepStartTime 是同一事件时间戳（assistant.ts:
+		 *  context.start?.event.time），无任何估算。 */
+		function stepStartMsOf(clock, stepNo) {
+			if (typeof stepNo !== "number") return undefined;
+			for (var j = 0; j < clock.steps.length; j++) {
+				var loc = clock.steps[j];
+				if (loc && loc.step === stepNo) {
+					return loc.start && typeof loc.start.time === "number" ? loc.start.time : undefined;
+				}
+			}
+			return undefined;
+		}
+		/** 官方 usageOutputTokens 同款（turn-metrics.ts）：有限且 ≥0 才算数。 */
+		function outputTokensOf(usage) {
+			if (typeof usage !== "object" || usage === null) return null;
+			var v = usage.outputTokens;
+			return typeof v === "number" && isFinite(v) && v >= 0 ? v : null;
+		}
+		/** 累加一个 assistant-step 数据的 usage / TTFT / decode 证据（acc 为可变累加器）。
 		 *  数据来自官方 step data store（turn.steps[].data.get('assistant-step')）——
 		 *  官方按 step 发布、与节点可见性无关，隐藏纯工具步骤的 usage 同样计入。
-		 *  同一数据只累加一次（acc.counted 按对象引用去重）。 */
-		function readStepUsage(data, acc) {
+		 *  同一数据只累加一次（acc.counted 按对象引用去重；官方每次发布都是新快照对象，
+		 *  status/usage/finalNode 的更新不会被旧引用挡住）。
+		 *
+		 *  TTFT 两层值（绝不伪造时间）：
+		 *  - exact：settled 后 finalNode.timing {stepStartTime, firstTokenTime}（官方
+		 *    turn-metrics.assistantStepReading 同款，firstTokenTime 含 tool delta、
+		 *    retry 保留首个）——始终优先；
+		 *  - provisional：running 且官方 timing 未就绪时，data.time（官方
+		 *    projectAssistant：settled?.time ?? firstVisibleTime，即第一个可见
+		 *    text/reasoning block 的事件时间，不含 tool-call）- step/start 时间
+		 *    （stepStartMsOf）——"可见首字延迟"，settled 后被 exact 校正。
+		 *  两者取 step 号最小者（第一个请求）；任何一方缺数据该 step 不产生候选。 */
+		function readStepUsage(data, acc, stepStartMs) {
 			if (!data || acc.counted.has(data)) return;
 			acc.counted.add(data);
 			var u = data.usage;
@@ -981,15 +1017,32 @@ window.__ModuleLoader__.load({
 				if (typeof u.cacheReadTokens === "number" && isFinite(u.cacheReadTokens)) { acc.cacheRead += u.cacheReadTokens; acc.has = true; }
 				if (typeof u.cacheWriteTokens === "number" && isFinite(u.cacheWriteTokens)) { acc.cacheWrite += u.cacheWriteTokens; acc.has = true; }
 			}
-			// TTFT（官方 turn-metrics.assistantStepReading 同款语义）：settled step 的
-			// finalNode.timing { stepStartTime, firstTokenTime }；取 step 号最小者（第一个请求）。
+			// TTFT 候选（exact 优先，provisional 兜底；step 号最小者生效）
+			var candidate = null, exact = false;
 			var fn = data.finalNode;
 			var timing = fn && fn.timing;
 			if (timing && typeof timing.stepStartTime === "number" && typeof timing.firstTokenTime === "number") {
-				var stepNum = typeof fn.step === "number" ? fn.step : (typeof data.step === "number" ? data.step : -1);
-				if (stepNum < acc.ttftStep) {
+				candidate = Math.max(0, timing.firstTokenTime - timing.stepStartTime);
+				exact = true;
+			} else if (data.status === "running" && typeof data.time === "number" && data.time > 0
+				&& typeof stepStartMs === "number") {
+				candidate = Math.max(0, data.time - stepStartMs);
+			}
+			if (candidate !== null) {
+				var stepNum = typeof data.step === "number" ? data.step : -1;
+				if (stepNum < acc.ttftStep || (stepNum === acc.ttftStep && exact && !acc.ttftExact)) {
 					acc.ttftStep = stepNum;
-					acc.ttft = Math.max(0, timing.firstTokenTime - timing.stepStartTime);
+					acc.ttft = candidate;
+					acc.ttftExact = exact;
+				}
+			}
+			// decode 聚合（官方 assistantStepReading 语义）：只计 settled 且
+			// firstTokenTime 与 outputTokens 齐备的 step——running/缺一项都不进分母
+			if (fn && timing && typeof timing.firstTokenTime === "number" && typeof timing.completedTime === "number") {
+				var out = outputTokensOf(fn.usage);
+				if (out !== null) {
+					acc.decodeMs += Math.max(0, timing.completedTime - timing.firstTokenTime);
+					acc.decodeTokens += out;
 				}
 			}
 		}
@@ -999,13 +1052,14 @@ window.__ModuleLoader__.load({
 		 *  ① 回合结束后 turn-tail 携带的官方聚合 tokenUsage（deriveTurnTokenUsage 在
 		 *     持久化事件日志上折叠全部 attempt 的精确值——含被重试请求与隐藏步骤）；
 		 *  ② step usage 累加值（turn.steps[].data 的 assistant-step，含隐藏步骤）。
-		 *  tok/s = 已输出 token / 已耗时（真实比值，耗时 ≥1s 才显示，避免开场瞬时速率）。
-		 *  TTFT = 第一个 settled step 的 firstTokenTime - stepStartTime（官方 timing）。
-		 *
-		 *  @param {object|null} clock - turnClockOf 的结果。
-		 *  @param {Array} stepDataList - 各 step 的 assistant-step 数据（undefined 项允许）。
-		 *  @param {object|undefined} tail - turn-tail 回合数据（TurnTailChatData）。
-		 *  @param {number|undefined} liveNow - 运行中传 Date.now()；结束后传 undefined。 */
+		 *  tok/s 与官方 StatsPills 同一 decode-speed 定义：Σ outputTokens ÷ Σ
+		 *  (completedTime - firstTokenTime)——只统计 settled 且两项齐备的 step；
+		 *  TTFT/tool 执行/step 间等待不进分母（turn-metrics.assistantStepReading）。
+		 *  Turn Bar 只聚合当前 Turn 的 step；官方底部是整个 Session 的 sessionStats——
+		 *  同一定义、不同范围，数值不同是正常的。
+		 *  TTFT 两层值：settled 用官方 exact（finalNode.timing），running 时若官方
+		 *  firstVisibleTime（data.time）与 step/start 时间齐备则给 provisional
+		 *  "可见首字延迟"，settled 后被 exact 校正——缺任一时间戳就保持 `—`。 */
 		function computeTurnMetrics(clock, stepDataList, tail, liveNow) {
 			if (!clock) return null;
 			var durationMs;
@@ -1014,8 +1068,15 @@ window.__ModuleLoader__.load({
 					: (clock.status !== "closed" && typeof liveNow === "number" ? liveNow : undefined);
 				if (typeof end === "number") durationMs = Math.max(0, end - clock.startMs);
 			}
-			var acc = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false, ttft: null, ttftStep: Infinity, counted: new Set() };
-			for (var i = 0; i < stepDataList.length; i++) readStepUsage(stepDataList[i], acc);
+			var acc = {
+				input: 0, output: 0, cacheRead: 0, cacheWrite: 0, has: false,
+				ttft: null, ttftStep: Infinity, ttftExact: false,
+				decodeMs: 0, decodeTokens: 0, counted: new Set()
+			};
+			for (var i = 0; i < stepDataList.length; i++) {
+				var sd = stepDataList[i];
+				readStepUsage(sd, acc, stepStartMsOf(clock, sd && sd.step));
+			}
 			var billedInput = acc.input + acc.cacheRead + acc.cacheWrite;
 			var hasUsage = acc.has && (billedInput > 0 || acc.output > 0);
 			var tokens, outputTokens, cacheHit;
@@ -1035,10 +1096,8 @@ window.__ModuleLoader__.load({
 				outputTokens = acc.output;
 				cacheHit = billedInput > 0 ? cacheHitPercent(acc.input, acc.cacheRead, acc.cacheWrite) : undefined;
 			}
-			var tps;
-			if (typeof durationMs === "number" && durationMs >= 1000 && typeof outputTokens === "number" && outputTokens > 0) {
-				tps = outputTokens / (durationMs / 1000);
-			}
+			// tok/s：官方 decode-speed 语义（与整个 Turn 墙钟时长无关）
+			var tps = acc.decodeMs > 0 ? acc.decodeTokens / (acc.decodeMs / 1000) : undefined;
 			if (durationMs === undefined && tokens === undefined && acc.ttft === null && tps === undefined) return null;
 			var result = { durationMs: durationMs, tokens: tokens, outputTokens: outputTokens, tokensPerSecond: tps, cacheHitPercent: cacheHit };
 			if (acc.ttft !== null) result.ttftMs = acc.ttft;

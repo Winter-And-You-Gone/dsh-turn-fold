@@ -68,11 +68,12 @@ const owner = (overrides = {}) => makeTurnProcessOwner({
 
 const usageStepData = makeStepData(1, {
   usage: { inputTokens: 1000, outputTokens: 3214, cacheReadTokens: 2000 },
-  timing: { stepStartTime: T0, firstTokenTime: T0 + 800 },
+  // 官方 AssistantTiming：completedTime = assistant/message 事件时间（13 秒处 settle）
+  timing: { stepStartTime: T0, firstTokenTime: T0 + 800, completedTime: T0 + 13000 },
 })
 // TurnLocation.steps 收 StepLocation 包装（fallback 直读路径用）；
 // turnDataSource 收 step **数据**对象（官方增量发布面）——两者形状不同，勿混用。
-const usageStep = makeStep(1, usageStepData)
+const usageStep = makeStep(1, usageStepData, T0)
 
 /** 标准订阅 mock：turn-tail 走官方 useTurnData、steps 走 turnDataSource。 */
 function subscriptionProps(nodeProps, ownerOverrides) {
@@ -349,7 +350,8 @@ describe('Running Turn Bar（0 秒状态表面，不是 Fold Controller）', () 
       renderView(props)
       const label = barLabel()
       assert.ok(label.includes('6,214 token'), label)
-      assert.ok(label.includes('247tok/s'), '真实输出/真实耗时：' + label)
+      // 官方 decode-speed TPS：3214 output / (13000-800)ms decode ≈ 263.4 tok/s
+      assert.ok(label.includes('263tok/s'), '官方 decode 语义（completed-firstToken 分母）：' + label)
       assert.ok(label.includes('首字0.8s'), 'TTFT 来自官方 timing：' + label)
     } finally {
       Date.now = realNow

@@ -195,11 +195,15 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
     const closeKf = skin.split('\n').find((l) => l.includes('@keyframes tf-step-close{'))
     assert.ok(openKf, '缺少 stack→fan 展开帧序 keyframes')
     assert.ok(closeKf, '缺少 fan→stack 收拢帧序 keyframes')
-    // 帧插值时间轴：0% = 出发端点、每 12.5% 一帧（6 帧）、100% 省略回落常驻端点
+    // 帧插值时间轴：0% = 出发端点、每 100/17≈5.882353% 一帧（16 帧 ≈42fps）、
+    // 100% 省略回落常驻端点
     for (const [kf, from, to] of [[openKf, stackMaskUri(), fanMaskUri()], [closeKf, fanMaskUri(), stackMaskUri()]]) {
       assert.ok(kf.includes('0%{' + morphDecl(from) + '}'), '0% 必须是出发端点（与切换前显示同值，无缝起步）')
       assert.ok(!/100%\{/.test(kf), '100% 必须省略（回落常驻端点 = freeze 语义，末帧与常驻同值无缝）')
-      for (let k = 1; k <= 6; k++) assert.ok(kf.includes((k * 12.5) + '%{-webkit-mask-image:url("data:image/svg+xml'), '帧 ' + k + ' 缺失')
+      for (let k = 1; k <= 16; k++) {
+        assert.ok(kf.includes((k * 100 / 17).toFixed(6) + '%{mask-image:url("data:image/svg+xml'), '帧 ' + k + ' 缺失')
+      }
+      assert.equal((kf.match(/mask-image:/g) || []).length, 17, '帧数必须 = 1 端点 + 16 中间采样（≈42fps 去台阶）')
     }
     // 两条规则分别挂对应 animation；closed/open 规则 mask 常驻 = 各自端点（动画结束回落正确）
     const base = skin.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
@@ -264,7 +268,7 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
     assert.ok(rmLines.some((l) => l.includes('mask-image:var(--tf-suit)')), 'running 的静态回落规则保留')
   })
 
-  function morphDecl(uri) { return '-webkit-mask-image:' + uri + ';mask-image:' + uri }
+  function morphDecl(uri) { return 'mask-image:' + uri }
   function stackMaskUri() {
     const base = skinEl().textContent.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
     return base.match(/-webkit-mask:(url\("data:image\/svg\+xml,[^"]+"\)) center/)[1]

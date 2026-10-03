@@ -29,6 +29,16 @@ export const TURN13_EXPECT = {
   outputTokens: 3273,
   cacheHitPercent: '93.99',
 }
+// 官方 decode-speed TPS 的手工核算（turn-metrics.assistantStepReading 语义）：
+// 每步 decodeMs = completedTime - firstTokenTime；TPS = ΣoutputTokens / Σ(decodeMs/1000)。
+// 5 步每步 decode 265.1s（firstToken = stepStart+4900、completed = 下一 stepStart）：
+// Σ decodeMs = 1325500ms、Σ decodeTokens = 3273 → tps = 3273/1325.5 ≈ 2.4693 → '2.5'。
+export const TURN13_STEP_TIMINGS = TURN13_USAGE_STEPS.map((usage, i) => ({
+  stepStartTime: T0 + i * 270000,
+  firstTokenTime: T0 + i * 270000 + 4900,
+  completedTime: T0 + (i + 1) * 270000,
+}))
+export const TURN13_EXPECT_TPS = '2.5'
 
 /** step data store：官方 ConversationLocationDataStore 的最小形状。 */
 export function stepDataStore(value) {
@@ -46,7 +56,9 @@ export function turnDataStore({ spec, tail } = {}) {
   }
 }
 
-/** 一个已 settle 的 assistant-step 数据（usage + finalNode.timing，官方形状）。 */
+/** 一个已 settle 的 assistant-step 数据（usage + finalNode{usage,timing}，官方形状：
+ *  finalNode.usage = assistant/message 事件的 usage、finalNode.timing = AssistantTiming
+ *  { stepStartTime, firstTokenTime, completedTime }——completedTime 缺省给 T1）。 */
 export function makeStepData(step, { usage, timing } = {}) {
   return {
     turn: 13,
@@ -54,14 +66,30 @@ export function makeStepData(step, { usage, timing } = {}) {
     status: 'settled',
     usage,
     finalNode: timing
-      ? { step, timing: { stepStartTime: timing.stepStartTime, firstTokenTime: timing.firstTokenTime, completedTime: timing.completedTime ?? T1 } }
+      ? {
+          step,
+          usage,
+          timing: {
+            stepStartTime: timing.stepStartTime,
+            firstTokenTime: timing.firstTokenTime,
+            completedTime: timing.completedTime ?? T1,
+          },
+        }
       : undefined,
   }
 }
 
-/** StepLocation 最小形状。 */
-export function makeStep(step, data) {
-  return { turn: 13, step, data: stepDataStore(data) }
+/** 一个 running 的 assistant-step 数据（官方 projectAssistant：status='running'、
+ *  time = firstVisibleTime（第一个可见 text/reasoning block 的事件时间）、无 finalNode）。
+ *  @param {number} time - 第一个可见内容的事件时间（epoch ms）。 */
+export function makeRunningStepData(step, { time, usage } = {}) {
+  return { turn: 13, step, status: 'running', time, usage }
+}
+
+/** StepLocation 最小形状（start = step/start 事件，与官方 AssistantTiming.stepStartTime
+ *  同一时间戳）。 */
+export function makeStep(step, data, startTime) {
+  return { turn: 13, step, start: startTime === undefined ? undefined : { time: startTime }, data: stepDataStore(data) }
 }
 
 /**
