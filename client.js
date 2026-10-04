@@ -506,13 +506,15 @@ window.__ModuleLoader__.load({
 		 *  实心黑牌面覆盖区。mask 挂在无变换的外层 g（用户系 = 视箱全局系），变换放
 		 *  内层 g——cut 与真实牌同系对齐（Turn 动态方案的同款分层）。
 		 *  几何与 Turn 栏 buildPokerSVGBase 同源同规则：3 张 = hThree/pipScaleThree/y=3.5、
-		 *  5 张 = hFive/pipScaleFive/y=4；牌面取运行态轮换序列的前 N 张（同序前缀），
-		 *  不新建 Step 专属牌面池。
+		 *  5 张 = hFive/pipScaleFive/y=4。
+		 *  牌面由调用方给定（faces[] = 每张 card 的 face，cardN 为最上层可见牌）；缺省用
+		 *  历史固定序（回落资产与旧行为逐字节一致）。本函数是纯渲染：同 (count, tfs, faces)
+		 *  必然产出同一 SVG——随机分配在调用方（逐组稳定缓存），不在这里发生。
 		 *  ⚠ occluder 必须直接内联实心黑 rect，不能用 <use> 引用 defs——Chromium 不渲染
 		 *  <mask> 内容里的 <use>；也不能用透明牌形（fill=none 只挖线）——下层 pip 会从
 		 *  上层"牌面"里穿透。fill=#000 是 luminance knockout 机制本体（不可见填充），
 		 *  与参考实现 mask rect fill="black"、Turn pokerDynamicMask 同款。 */
-		function stepCompletedGroupSvg(count, tfs) {
+		function stepCompletedGroupSvg(count, tfs, faces) {
 			var cfgB = iconConfig && iconConfig.pokerSVGBase;
 			var five = count > 3;
 			var n = five ? 5 : 3;
@@ -523,7 +525,9 @@ window.__ModuleLoader__.load({
 			// rx 直接读 iconConfig.pokerR（= POKER_R 同源）：本函数在 CSS 注入段执行，
 			// 早于 POKER_R 的 var 赋值点
 			var rx = (iconConfig && iconConfig.pokerR) || 1.08;
-			var suits = ["diamond", "club", "spade", "heart", POKER_SPIN_DEEPSEEK ? "deepseek" : "club"].slice(0, n);
+			var suits = (faces && faces.length
+				? faces
+				: ["diamond", "club", "spade", "heart", POKER_SPIN_DEEPSEEK ? "deepseek" : "club"]).slice(0, n);
 			var defs = "", cards = "";
 			var occluder = '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h +
 				'" rx="' + rx + '" fill="#000" stroke="#000" stroke-width="0.7"/>';
@@ -567,10 +571,9 @@ window.__ModuleLoader__.load({
 		 *  stack/fan 变换直接取 pokerTransforms(count, …)（iconConfig 数据源可覆盖）；
 		 *  mask-size 24px 时 5 张牌外缘 ≈9.62×13.05px、stroke 1.05px，与 .ccg-poker-icon
 		 *  里的牌逐像素一致；3 张牌与 Turn 栏 3 张牌（hThree/同扇角）逐像素一致。
-		 *  牌面 = 运行态轮换序列的前 N 张（diamond→club→spade→heart→deepseek，
-		 *  鲸鱼缺数据时回退 club）。 */
-		function stepCompletedGroupMask(count, fan) {
-			return svgMaskUri(stepCompletedGroupSvg(count, pokerTransforms(count, !!fan)));
+		 *  faces 由调用方给定（逐组稳定排列）；缺省 = 历史固定序（回落资产）。 */
+		function stepCompletedGroupMask(count, fan, faces) {
+			return svgMaskUri(stepCompletedGroupSvg(count, pokerTransforms(count, !!fan), faces));
 		}
 		/** cubic-bezier(.22,1,.36,1)（CSS 与 SMIL spline 同构）在 x 处的 y 值（二分求参数 t）。 */
 		function cssBezierEase(x) {
@@ -646,8 +649,8 @@ window.__ModuleLoader__.load({
 			// 旧内核最坏退化 = 动画期间不换帧（直接端点），不是破图。
 			return 'mask-image:' + uri;
 		}
-		function stepMorphKeyframes(name, count, fromFan) {
-			var fromMask = stepCompletedGroupMask(count, !!fromFan);
+		function stepMorphKeyframes(name, count, fromFan, faces) {
+			var fromMask = stepCompletedGroupMask(count, !!fromFan, faces);
 			var stops = ['0%{' + morphMaskDecl(fromMask) + '}'];
 			for (var k = 1; k <= MORPH_FRAMES; k++) {
 				// 时间进度 u 线性推进；几何进度由 stepMorphProgress 施加 easing
@@ -656,7 +659,7 @@ window.__ModuleLoader__.load({
 				// 百分比 = k/(帧数+1)——随 MORPH_FRAMES 自适应（6 帧 → 12.5% 步进、
 				// 16 帧 → 5.882353%），永远不触达 100%（回落停靠点留给常驻端点）
 				stops.push((k * 100 / (MORPH_FRAMES + 1)).toFixed(6) + '%{' +
-					morphMaskDecl(svgMaskUri(stepCompletedGroupSvg(count, stepMorphTransforms(count, stepMorphProgress(u, fromFan))))) + '}');
+					morphMaskDecl(svgMaskUri(stepCompletedGroupSvg(count, stepMorphTransforms(count, stepMorphProgress(u, fromFan)), faces))) + '}');
 			}
 			// 100% 省略：回落规则常驻端点（= to 端点），与末帧视觉一致
 			return '@keyframes ' + name + '{' + stops.join('') + '}';
@@ -683,11 +686,6 @@ window.__ModuleLoader__.load({
 			var suitCardSize = ((cardW + 0.7) * 1.5).toFixed(2) + "px " + ((cardH + 0.7) * 1.5).toFixed(2) + "px";
 			var stackMask = stepCompletedGroupMask(5, false);
 			var fanMask = stepCompletedGroupMask(5, true);
-			// 3 张牌端点资产：不进任何常驻规则，只作为 CSS 变量供"牌数桥"按
-			// [data-chat-group-key] 逐组覆盖（见 buildStepCardRulesCss）。默认不生效
-			// → 桥缺失/旧宿主/数据不可得时行为 = 五张 fallback（绝不猜 3 张）。
-			var stackMask3 = stepCompletedGroupMask(3, false);
-			var fanMask3 = stepCompletedGroupMask(3, true);
 			// stack ↔ fan morph：预采样插值帧（每帧 = 静态 SVG，牌与 occluder 都在当帧
 			// 插值位置）。为什么用帧序列而非 SMIL/transition：
 			//   · 同 URL 的 mask 图像在 Chromium 全页共享单一实例、SMIL 时间线从首次应用
@@ -699,14 +697,12 @@ window.__ModuleLoader__.load({
 			// 帧时间轴：keyframes 0% = 出发端点（与切换前显示同值，无缝起步）、每
 			// 100/17≈5.88% 一帧（有效 morph ≈353ms、总 400ms、≈42fps）、100% 省略
 			// 回落常驻端点（无缝收尾 = freeze 语义）。生成器在 factory 作用域。
-			// 5 张（默认/fallback）与 3 张两套完整 morph 帧序：帧数、时长、缓动完全一致，
-			// 只有几何不同。
+			// 5 张（默认/fallback）帧序：牌数桥/牌面分配不可得时（旧宿主、桥失效）的
+			// 静态回落视觉——行为与插件历史版本一致（5 张固定牌面）。逐组牌面由牌数桥
+			// 按官方 groupKey 生成（buildStepCardRulesCss → 每组一套 faces 资产），
+			// 3 张组同样走桥（桥缺失时 = 本回落 5 张，绝不猜 3 张）。
 			rules.push(stepMorphKeyframes("tf-step-open", 5, false));
 			rules.push(stepMorphKeyframes("tf-step-close", 5, true));
-			rules.push(stepMorphKeyframes("tf-step-open-3", 3, false));
-			rules.push(stepMorphKeyframes("tf-step-close-3", 3, true));
-			// 3 张牌覆盖资产（data-URI 只声明一次；牌数桥的逐组规则只引用变量）
-			rules.push('[data-step-process]{--tf-stack-3:' + stackMask3 + ';--tf-fan-3:' + fanMask3 + '}');
 			rules.push('[data-step-process] [data-step-process-icon] > *{display:none}');
 			// 基础 = completed 收起：五张花色牌堆（closed = 牌收好未翻看）+ 收拢帧序动画
 			rules.push('[data-step-process] [data-step-process-icon]::before{content:"";position:absolute;inset:0;margin:auto;width:24px;height:24px;background-color:currentColor;-webkit-mask:' + stackMask + ' center/24px 24px no-repeat;mask:' + stackMask + ' center/24px 24px no-repeat;animation:tf-step-close .4s linear 1}');
@@ -812,6 +808,7 @@ window.__ModuleLoader__.load({
 		//   不替换 ChatGroupSeat/ProcessGroupHeader、不拥有 disclosure、不碰成员可见性、
 		//   不定义成员/分组。插件只做 "官方事实 → 视觉表现"。
 		var STEP_CARD_CSS_ID = "dsh-turn-fold/style-step-cards";
+		var STEP_FACE_CSS_ID = "dsh-turn-fold/style-step-faces";
 		var STEP_CARD_SMALL_MAX = 3;
 		var STEP_CARD_COUNT_SMALL = 3;
 		var STEP_CARD_COUNT_LARGE = 5;
@@ -830,43 +827,159 @@ window.__ModuleLoader__.load({
 			}
 			return total;
 		}
-		/** 官方 group snapshot → 牌数；形状异常/缺席 → undefined（调用方回落 5 张）。 */
-		function stepCardCountOfGroup(snapshot) {
+		/** 官方 group snapshot → { count, closed }；形状异常/缺席 → undefined。
+		 *  closed 取官方 ProcessGroupData.closed：只有已完成的组才分配牌面
+		 *  （running 组既不消费 top-face bag，也不生成逐组覆盖——它归五牌面轮换）。 */
+		function stepCardGroupState(snapshot) {
 			if (!snapshot || !snapshot.data || !snapshot.data.summary) return undefined;
 			var total = stepCardToolCallCount(snapshot.data.summary.counts);
 			if (total === undefined) return undefined;
-			return total <= STEP_CARD_SMALL_MAX ? STEP_CARD_COUNT_SMALL : STEP_CARD_COUNT_LARGE;
+			return {
+				count: total <= STEP_CARD_SMALL_MAX ? STEP_CARD_COUNT_SMALL : STEP_CARD_COUNT_LARGE,
+				closed: snapshot.data.closed === true,
+			};
+		}
+		/** 官方 group snapshot → 牌数；形状异常/缺席 → undefined（调用方回落 5 张）。 */
+		function stepCardCountOfGroup(snapshot) {
+			var state = stepCardGroupState(snapshot);
+			return state ? state.count : undefined;
+		}
+		// ---- 已完成 Step Group 的牌面分配（presentation state，不持久化） ----
+		// 旧行为：completed 牌堆的牌面是固定序 [diamond, club, spade, heart, deepseek]，
+		// 于是"牌数决定顶牌"——3 张永远 ♠、5 张永远 🐋。现在：
+		//   · 每个 session 一个 **top face shuffle bag**（与 Turn 顶层 poker 共用
+		//     shufflePokerFaces/nextTurnPokerFace 纯函数，但 bag 状态完全独立）：
+		//     一批内五种顶牌各出现一次、重洗后首张 ≠ 上一批末张；
+		//   · 每组的整套排列 = f(count, topFace)：顶牌必为该组分配到的 top face，
+		//     其余牌面由 top face 播种的确定性洗牌给出（组内不重复；5 张用满池）。
+		// 身份 = sessionKey + 官方 groupKey（data-chat-group-key 的同一 key）；
+		// 不写 localStorage / projection / node data——F5 / 插件重载后重新随机。
+		var completedStepTopFaces = new Map();   // "<sessionKey>|group:<groupKey>" → topFace
+		var completedStepTopBags = new Map();    // "<sessionKey>" → { remaining, previous, pool }
+		var completedFaceSets = new Map();       // "<count>:<topFace>" → { id, count, faces }
+		var completedFaceSetSeq = 0;
+		var completedFaceSetsWritten = {};       // set.id → true（资产只写一次）
+		/** 该 session+group 的顶牌：只从 bag 取一次，之后任何重渲染都命中缓存。 */
+		function completedStepTopFace(sessionId, groupKey) {
+			var sessionKey = sessionKeyOf(sessionId);
+			var turnKey = sessionKey + "|group:" + String(groupKey);
+			if (completedStepTopFaces.has(turnKey)) return completedStepTopFaces.get(turnKey);
+			var bag = completedStepTopBags.get(sessionKey);
+			if (!bag) {
+				bag = { remaining: [], previous: undefined, pool: "" };
+				completedStepTopBags.set(sessionKey, bag);
+			}
+			var face = nextTurnPokerFace(bag, Math.random);
+			completedStepTopFaces.set(turnKey, face);
+			return face;
+		}
+		/** 字符串 → 32 位种子（FNV-1a）。 */
+		function faceSeedOf(text) {
+			var h = 2166136261 >>> 0;
+			for (var i = 0; i < text.length; i++) {
+				h ^= text.charCodeAt(i) & 0xff;
+				h = Math.imul(h, 16777619) >>> 0;
+			}
+			return h >>> 0;
+		}
+		/** 由种子驱动的确定性 RNG（LCG；只用于"同 top face 得到同一套排列"）。 */
+		function seededFaceRandom(seed) {
+			var s = (seed >>> 0) || 1;
+			return function () {
+				s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+				return s / 4294967296;
+			};
+		}
+		/** 该 (count, topFace) 的完整牌面排列：cardN = topFace；其余由种子洗牌给出。
+		 *  池不足 5（鲸鱼数据缺失却要 5 张）时把重复牌面放在最下层 card1——收起时被
+		 *  压住最不显眼；5 张且池有 5 面时恰好用满全部牌面。 */
+		function completedFacesArrangement(count, topFace) {
+			var pool = pokerFacePool();
+			var topIndex = pool.indexOf(topFace);
+			if (topIndex < 0) topIndex = 0;
+			var others = [];
+			for (var i = 0; i < pool.length; i++) if (i !== topIndex) others.push(pool[i]);
+			var shuffled = shufflePokerFaces(others, seededFaceRandom(faceSeedOf(count + ":" + pool[topIndex])));
+			var faces = shuffled.slice(0, count - 1);
+			while (faces.length < count - 1) faces.unshift(pool[topIndex]);
+			faces.push(pool[topIndex]);
+			return faces;
+		}
+		/** (count, topFace) 变体资产（懒生成 + 永久缓存；同顶牌的组共享同一套 mask）。 */
+		function completedFaceSetFor(count, topFace) {
+			var cacheKey = count + ":" + topFace;
+			var cached = completedFaceSets.get(cacheKey);
+			if (cached) return cached;
+			var set = {
+				id: ++completedFaceSetSeq,
+				key: cacheKey,
+				count: count,
+				faces: completedFacesArrangement(count, topFace),
+			};
+			completedFaceSets.set(cacheKey, set);
+			return set;
+		}
+		/** 变体资产 CSS：两个常驻端点变量 + 两个方向的 morph 帧序（只声明一次）。 */
+		function completedFaceSetCss(set) {
+			var id = set.id;
+			return '[data-step-process]{--tf-face-' + id + '-stack:' + stepCompletedGroupMask(set.count, false, set.faces) +
+				';--tf-face-' + id + '-fan:' + stepCompletedGroupMask(set.count, true, set.faces) + '}\n' +
+				stepMorphKeyframes("tf-face-open-" + id, set.count, false, set.faces) + '\n' +
+				stepMorphKeyframes("tf-face-close-" + id, set.count, true, set.faces);
+		}
+		/** 把新变体资产写进专属样式元素（每个变体一个元素：只写一次、不重写已有内容——
+		 *  避免"新增一组就把整表重新解析一遍"；已写过的不再写）。 */
+		function ensureCompletedFaceSetCss(set) {
+			if (completedFaceSetsWritten[set.id]) return;
+			completedFaceSetsWritten[set.id] = true;
+			try {
+				if (typeof document === "undefined") return;
+				var tag = document.createElement("style");
+				tag.dataset.plugin = "@winteries/dsh-turn-fold";
+				tag.dataset.pluginCss = STEP_FACE_CSS_ID + "-" + set.id;
+				tag.textContent = completedFaceSetCss(set);
+				document.head.appendChild(tag);
+			} catch (e) { /* 资产写入失败 → 该组回落默认视觉，官方折叠不受影响 */ }
 		}
 		/** CSS 属性选择器里的字符串转义（groupKey 是 JSON 文本，含引号）。 */
 		function cssAttrValue(value) {
 			return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 		}
-		/** groupKey → 3 张牌覆盖规则。两条规则都必须：(a) 特异性压过同名静态端点规则，
-		 *  (b) 带 shimmer 排除子句——否则会把运行中的五牌面轮换 mask 压掉（软依赖：
-		 *  官方 shimmer 钩子改名 → 排除失效 → 最坏退化为 3 张牌堆/扇形，轮换不再显示）。
-		 *  组根同时带 data-step-process 与 data-chat-group-key（官方真实 DOM）。 */
-		function buildStepCardRulesCss(map) {
+		/** groupKey → 逐组牌面覆盖规则（3 张与 5 张都走这里）。两条规则都必须：
+		 *  (a) 特异性压过静态端点/回落规则，(b) 带 shimmer 排除子句——否则会把运行中的
+		 *  五牌面轮换 mask 压掉（软依赖：官方 shimmer 钩子改名 → 排除失效 → 最坏退化为
+		 *  静态牌堆/扇形，轮换不再显示）。组根同时带 data-step-process 与
+		 *  data-chat-group-key（官方真实 DOM）。 */
+		function buildStepCardRulesCss(map, sessionId) {
 			var rules = [];
 			if (map) {
 				for (var key in map) {
 					if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
-					if (map[key] !== STEP_CARD_COUNT_SMALL) continue;
+					var state = map[key];
+					var count = state && state.count;
+					if (count !== STEP_CARD_COUNT_SMALL && count !== STEP_CARD_COUNT_LARGE) continue;
+					// 只有已完成的组才分配牌面（running 组走五牌面轮换，不消耗 bag）
+					if (!state || state.closed !== true) continue;
+					var set = completedFaceSetFor(count, completedStepTopFace(sessionId, key));
+					ensureCompletedFaceSetCss(set);
 					var host = '[data-step-process][data-chat-group-key="' + cssAttrValue(key) + '"]';
 					var idle = ':not(:has([data-shimmer="true"])):not(:has([data-text-shimmer="true"]))';
 					rules.push(host + idle + ' [data-step-process-icon]::before' +
-						'{-webkit-mask-image:var(--tf-stack-3);mask-image:var(--tf-stack-3);animation-name:tf-step-close-3}');
+						'{-webkit-mask-image:var(--tf-face-' + set.id + '-stack);mask-image:var(--tf-face-' + set.id +
+						'-stack);animation-name:tf-face-close-' + set.id + '}');
 					rules.push(host + ' [data-process-activity][aria-expanded="true"]' + idle +
 						' [data-step-process-icon]::before' +
-						'{-webkit-mask-image:var(--tf-fan-3);mask-image:var(--tf-fan-3);animation-name:tf-step-open-3}');
+						'{-webkit-mask-image:var(--tf-face-' + set.id + '-fan);mask-image:var(--tf-face-' + set.id +
+						'-fan);animation-name:tf-face-open-' + set.id + '}');
 				}
 			}
 			return rules.join("\n");
 		}
 		/** 把逐组覆盖规则写进专属样式元素（幂等：内容不变不写）。 */
-		function writeStepCardRules(map) {
+		function writeStepCardRules(map, sessionId) {
 			try {
 				if (!stepCardStyleEl) return;
-				var css = buildStepCardRulesCss(map);
+				var css = buildStepCardRulesCss(map, sessionId);
 				if (css === stepCardRulesCache) return;
 				stepCardRulesCache = css;
 				stepCardStyleEl.textContent = css;
@@ -917,11 +1030,11 @@ window.__ModuleLoader__.load({
 				source && typeof source.subscribe === "function" ? source.subscribe : subscribeNothing,
 				source && typeof source.getSnapshot === "function" ? source.getSnapshot : getUndefinedSnapshot
 			);
-			var count = stepCardCountOfGroup(snapshot);
+			var state = stepCardGroupState(snapshot);
 			react.useEffect(function () {
-				report(groupKey, count === undefined ? null : count);
+				report(groupKey, state === undefined ? null : state);
 				return function () { report(groupKey, null); };
-			}, [groupKey, count, report]);
+			}, [groupKey, state && state.count, state && state.closed, report]);
 			return null;
 		}
 		/** 会话级只读订阅者：官方 group entries → 每组一个 probe → 汇总 → 生成视觉选择器规则。
@@ -933,23 +1046,24 @@ window.__ModuleLoader__.load({
 			var countsRef = react.useRef({});
 			var versionPair = react.useState(0);
 			var version = versionPair[0], setVersion = versionPair[1];
-			var report = react.useCallback(function (groupKey, count) {
+			var report = react.useCallback(function (groupKey, state) {
 				var map = countsRef.current;
 				var had = Object.prototype.hasOwnProperty.call(map, groupKey);
-				if (count === null) {
+				if (state === null) {
 					if (!had) return;
 					delete map[groupKey];
 				} else {
-					if (had && map[groupKey] === count) return;
-					map[groupKey] = count;
+					var prev = had ? map[groupKey] : undefined;
+					if (prev && prev.count === state.count && prev.closed === state.closed) return;
+					map[groupKey] = state;
 				}
 				setVersion(function (v) { return v + 1; });
 			}, []);
 			// version 驱动重写；entries 变化（增删组）时 probe 的 effect 也会补齐/清掉，
 			// 这里同时兜一次（防 entries 变了但计数没变的边界）。
 			react.useEffect(function () {
-				writeStepCardRules(countsRef.current);
-			}, [version, entries]);
+				writeStepCardRules(countsRef.current, props.sessionId);
+			}, [version, entries, props.sessionId]);
 			var probes = [];
 			if (entries && grouped) {
 				for (var i = 0; i < entries.length; i++) {
@@ -962,13 +1076,17 @@ window.__ModuleLoader__.load({
 			}
 			return probes.length ? react.createElement(react.Fragment, null, probes) : null;
 		}
-		/** 牌数桥入口（由官方 turn-process 渲染器承载：插件既有的官方挂载点）。
+		/** 牌数/牌面桥入口（由官方 turn-process 渲染器承载：插件既有的官方挂载点）。
 		 *  旧宿主 / 非 session 作用域 / 拿不到 useConversation → 不订阅、不产出规则
-		 *  → 默认 5 张牌（安全 fallback）。 */
+		 *  → 默认 5 张固定牌面（安全 fallback）。sessionId 用于把 completed 组的
+		 *  顶牌 bag 按会话隔离（最小 prop 透传，不动 Fold 状态）。 */
 		function StepCardRulesBridge(props) {
 			var isLeader = useStepCardBridgeLeader();
 			if (!isLeader || typeof props.useConversation !== "function") return null;
-			return react.createElement(StepCardRuleWriter, { useConversation: props.useConversation });
+			return react.createElement(StepCardRuleWriter, {
+				useConversation: props.useConversation,
+				sessionId: props.sessionId
+			});
 		}
 
 
@@ -1703,9 +1821,13 @@ window.__ModuleLoader__.load({
 			state.previous = face;
 			return face;
 		}
+		/** sessionId → 归一化 session key（Turn 顶层牌面与 completed Step 牌面共用）。 */
+		function sessionKeyOf(sessionId) {
+			return sessionId === undefined || sessionId === null ? "" : String(sessionId);
+		}
 		/** 某个 Turn 折叠栏的牌面：同一 session + turn 只分配一次（重渲染保持稳定）。 */
 		function foldSuitFor(sessionId, turn) {
-			var sessionKey = sessionId === undefined || sessionId === null ? "" : String(sessionId);
+			var sessionKey = sessionKeyOf(sessionId);
 			var turnKey = sessionKey + "|turn:" + String(turn);
 			if (pokerFaceAssigned.has(turnKey)) return pokerFaceAssigned.get(turnKey);
 			var state = pokerBags.get(sessionKey);
@@ -2532,7 +2654,7 @@ window.__ModuleLoader__.load({
 			// 官方 turn-process 是 turn 级控制器节点、不是 Process Group 成员，所以桥
 			// 不从这里取"本组"数据——它订阅官方 group snapshot 全集，按官方 groupKey
 			// 生成视觉选择器（见 buildStepCardRulesCss）。
-			var cardBridge = react.createElement(StepCardRulesBridge, { useConversation: props.useConversation });
+			var cardBridge = react.createElement(StepCardRulesBridge, { useConversation: props.useConversation, sessionId: props.sessionId });
 			var liveNow = useLiveNow(running);
 			// 指标 + 运行中展示 token：全部在条件 return 之前（两个 Hook 都无条件调用）。
 			// canonical（真实数据层）与 display（presentation-only）在这里分岔，之后只交换 tokens 槽位。

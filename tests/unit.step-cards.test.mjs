@@ -289,17 +289,26 @@ describe('Step 牌数 D：3 张 morph 与 5 张同规格（16 帧 / 400ms）', (
       assert.ok(Math.abs(Number(zt[1]) - Number(st[1])) < 1e-6 && Math.abs(Number(zt[2]) - Number(st[2])) < 1e-6)
     }
   })
-  it('皮肤表内同时存在 5 张与 3 张两套 keyframes（各 17 帧）', () => {
+  it('皮肤表保留 5 张 fallback 帧序；逐组牌面资产 3 张 / 5 张同规格（各 17 帧）', () => {
     const css = skinCss()
-    for (const name of ['tf-step-open', 'tf-step-close', 'tf-step-open-3', 'tf-step-close-3']) {
+    for (const name of ['tf-step-open', 'tf-step-close']) {
       const line = css.split('\n').find((l) => l.includes('@keyframes ' + name + '{'))
-      assert.ok(line, name + ' 缺失')
+      assert.ok(line, name + ' 缺失（桥不可用时的 5 张回落帧序）')
       assert.equal(frameCount(line), 17, name + ' 帧数必须 17（16 帧采样）')
     }
-    // 3 张端点资产只声明一次（供逐组规则引用）
-    const varLine = css.split('\n').find((l) => l.startsWith('[data-step-process]{--tf-stack-3:'))
-    assert.ok(varLine && varLine.includes('--tf-fan-3:'), '3 张端点变量规则缺失')
-    assert.equal((css.match(/--tf-stack-3:/g) || []).length, 1, '3 张 mask 数据 URI 只能声明一次')
+    // 逐组牌面资产（(count, topFace) 变体）：3 张与 5 张同一 morph 规格；
+    // 端点 mask 变量每组只声明一次，避免 CSS 体积随组数增长。
+    for (const count of [3, 5]) {
+      const set = T.completedFaceSetFor(count, T.pokerFacePool()[0])
+      const asset = T.completedFaceSetCss(set)
+      for (const dir of ['open', 'close']) {
+        const line = asset.split('\n').find((l) => l.includes('@keyframes tf-face-' + dir + '-' + set.id + '{'))
+        assert.ok(line, count + ' 张 ' + dir + ' 帧序缺失')
+        assert.equal(frameCount(line), 17, count + ' 张 ' + dir + ' 必须 17 帧')
+      }
+      assert.ok(asset.includes('--tf-face-' + set.id + '-stack:') && asset.includes('--tf-face-' + set.id + '-fan:'), '端点变量缺失')
+      assert.equal((asset.match(new RegExp('--tf-face-' + set.id + '-stack:', 'g')) || []).length, 1, '端点 mask 数据 URI 只能声明一次')
+    }
   })
 })
 
@@ -309,6 +318,7 @@ describe('Step 牌数 D：3 张 morph 与 5 张同规格（16 帧 / 400ms）', (
 describe('Step 牌数 E：只读视觉桥', () => {
   const GROUP3 = '["process","node-a",null]'
   const GROUP5 = '["process","node-b",null]'
+  const GROUP_RUNNING = '["process","node-running",null]'
   function groupData(counts) {
     return { turn: 1, closed: true, summary: { counts, running: undefined, runningDetail: '' } }
   }
@@ -335,33 +345,45 @@ describe('Step 牌数 E：只读视觉桥', () => {
   }
   const entriesOf = (keys) => keys.map((key) => ({ kind: 'group', key }))
 
-  it('纯函数：3 张组产出两条规则（牌堆 + 扇形）、5 张组不产出', () => {
-    const css = T.buildStepCardRulesCss({ [GROUP3]: 3, [GROUP5]: 5 })
+  it('纯函数：3 张与 5 张组各产出两条规则（牌堆 + 扇形），引用各自的牌面 set；running 组不产出', () => {
+    const css = T.buildStepCardRulesCss({
+      [GROUP3]: { count: 3, closed: true },
+      [GROUP5]: { count: 5, closed: true },
+      [GROUP_RUNNING]: { count: 3, closed: false },
+    })
     const lines = css.split('\n').filter(Boolean)
-    assert.equal(lines.length, 2, '只有 3 张组产出规则')
-    assert.ok(lines[0].includes('[data-chat-group-key="' + T.cssAttrValue(GROUP3) + '"]'), '规则按官方 groupKey 定位')
-    assert.ok(lines[0].includes('--tf-stack-3') && lines[0].includes('animation-name:tf-step-close-3'), '牌堆规则')
-    assert.ok(lines[1].includes('--tf-fan-3') && lines[1].includes('animation-name:tf-step-open-3'), '扇形规则')
-    assert.ok(lines[1].includes('[data-process-activity][aria-expanded="true"]'), '扇形规则挂在官方展开态上')
+    assert.equal(lines.length, 4, '两个已完成组各两条规则；running 组不产出')
+    const set3 = T.completedFaceSetFor(3, T.completedStepTopFace(undefined, GROUP3))
+    const set5 = T.completedFaceSetFor(5, T.completedStepTopFace(undefined, GROUP5))
+    const block3 = lines.filter((l) => l.includes('[data-chat-group-key="' + T.cssAttrValue(GROUP3) + '"]'))
+    const block5 = lines.filter((l) => l.includes('[data-chat-group-key="' + T.cssAttrValue(GROUP5) + '"]'))
+    assert.equal(block3.length, 2, '3 张组两条规则')
+    assert.equal(block5.length, 2, '5 张组两条规则')
+    assert.ok(block3[0].includes('--tf-face-' + set3.id + '-stack') && block3[0].includes('animation-name:tf-face-close-' + set3.id), '3 张牌堆规则引用本组 set')
+    assert.ok(block3[1].includes('--tf-face-' + set3.id + '-fan') && block3[1].includes('animation-name:tf-face-open-' + set3.id), '3 张扇形规则引用本组 set')
+    assert.ok(block5[0].includes('--tf-face-' + set5.id + '-stack'), '5 张牌堆规则引用本组 set（不再吃默认固定牌面）')
+    assert.ok(block5[1].includes('--tf-face-' + set5.id + '-fan'), '5 张扇形规则引用本组 set')
+    assert.ok(block5[1].includes('[data-process-activity][aria-expanded="true"]'), '扇形规则挂在官方展开态上')
+    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不得产出覆盖规则（它走五牌面轮换）')
     for (const line of lines) {
       assert.ok(line.includes(':not(:has([data-shimmer="true"]))'), '规则必须排除 running（否则压掉五牌面轮换）')
       assert.ok(line.includes(':not(:has([data-text-shimmer="true"]))'), '双契约都要排除')
     }
-    assert.ok(!css.includes(GROUP5), '5 张组不得产出任何覆盖规则（默认即 5 张）')
   })
   it('纯函数：空表 / null → 空 CSS（fallback 态）', () => {
     assert.equal(T.buildStepCardRulesCss({}), '')
     assert.equal(T.buildStepCardRulesCss(null), '')
     assert.equal(T.buildStepCardRulesCss({ [GROUP3]: undefined }), '')
+    assert.equal(T.buildStepCardRulesCss({ [GROUP3]: { count: 4, closed: true } }), '', '非 3/5 档位不产出')
   })
   it('groupKey CSS 转义：JSON 文本里的引号必须转义（否则选择器语法错误）', () => {
     const escaped = T.cssAttrValue(GROUP3)
     assert.equal(escaped, '[\\"process\\",\\"node-a\\",null]')
-    const css = T.buildStepCardRulesCss({ [GROUP3]: 3 })
+    const css = T.buildStepCardRulesCss({ [GROUP3]: { count: 3, closed: true } })
     assert.ok(css.includes('data-chat-group-key="' + escaped + '"'))
   })
   it('官方 DOM 命中：组根带 data-step-process + data-chat-group-key，生成的选择器能 matches', () => {
-    const css = T.buildStepCardRulesCss({ [GROUP3]: 3 })
+    const css = T.buildStepCardRulesCss({ [GROUP3]: { count: 3, closed: true } })
     const selectors = css.split('\n').filter(Boolean).map((l) => l.slice(0, l.indexOf('{')))
     const host = sharedDocument.createElement('div')
     host.setAttribute('data-step-process', '')
@@ -415,27 +437,39 @@ describe('Step 牌数 E：只读视觉桥', () => {
     act(() => { root.render(react.createElement(view)) })
     void snapshot
   }
-  it('3 张组 → 写入覆盖规则；4 张组 → 不写（回落 5 张）', () => {
+  it('桥全链路：3 张组写 3 张规则、4 张+ 组写 5 张规则；running 组不写', () => {
     const sources = new Map([
       [GROUP3, makeSource({ key: GROUP3, members: [], data: groupData([{ kind: 'read', count: 2 }, { kind: 'edit', count: 1 }]) })],
       [GROUP5, makeSource({ key: GROUP5, members: [], data: groupData([{ kind: 'read', count: 4 }]) })],
+      [GROUP_RUNNING, makeSource({ key: GROUP_RUNNING, members: [], data: { turn: 1, closed: false, summary: { counts: [{ kind: 'read', count: 2 }] } } })],
     ])
-    const grouped = buildGrouped(entriesOf([GROUP3, GROUP5]), sources)
+    const grouped = buildGrouped(entriesOf([GROUP3, GROUP5, GROUP_RUNNING]), sources)
     const store = makeStore({ views: { grouped: () => grouped } })
     renderBridge(store, grouped)
     const css = cardRulesCss()
     assert.ok(css.includes('[data-chat-group-key="' + T.cssAttrValue(GROUP3) + '"]'), '3 张组规则已写入')
-    assert.ok(css.includes('--tf-stack-3') && css.includes('--tf-fan-3'))
-    assert.ok(!css.includes(T.cssAttrValue(GROUP5)), '4 张组不得写规则（默认 5 张）')
+    assert.ok(css.includes('[data-chat-group-key="' + T.cssAttrValue(GROUP5) + '"]'), '4 张+ 组同样写规则（5 张牌面）')
+    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不写规则（走五牌面轮换）')
+    const set3 = T.completedFaceSetFor(3, T.completedStepTopFace(undefined, GROUP3))
+    const set5 = T.completedFaceSetFor(5, T.completedStepTopFace(undefined, GROUP5))
+    assert.ok(css.includes('--tf-face-' + set3.id + '-stack') && css.includes('--tf-face-' + set5.id + '-stack'), '两组引用各自的牌面 set')
   })
-  it('组数据实时更新：3 → 4 张工具时规则被撤下（回到 5 张 fallback）', () => {
+  it('组数据实时更新：3 → 4 张工具时规则切到 5 张牌面 set（不再固定回落）', () => {
     const src = makeSource({ key: GROUP3, members: [], data: groupData([{ kind: 'read', count: 3 }]) })
     const grouped = buildGrouped(entriesOf([GROUP3]), new Map([[GROUP3, src]]))
     const store = makeStore({ views: { grouped: () => grouped } })
     renderBridge(store, grouped)
-    assert.ok(cardRulesCss().includes('[data-chat-group-key="'), '初始 3 张 → 有规则')
+    const css3 = cardRulesCss()
+    assert.ok(css3.includes('[data-chat-group-key="'), '初始 3 张 → 有规则')
+    const topFace = T.completedStepTopFace(undefined, GROUP3)
+    const set3 = T.completedFaceSetFor(3, topFace)
+    assert.ok(css3.includes('--tf-face-' + set3.id + '-stack'), '初始引用 3 张 set')
     act(() => { src.set({ key: GROUP3, members: [], data: groupData([{ kind: 'read', count: 4 }]) }) })
-    assert.equal(cardRulesCss(), '', '变 4 张后规则必须撤下（不得残留 3 张）')
+    const css5 = cardRulesCss()
+    const set5 = T.completedFaceSetFor(5, topFace)
+    assert.ok(css5.includes('--tf-face-' + set5.id + '-stack'), '变 4 张后引用 5 张 set')
+    assert.ok(!css5.includes('--tf-face-' + set3.id + '-stack'), '不得残留 3 张 set 引用')
+    assert.equal(T.completedStepTopFace(undefined, GROUP3), topFace, '牌数变化不改已分配的顶牌')
   })
   it('组消失（entries 移除）→ 规则撤下；组重新出现 → 规则恢复', () => {
     const src = makeSource({ key: GROUP3, members: [], data: groupData([{ kind: 'read', count: 1 }]) })
@@ -685,10 +719,16 @@ describe('Step 牌数 G：morph easing 方向对称', () => {
     assert.ok(base.includes('animation:tf-step-close .4s linear 1'), 'closed 收拢仍是 400ms linear')
     const fan = css.split('\n').find((l) => l.includes('[aria-expanded="true"]') && l.includes('animation:tf-step-open .4s linear 1'))
     assert.ok(fan, 'open 展开仍是 400ms linear')
-    for (const name of ['tf-step-open', 'tf-step-close', 'tf-step-open-3', 'tf-step-close-3']) {
+    for (const name of ['tf-step-open', 'tf-step-close']) {
       const line = css.split('\n').find((l) => l.includes('@keyframes ' + name + '{'))
       assert.ok(line, name + ' 缺失')
       assert.ok(!line.includes('animation-timing-function'), name + ' 不得在帧内再叠加缓动（easing 已进位姿采样）')
+    }
+    // 逐组牌面资产的帧序同样不得叠加缓动（同一 morph 规格）
+    const set = T.completedFaceSetFor(3, T.pokerFacePool()[0])
+    for (const line of T.completedFaceSetCss(set).split('\n')) {
+      if (!line.includes('@keyframes ')) continue
+      assert.ok(!line.includes('animation-timing-function'), '逐组帧序不得叠加缓动')
     }
   })
 })

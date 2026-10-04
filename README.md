@@ -175,7 +175,20 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   `ChatViewInjected.keyedHooks.chatGroup` 是同一个源）；出口 = 官方组根上的稳定 DOM 事实
   `data-chat-group-key`，插件只在自己的样式表里按它生成覆盖规则。官方分组算法、成员判定、
   open/closed、折叠交互、隐藏与搜索展开全部不重算、不接管；不写官方 DOM、不加官方属性。
-  官方未提供这些 API 的旧宿主上不产出任何规则 → 行为回落为 5 张；
+  官方未提供这些 API 的旧宿主上不产出任何规则 → 行为回落为 5 张（固定牌面）；
+- **每组牌面从哪来**（completed 组不再"牌数决定顶牌"）：旧行为是固定序
+  `♦ ♣ ♠ ♥ 🐋` 取前 N 张 → 3 张永远 ♠、5 张永远 🐋。现在每个 **session 一个 top-face
+  shuffle bag**（五牌面池；与 Turn 顶层 Poker 共用 `shufflePokerFaces` 纯函数、bag 状态
+  完全独立）：一批内五种顶牌各出现一次、重洗后首张不与上一批末张相同；每组的整套排列 =
+  `completedFacesArrangement(count, topFace)`（cardN 必为该组分配到的顶牌，其余由 top face
+  播种的确定性洗牌给出，组内不重复；5 张恰好用满牌面池，池只有四花色时把重复牌面放在
+  最下层 card1）。身份 = `sessionId + 官方 groupKey`，**只有已完成（官方
+  `ProcessGroupData.closed === true`）的组参与分配**——running 组走五牌面轮换，既不消耗
+  bag 也不产出覆盖规则；分配只在组第一次渲染（CSS 规则生成）时发生，之后重渲染 / 开合 /
+  快照更新都命中缓存（随机不藏在 CSS builder 里）；不持久化，F5 / 插件重载后重新随机。
+  为控制样式体积，逐组牌面资产按 `(count, topFace)` 懒生成、永久缓存、每个变体一个
+  `<style>` 元素（只写一次）：逐组规则只有 ~0.5KB（引用变量），整页资产上限 = 池大小 ×
+  2 个牌数档位；
 - 花色按官方 `data-process-activity` 值映射（`ACTIVITY_SUIT` 单一数据源生成 CSS）：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
@@ -446,7 +459,8 @@ git push --follow-tags
     交接零 JS。无论视觉钩子是否失效，都不影响 Step Fold / Tool / Think /
     Turn Fold 与页面稳定性；
   - **Soft style injection（非理想软兼容点，已如实记录）**：插件向 `document.head`
-    注入两个最小 `<style>`（基础样式 + Step 皮）。截至当前 DSH master（21638c5631）
+    注入最小 `<style>`：基础样式 + Step 皮 + 牌数桥逐组规则 + 逐组牌面资产（每个
+    `(count, topFace)` 变体一个元素，只写一次）。截至当前 DSH master（21638c5631）
     官方没有给 plain-JS client plugin 提供样式注册 API（全宿主唯一 `createElement('style')`
     在 web 自身代码里），而 Step 皮必须作用在官方 Header 的官方 DOM 上、无法收敛进
     插件 React 子树——故保留此软兼容点。注入失败的最坏退化 = 无 Turn 栏样式与无
