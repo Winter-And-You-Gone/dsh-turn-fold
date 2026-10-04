@@ -1664,14 +1664,58 @@ window.__ModuleLoader__.load({
 		function pokerFacePool() {
 			return POKER_SPIN_DEEPSEEK ? POKER_SUITS.concat(["deepseek"]) : POKER_SUITS;
 		}
-		/** 每个回合栏随机一个"牌面"（五选一，按回合号记忆，重渲染保持同一牌面不变）。 */
-		var foldSuitMap = new Map();
-		function foldSuitFor(key) {
-			if (foldSuitMap.has(key)) return foldSuitMap.get(key);
+		/** 回合栏牌面分配（presentation state，不持久化：F5 / 插件重载后重新随机）。
+		 *  · 每个 session 一个独立 shuffle bag：一批内每种牌面恰好出现一次、顺序随机；
+		 *  · 重洗后首张不与上一批末张相同（避免跨批次"…♦ / ♦…"连续重复）；
+		 *  · 同一 session + turn 首次分配后终身稳定（重渲染 / 开合 / 指标与设置变化都不改）。 */
+		var pokerFaceAssigned = new Map();   // "<sessionKey>|turn:N" → 牌面
+		var pokerBags = new Map();           // "<sessionKey>" → { remaining, previous, pool }
+		/** Fisher–Yates 洗牌（不用 sort(() => Math.random() - .5)：分布正确且 RNG 可注入）。 */
+		function shufflePokerFaces(faces, random) {
+			var rnd = typeof random === "function" ? random : Math.random;
+			var out = faces.slice();
+			for (var i = out.length - 1; i > 0; i--) {
+				var j = Math.floor(rnd() * (i + 1));
+				var swap = out[i]; out[i] = out[j]; out[j] = swap;
+			}
+			return out;
+		}
+		/** 从洗牌袋取下一张牌面：袋空（或牌面池在会话中被替换）→ 按当前池重洗；
+		 *  重洗后若首张 === 上一批末张，则与第一个不同的牌面交换位置（确定性调整），
+		 *  保证跨批次不会连续重复（池只剩一种牌面时无法避免，保持原样）。 */
+		function nextTurnPokerFace(state, random) {
 			var pool = pokerFacePool();
-			var suit = pool[Math.floor(Math.random() * pool.length)];
-			foldSuitMap.set(key, suit);
-			return suit;
+			var signature = pool.join(",");
+			if (state.remaining.length === 0 || state.pool !== signature) {
+				var shuffled = shufflePokerFaces(pool, random);
+				if (shuffled.length > 1 && shuffled[0] === state.previous) {
+					for (var k = 1; k < shuffled.length; k++) {
+						if (shuffled[k] !== state.previous) {
+							var swap = shuffled[0]; shuffled[0] = shuffled[k]; shuffled[k] = swap;
+							break;
+						}
+					}
+				}
+				state.remaining = shuffled;
+				state.pool = signature;
+			}
+			var face = state.remaining.shift();
+			state.previous = face;
+			return face;
+		}
+		/** 某个 Turn 折叠栏的牌面：同一 session + turn 只分配一次（重渲染保持稳定）。 */
+		function foldSuitFor(sessionId, turn) {
+			var sessionKey = sessionId === undefined || sessionId === null ? "" : String(sessionId);
+			var turnKey = sessionKey + "|turn:" + String(turn);
+			if (pokerFaceAssigned.has(turnKey)) return pokerFaceAssigned.get(turnKey);
+			var state = pokerBags.get(sessionKey);
+			if (!state) {
+				state = { remaining: [], previous: undefined, pool: "" };
+				pokerBags.set(sessionKey, state);
+			}
+			var face = nextTurnPokerFace(state, Math.random);
+			pokerFaceAssigned.set(turnKey, face);
+			return face;
 		}
 		/** ── mask 遮挡方案（不依赖填充色，壁纸/透明背景下也正确）──
 		 *  每个下层牌一个 luminance mask：白底默认显示，黑色 occluder 跟随"上层牌"的
@@ -1923,18 +1967,19 @@ window.__ModuleLoader__.load({
 		/** Turn 栏前导图标：native 风格（foldIconStyle="native"）返回官方 chevron；
 		 *  poker 风格运行中返回翻牌动画、结束后返回牌堆/扇形。 */
 		/** Turn 栏前导图标（前导位 = Poker 与 native chevron 共用的同一槽位）。
-		 *  poker 模式：运行中翻牌动画、结束后牌堆/扇形。
+		 *  poker 模式：运行中翻牌动画、结束后牌堆/扇形（牌面按 session + turn 从洗牌袋分配，
+		 *  同一 Turn 终身稳定；sessionId 缺失时退化为单 session 袋）。
 		 *  native 模式：官方风格折叠 chevron（收起向下、展开 rotate(180deg) 向上，
 		 *  几何对齐官方 IconChevronDownOutlineRegular）；running 与不可折叠的回合
 		 *  官方本就不渲染折叠 chevron → 不渲染前导图标（官方 presentation 原样）。 */
-		function turnPokerIcon(iconStyle, cardCount, running, open, turn, canCollapse) {
+		function turnPokerIcon(iconStyle, cardCount, running, open, turn, canCollapse, sessionId) {
 			if (iconStyle !== "poker") {
 				if (running || !canCollapse) return undefined;
 				// 元素带 key（进 TurnBarView 的 kids 数组）——React 数组子元素必须有 key
 				return react.createElement(NativeChevronIcon, { key: "native", open: open });
 			}
 			if (running) return react.createElement(PokerSpinIcon, { key: "poker" });
-			return react.createElement(PokerIcon, { key: "poker", count: cardCount, suit: foldSuitFor("turn:" + turn), open: open });
+			return react.createElement(PokerIcon, { key: "poker", count: cardCount, suit: foldSuitFor(sessionId, turn), open: open });
 		}
 
 		// ---- 滚轮数字（真实数据变化的逐位滚动动画） ----
@@ -2551,7 +2596,7 @@ window.__ModuleLoader__.load({
 					label: label,
 					statusText: statusText,
 					statusFailed: clock.reason === "error",
-					poker: turnPokerIcon(iconStyle, specCardCountFromSpec(spec), false, open, clock.number, canCollapse),
+					poker: turnPokerIcon(iconStyle, specCardCountFromSpec(spec), false, open, clock.number, canCollapse, props.sessionId),
 					round: round,
 					onToggle: function () {
 						// 唯一合法的折叠通道：官方 owner state 的 setOpen。

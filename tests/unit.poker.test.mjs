@@ -113,17 +113,143 @@ describe('SVG 生成', () => {
     assert.deepEqual(T.pokerFacePool(), ['spade', 'heart', 'diamond', 'club', 'deepseek'])
   })
 
-  it('foldSuitFor：同一 key 牌面稳定，且属于牌面池', () => {
+  it('foldSuitFor：同一 session + turn 牌面稳定，且属于牌面池', () => {
     const pool = T.pokerFacePool()
-    const suit = T.foldSuitFor('turn:13')
-    assert.equal(T.foldSuitFor('turn:13'), suit)
+    const suit = T.foldSuitFor('sess-stable', 13)
+    assert.equal(T.foldSuitFor('sess-stable', 13), suit)
     assert.ok(pool.includes(suit))
+    assert.ok(T.pokerFaceAssigned.has('sess-stable|turn:13'), '缓存 key 必须含 session 身份')
   })
 
   it('suitMaskImage：四花色 + 鲸鱼都能产出 mask data-URI', () => {
     for (const suit of ['heart', 'spade', 'diamond', 'club', 'whale']) {
       const img = T.suitMaskImage(suit)
       assert.ok(img.startsWith('url("data:image/svg+xml,'), suit + ' mask 缺失')
+    }
+  })
+})
+
+// ── Turn 顶层牌面：per-session shuffle bag（本轮修复） ──
+describe('Turn 顶层牌面 shuffle bag', () => {
+  it('shufflePokerFaces：Fisher–Yates 只做置换（集合/长度不变、不改入参、RNG 决定顺序）', () => {
+    const faces = ['a', 'b', 'c', 'd', 'e']
+    const zero = T.shufflePokerFaces(faces, () => 0)
+    assert.deepEqual(faces, ['a', 'b', 'c', 'd', 'e'], '不得修改入参')
+    assert.deepEqual(zero.slice().sort(), faces.slice().sort(), '只置换，不增删')
+    assert.notDeepEqual(zero, faces, 'RNG=0 时确实换了顺序（不是恒等）')
+    assert.deepEqual(T.shufflePokerFaces(faces, () => 0), zero, '同一 RNG → 结果确定')
+  })
+
+  it('一个完整 bag 内不重复：连续 5 个不同 Turn → 五种牌面各出现一次', () => {
+    const pool = T.pokerFacePool()
+    assert.equal(pool.length, 5, '五牌面池（含鲸鱼）')
+    const suits = [1, 2, 3, 4, 5].map((n) => T.foldSuitFor('bag-fill-1', n))
+    assert.equal(new Set(suits).size, 5, '同一批内不得重复：' + suits.join(','))
+    for (const s of suits) assert.ok(pool.includes(s))
+  })
+
+  it('第二个 bag 重新洗牌，且每一批仍是完整集合（连续 10 个 Turn）', () => {
+    const all = []
+    for (let n = 1; n <= 10; n += 1) all.push(T.foldSuitFor('bag-fill-2', n))
+    assert.equal(new Set(all.slice(0, 5)).size, 5, '第一批 5 种全出现：' + all.slice(0, 5).join(','))
+    assert.equal(new Set(all.slice(5)).size, 5, '第二批 5 种全出现：' + all.slice(5).join(','))
+  })
+
+  it('袋边界不连续重复：重洗后首张 !== 上一批末张（确定性 RNG，连续 4 批）', () => {
+    const state = { remaining: [], previous: undefined, pool: '' }
+    const size = T.pokerFacePool().length
+    const hands = []
+    for (let i = 0; i < size * 4; i += 1) hands.push(T.nextTurnPokerFace(state, () => 0))
+    for (let b = 0; b < 4; b += 1) {
+      assert.equal(new Set(hands.slice(b * size, (b + 1) * size)).size, size, '第 ' + (b + 1) + ' 批仍是完整集合')
+      if (b > 0) assert.notEqual(hands[b * size], hands[b * size - 1], '第 ' + (b + 1) + ' 批首张不得等于上一批末张')
+    }
+  })
+
+  it('重洗首张与上一批末张相同时会被换位消解（构造冲突场景）', () => {
+    const pool = T.pokerFacePool()
+    // rnd()=0 的 Fisher–Yates 置换首张 = pool[1]（heart）→ 直接制造冲突
+    const state = { remaining: [], previous: 'heart', pool: pool.join(',') }
+    const face = T.nextTurnPokerFace(state, () => 0)
+    assert.notEqual(face, 'heart', '冲突必须被换位消解')
+    assert.equal(state.remaining.length, pool.length - 1, '换位不丢牌')
+    assert.equal(new Set(state.remaining.concat([face])).size, pool.length, '整袋仍是完整集合')
+  })
+
+  it('session 隔离：不同 session 的相同 Turn number 是不同 key，两袋互不消费', () => {
+    const before = T.pokerBags.size
+    assert.equal(T.foldSuitFor('iso-sess-A', 1), T.foldSuitFor('iso-sess-A', 1), 'A/turn1 稳定')
+    assert.equal(T.foldSuitFor('iso-sess-B', 1), T.foldSuitFor('iso-sess-B', 1), 'B/turn1 稳定')
+    assert.ok(T.pokerFaceAssigned.has('iso-sess-A|turn:1') && T.pokerFaceAssigned.has('iso-sess-B|turn:1'))
+    assert.equal(T.pokerBags.size, before + 2, '每个 session 一个独立 bag')
+    assert.notEqual(T.pokerBags.get('iso-sess-A'), T.pokerBags.get('iso-sess-B'), 'bag 对象不同')
+    // 两个 session 各自消费 5 个 Turn：各有自己的完整一批（互不消耗对方余量）
+    for (let n = 2; n <= 5; n += 1) { T.foldSuitFor('iso-sess-A', n); T.foldSuitFor('iso-sess-B', n) }
+    const a = [1, 2, 3, 4, 5].map((n) => T.pokerFaceAssigned.get('iso-sess-A|turn:' + n))
+    const b = [1, 2, 3, 4, 5].map((n) => T.pokerFaceAssigned.get('iso-sess-B|turn:' + n))
+    assert.equal(new Set(a).size, 5, 'session A 一批完整：' + a.join(','))
+    assert.equal(new Set(b).size, 5, 'session B 一批完整：' + b.join(','))
+    // 不要求两个 session 的花色不同（随机允许碰巧相同），只要求状态独立
+    assert.equal(T.pokerBags.get('iso-sess-A').remaining.length, 0)
+    assert.equal(T.pokerBags.get('iso-sess-B').remaining.length, 0)
+  })
+
+  it('鲸鱼数据缺失 → 退化为四花色池，每 4 个 Turn 完整遍历一次', () => {
+    const pack = { meta: { name: 'no-deepseek-pack', compat: '>=0.0.0' } }
+    sharedWindow.localStorage.setItem(T.ICONS_STORAGE_KEY, JSON.stringify(pack))
+    try {
+      const { test: T4 } = loadPlugin({ window: sharedWindow })
+      assert.deepEqual(T4.pokerFacePool(), ['spade', 'heart', 'diamond', 'club'], '无鲸鱼数据 → 四牌面池')
+      const first = [1, 2, 3, 4].map((n) => T4.foldSuitFor('no-ds-session', n))
+      const second = [5, 6, 7, 8].map((n) => T4.foldSuitFor('no-ds-session', n))
+      assert.equal(new Set(first).size, 4, '第一批 4 种全出现：' + first.join(','))
+      assert.equal(new Set(second).size, 4, '第二批 4 种全出现：' + second.join(','))
+      assert.notEqual(second[0], first[3], '四牌面模式同样避免跨批连续重复')
+    } finally {
+      sharedWindow.localStorage.clear()
+    }
+  })
+
+  it('Running Turn 仍走 PokerSpinIcon，且不消耗 shuffle bag', () => {
+    const bagKey = 'running-no-consume'
+    T.foldSuitFor(bagKey, 1)                       // 先建袋
+    const before = T.pokerBags.get(bagKey).remaining.length
+    const live = T.turnPokerIcon('poker', 4, true, false, 2, true, bagKey)
+    assert.equal(live.type, T.PokerSpinIcon, '运行中仍是翻牌动画')
+    assert.equal(T.pokerBags.get(bagKey).remaining.length, before, 'running 调用不得消耗牌面')
+    const settled = T.turnPokerIcon('poker', 4, false, false, 2, true, bagKey)
+    assert.equal(settled.type, T.PokerIcon)
+    assert.equal(settled.props.suit, T.foldSuitFor(bagKey, 2), '结束后从 bag 取牌面')
+  })
+
+  it('鲸鱼牌面渲染为 Logo 引用（SVG 用 <use href="#ccg-poker-logo-*">）', () => {
+    const session = 'deepseek-render-session'
+    let sawWhale = false
+    for (let n = 1; n <= 5; n += 1) if (T.foldSuitFor(session, n) === 'deepseek') sawWhale = true
+    assert.ok(sawWhale, '一个完整 bag 内必然出现鲸鱼牌面')
+    mount(react.createElement(T.PokerIcon, { count: 3, suit: 'deepseek', open: false }))
+    const pip = container.querySelector('.ccg-poker-pip')
+    assert.ok(pip, '牌面 pip 存在')
+    assert.ok(pip.innerHTML.includes('ccg-poker-logo-'), '鲸鱼牌面以 Logo <use> 渲染：' + pip.innerHTML)
+  })
+
+  it('重渲染 / 开合不改变同一 Turn 的牌面（组件级 + SVG 牌面一致）', () => {
+    const session = 'rerender-session'
+    const bar = (open) => react.createElement(T.TurnBarView, {
+      running: false, open: open, canToggle: true, turnNumber: 21, label: '完成 · 1秒',
+      poker: T.turnPokerIcon('poker', 3, false, open, 21, true, session), round: '第21轮',
+    })
+    mount(bar(false))
+    const suit = T.foldSuitFor(session, 21)
+    assert.equal(T.turnPokerIcon('poker', 3, false, false, 21, true, session).props.suit, suit)
+    const pipHtml = container.querySelector('.ccg-poker-pip').innerHTML
+    if (suit === 'deepseek') assert.ok(pipHtml.includes('ccg-poker-logo-'), '鲸鱼牌面渲染为 Logo')
+    else assert.ok(pipHtml.includes(T.POKER_PIPS[suit].path.slice(0, 30)), suit + ' 牌面渲染为对应花色 glyph')
+    for (const open of [true, false, true]) {
+      act(() => { root.render(bar(open)) })
+      assert.equal(T.foldSuitFor(session, 21), suit, '开合/重渲染后花色不变')
+      assert.equal(T.turnPokerIcon('poker', 3, false, open, 21, true, session).props.suit, suit)
+      assert.equal(container.querySelector('.ccg-poker-pip').innerHTML, pipHtml, '渲染出的牌面内容不变')
     }
   })
 })
