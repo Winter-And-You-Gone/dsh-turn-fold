@@ -24,8 +24,9 @@ const react = require('react')
 const src = readFileSync(CLIENT_JS, 'utf8')
 
 // ── mock slots service（记录全部注册） ──
-function makeSlotsService() {
+function makeSlotsService(opts) {
   const calls = []
+  const modern = !opts || opts.officialTurnProcess !== false
   return {
     calls,
     inject(name, factory) {
@@ -34,7 +35,8 @@ function makeSlotsService() {
     register(options, component) {
       return { options, component }
     },
-    entries() { return [] },
+    // 现代宿主：官方在 conversation.chat.node 自带 turn-process 条目（能力探针依赖它）
+    entries(name) { return modern && name === 'conversation.chat.node' ? [{ options: { key: 'turn-process', priority: 0 } }] : [] },
   }
 }
 

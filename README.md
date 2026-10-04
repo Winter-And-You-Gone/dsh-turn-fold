@@ -228,6 +228,51 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   运行态识别依赖官方 shimmer 属性（两个版本任一存在即触发 Running Step Poker
   动画；两者都不存在 → 静态 Poker fallback；即使视觉钩子失效，也不影响
   Step Fold / Tool / Think / Turn Fold 与页面稳定性）。
+  逐组牌面规则额外消费官方会话锚点 `data-conversation-session`（0.1.7-rc.2+；
+  **官方自己的 `stop-shortcut` 就是用 `closest('[data-conversation-session]')` 解析会话**，
+  属官方既有契约）：该属性缺失的宿主（0.1.7-rc.1）由 CSS 回退分支
+  `[data-conversation-content]:not([data-conversation-session])` 兜住，规则不会漏到别的会话树；
+  插件不写官方 DOM、不加任何官方属性。
+
+## Compatibility Architecture
+
+现代化宿主的唯一 Fold owner 是 **DSH 自己**（官方 turn-process owner state + 官方
+Process Group disclosure）；插件只做 UI（Turn 栏 / Poker / 指标 / token 动画 / 设置）。
+插件按**能力**选择 feature-level adapter，而不是比较版本号字符串：
+
+```
+                    宿 主 能 力 探 测（capability-first）
+                                 │
+        ┌────────────────────────┴────────────────────────┐
+   Modern Adapter                                  Legacy Adapter
+   （官方契约齐全）                                 （官方契约缺失时才启用）
+        └────────────────────────┬────────────────────────┘
+                                 │
+                     Shared UI（Turn 栏 / Poker / 指标 / token 动画 / 设置）
+```
+
+**Legacy adapter 在官方等价契约存在时永不运行**：判据全部是能力探针
+（官方 `conversation.chat.node` 里有没有 `turn-process` 条目、会话快照有没有
+`views.grouped('chat')`、props 里有没有 `setOpen`/`useChat`），版本号只出现在测试
+fixtures、README 与 `engines.dsh` 里。现代宿主上 legacy 引擎激活计数恒为 0
+（`getLegacyEngineActivations()` 可断言，测试矩阵逐版本锁死）。
+
+能力矩阵（来自官方 release tag 的逐版本源码审计，见 `tests/version-fixtures/host-matrix.mjs`）：
+
+| DSH 版本 | Turn backend | Step backend | Metrics backend | 会话作用域 |
+| --- | --- | --- | --- | --- |
+| 0.1.1-rc.2 | legacy（无 turn-process 节点、无 useChat/useConversation） | legacy（无官方 Process Group） | legacy | 无锚点 |
+| 0.1.2-rc.1 | **modern**（official owner state） | legacy（无分组契约） | modern | 无锚点 |
+| 0.1.5-rc.3 | modern | legacy | modern | 无锚点 |
+| 0.1.6-alpha.2 | modern | legacy | modern | 无锚点 |
+| 0.1.7-rc.1 | modern | modern | modern | CSS 回退（有 `data-conversation-content`、无 `data-conversation-session`） |
+| 0.1.7-rc.2 | modern | modern | modern | 官方 `data-conversation-session` |
+| 0.2.0-rc.2 | modern | modern | modern | 官方 `data-conversation-session` |
+
+当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.0-rc.2"`：上表里 0.1.1-rc.2 ~ 0.1.6 需要
+Legacy adapter（Turn/Step fold 由插件补），**该引擎尚未移植**——插件在这些宿主上
+只做能力判定与一次性诊断（`[dsh-turn-fold] host mode: legacy|mixed (...)`），
+不注册任何影子渲染器、不参与折叠语义。等旧宿主真机矩阵跑通后才会放开 `engines.dsh`。
 
 ## 安装
 
@@ -485,7 +530,9 @@ git push --follow-tags
   - 步骤分组/标题完全交还官方——插件自研的「运行了N条命令 / 读取了… / 思考了N次」
     段标题、段内文件链接复制、[ +N -M ] 行数统计、标题缓存已删除（官方标题语义为准）；
   - 「待折叠/已折叠 N 步」字段删除（折叠成员归属由官方决定，插件不再自行统计步数）；
-  - **假 token 增长删除**——运行中两次 usage 之间数字保持真实值不动（不再 +1/+11）；
+  - **旧版 +1/+11 假增长删除**——现在运行中的 token 槽是 **presentation-only 视觉计数**
+    （canonical 真实值与展示值分层，见上文「真实数据层 / 展示层」）：真实 usage 一到立即校准、
+    settle / 历史 / 刷新只显示官方真实值；
   - **零宿主包运行时依赖**——chevron / 通知全部自有实现，不 require 任何
     `@deepseek-ai/*` client 包（官方 practices：不要运行时 require Harness Client
     package）；设置面板由打开它的 Turn 栏自身 React 树渲染，无 body portal / 独立

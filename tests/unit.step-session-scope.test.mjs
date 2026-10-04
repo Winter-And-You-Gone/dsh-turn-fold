@@ -102,7 +102,7 @@ describe('Session 作用域 A：选择器前缀', () => {
     const lines = css.split('\n').filter(Boolean)
     assert.equal(lines.length, 2)
     for (const line of lines) {
-      assert.ok(line.startsWith('[data-conversation-session="sess-A"] [data-step-process][data-chat-group-key="'), '必须带会话作用域前缀：' + line.slice(0, 90))
+      assert.ok(line.startsWith('[data-conversation-session="sess-A"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="'), '必须带会话作用域前缀：' + line.slice(0, 90))
     }
   })
   it('sessionId / groupKey 都走 cssAttrValue 转义（引号、反斜杠）', () => {
@@ -159,11 +159,11 @@ describe('Session 作用域 B/C：same groupKey 双树隔离', () => {
       assert.equal(linesB.length, 2, 'B 的两条规则')
       for (const line of linesA) assert.ok(line.includes(T.cssAttrValue(SAME_KEY)), 'A 的规则带同名 groupKey')
       for (const line of linesB) assert.ok(line.includes(T.cssAttrValue(SAME_KEY)), 'B 的规则带同名 groupKey')
-      // 选择器级隔离：A 的规则拿 A 树的 icon 能命中、拿 B 树的 icon 不能命中
-      const selOf = (line) => line.slice(0, line.indexOf('{')).replace('::before', '')
-      const selA0 = selOf(linesA[0])
-      const target = (sel) => (sel.includes('[data-process-activity]') ? treeA.button : treeA.group)
-      assert.ok(target(selA0).matches(selA0.replace(/ \[data-step-process-icon\]$/, '')), 'A 的规则命中 A 树（jsdom matches 语义）')
+      // 选择器级隔离：每棵树只命中自己会话的作用域，且带会话属性的树不命中 rc.1 回退分支
+      assert.ok(treeA.group.matches('[data-conversation-session="sess-A"] [data-step-process][data-chat-group-key]'), 'A 树命中 A 的作用域')
+      assert.ok(!treeA.group.matches('[data-conversation-session="sess-B"] [data-step-process]'), 'A 树不得命中 B 的作用域')
+      assert.ok(treeB.group.matches('[data-conversation-session="sess-B"] [data-step-process]'), 'B 树命中 B 的作用域')
+      assert.ok(!treeA.group.matches('[data-conversation-content]:not([data-conversation-session]) [data-step-process]'), '带会话属性的树不得命中 rc.1 回退分支')
       void treeB
     } finally {
       treeA.body.remove()

@@ -206,8 +206,8 @@ describe('Bridge session cache E/F/G：清理与隔离', () => {
     assert.equal(T.getCompletedStepFaceCount('sess-B'), 1)
     const topB = T.completedStepTopFaces.get('sess-B').get('["process","f-b1",null]')
     const cssBoth = cardRulesCss()
-    assert.ok(cssBoth.includes('[data-conversation-session="sess-A"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-a1",null]') + '"]'), 'A 的规则带自己的会话作用域')
-    assert.ok(cssBoth.includes('[data-conversation-session="sess-B"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-b1",null]') + '"]'), 'B 的规则带自己的会话作用域（互不覆盖）')
+    assert.ok(cssBoth.includes('[data-conversation-session="sess-A"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-a1",null]') + '"]'), 'A 的规则带自己的会话作用域')
+    assert.ok(cssBoth.includes('[data-conversation-session="sess-B"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-b1",null]') + '"]'), 'B 的规则带自己的会话作用域（互不覆盖）')
     // 卸载 A 的全部 bridge
     renderSubtree(bridgeNode(b, 'sess-B', 'B'))
     await flushMicrotasks()
@@ -284,8 +284,8 @@ describe('Bridge 多 session：会话作用域化输出', () => {
     assert.equal(T.getStepCardBridgeLeaderCount('multi-A'), 1)
     assert.equal(T.getStepCardBridgeLeaderCount('multi-B'), 1)
     const css = cardRulesCss()
-    assert.ok(css.includes('[data-conversation-session="multi-A"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-a",null]') + '"]'), 'A 的规则带 A 作用域')
-    assert.ok(css.includes('[data-conversation-session="multi-B"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-b",null]') + '"]'), 'B 的规则带 B 作用域')
+    assert.ok(css.includes('[data-conversation-session="multi-A"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-a",null]') + '"]'), 'A 的规则带 A 作用域')
+    assert.ok(css.includes('[data-conversation-session="multi-B"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-b",null]') + '"]'), 'B 的规则带 B 作用域')
     // A 卸载 → 只撤下 A 的块
     renderSubtree(bridgeNode(b, 'multi-B', 'B2'))
     const after = cardRulesCss()

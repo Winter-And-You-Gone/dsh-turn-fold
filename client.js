@@ -1004,7 +1004,14 @@ window.__ModuleLoader__.load({
 			var rules = [];
 			var scope = "";
 			if (sessionId !== undefined && sessionId !== null && String(sessionId) !== "") {
-				scope = '[data-conversation-session="' + cssAttrValue(sessionId) + '"] ';
+				// 会话作用域（0.1.7-rc.2+ 的官方属性）＋ 该属性出现之前的宿主回退：
+				// 0.1.7-rc.1 的会话内容根已有 data-conversation-content，但还没有
+				// data-conversation-session —— 那时只能退化为不带会话作用域的选择器
+				// （该代宿主无法在 CSS 层区分两棵树，属已知软限制，见 README）。
+				// 新版宿主上 [data-conversation-content] 恒有 session 属性 → 回退分支
+				// 永不命中，不会把规则泄漏到别的会话树。
+				scope = '[data-conversation-session="' + cssAttrValue(sessionId) + '"], ' +
+					'[data-conversation-content]:not([data-conversation-session]) ';
 			}
 			if (map) {
 				for (var key in map) {
@@ -1196,6 +1203,7 @@ window.__ModuleLoader__.load({
 			var useConversation = props.useConversation;
 			var entries = useConversation(selectChatGroupedEntries);
 			var grouped = useConversation(selectChatGroupedView);
+			if (grouped === undefined || grouped === null) noteLegacyStepEngine();   // 宿主无官方 Process Group 契约（hybrid/legacy 宿主）
 			var countsRef = react.useRef({});
 			var versionPair = react.useState(0);
 			var version = versionPair[0], setVersion = versionPair[1];
@@ -2922,6 +2930,109 @@ window.__ModuleLoader__.load({
 			return specCardCountFromSpec(spec);
 		}
 
+		// ---- 宿主能力探测（capability-first；版本号只用于测试 / README / 诊断） ----
+		// 依据官方 tag 源码逐版本审计（见 README「Compatibility Architecture」的矩阵）：
+		//   0.1.1-rc.2          无 turn-process 节点 / 无 useChat·useConversation / 无 Step 分组
+		//   0.1.2 ~ 0.1.6       有 turn-process + TurnProcessOwnerProps（官方 Turn Fold），
+		//                       但无 turnDataSource、无 Step 分组、无 hasContent
+		//   0.1.7-rc.1          Turn/Step 全现代；会话内容根有 data-conversation-content，
+		//                       但还没有 data-conversation-session（会话作用域走 CSS 回退）
+		//   0.1.7-rc.2 / 0.2.0  全现代（含 data-conversation-session）
+		// 判定只看能力探针，不比较版本号字符串。
+		var hostCapabilityLog = null;            // 一次性诊断（不刷屏）
+		var legacyTurnEngineActivations = 0;     // Modern 宿主必须恒为 0
+		var legacyStepEngineActivations = 0;     // Modern 宿主必须恒为 0
+		var legacyStepEngineNoted = false;       // 渲染期 Step legacy 定论只记一次
+		/** 官方 slot 注册表里是否已有该 key 的条目（只读；不写官方 DOM、不轮询）。 */
+		function slotHasEntry(slotsSvc, slotName, match) {
+			try {
+				var entries = slotsSvc && typeof slotsSvc.entries === "function" ? slotsSvc.entries(slotName) : null;
+				for (var i = 0; entries && i < entries.length; i++) {
+					var options = entries[i] && entries[i].options;
+					if (options && match(options)) return true;
+				}
+			} catch (e) { /* 旧宿主没有 entries() → 视为无该能力 */ }
+			return false;
+		}
+		/** 宿主能力矩阵（注册期与渲染期两处使用，形状一致）。
+		 *  nativeStepGroups 允许三态：true / false / undefined（未知）——官方 Process Group
+		 *  既没有独立的 slot 声明、也没有注册期可探的服务，只能在会话作用域内用
+		 *  `views.grouped('chat')` 的数据形状探测，所以注册期一律标 unknown。 */
+		function hostCapabilitiesOf(probe) {
+			var p = probe || {};
+			var nativeTurnFold = p.nativeTurnFold === true;
+			var reactiveTurnData = p.reactiveTurnData === true;
+			var stepProbe = p.nativeStepGroups;
+			var nativeStepGroups = stepProbe === true ? true : (stepProbe === false ? false : undefined);
+			return {
+				nativeTurnFold: nativeTurnFold,
+				reactiveTurnData: reactiveTurnData,
+				nativeStepGroups: nativeStepGroups,
+				durableProjection: p.durableProjection === true,
+				// feature-level 模式（允许 hybrid：Turn modern + Step legacy）
+				turnFold: nativeTurnFold ? "modern" : "legacy",
+				stepFold: nativeStepGroups === true ? "modern" : (nativeStepGroups === false ? "legacy" : "unknown"),
+				metrics: nativeTurnFold && reactiveTurnData ? "modern" : "legacy",
+				// 会话作用域：0.1.7-rc.2+ 有官方属性；rc.1 由 CSS 的
+				// [data-conversation-content]:not([data-conversation-session]) 回退兜住
+				sessionScope: "official+css-fallback",
+			};
+		}
+		/** 注册期探针：官方是否在 conversation.chat.node 里注册了 turn-process 渲染器
+		 *  （官方 0 位条目 = DSH 自己是 Turn Fold owner）。 */
+		function detectHostCapabilitiesAtRegistration(slotsSvc) {
+			var nativeTurnFold = slotHasEntry(slotsSvc, "conversation.chat.node", function (o) { return o.key === "turn-process"; });
+			return hostCapabilitiesOf({
+				nativeTurnFold: nativeTurnFold,
+				reactiveTurnData: nativeTurnFold,
+				// 注册期无法可靠探测 Process Group 契约 → unknown（渲染期用 grouped view 形状定论）
+				nativeStepGroups: undefined,
+				// durable projection 由宿主半边注册、客户端经 projection wire 运行时探测
+				// （拿不到就是 undefined，指标自动回落客户端 step 数据）→ 此处不猜。
+				durableProjection: false,
+			});
+		}
+		/** 一次性诊断（§25：启动时一次，不刷屏）。 */
+		function reportHostMode(caps, where) {
+			var mode = caps.turnFold === "modern" && caps.stepFold === "modern" ? "modern"
+				: (caps.turnFold === "legacy" ? "legacy" : "mixed");
+			if (hostCapabilityLog !== null && hostCapabilityLog.mode === mode) return hostCapabilityLog;
+			hostCapabilityLog = { mode: mode, caps: caps, where: where };
+			try {
+				if (typeof console !== "undefined" && typeof console.info === "function") {
+					console.info("[dsh-turn-fold] host mode: " + mode +
+						" (turn: " + caps.turnFold + ", step: " + caps.stepFold + ", metrics: " + caps.metrics + ")");
+				}
+			} catch (e) { /* 诊断失败不影响运行 */ }
+			return hostCapabilityLog;
+		}
+		/** Legacy Fold 引擎入口：**只在官方契约缺失时**才会被调用。
+		 *  本轮落地的是"能力判定 + 一次性诊断 + 激活计数"（现代宿主必须恒为 0）；
+		 *  引擎本体（从 main@356db80 移植的 legacy Turn/Step fold）尚未移植——
+		 *  未移植前绝不注册任何影子渲染器，也绝不在现代宿主上激活。 */
+		function activateLegacyFoldEngine(caps) {
+			if (caps.turnFold === "legacy") {
+				// 没有官方 turn-process 的宿主同样没有官方 Process Group（逐版本审计确认）→
+				// Turn/Step 两套 legacy 一起记账；hybrid 宿主的 Step legacy 由渲染期
+				// （noteLegacyStepEngine：grouped view 形状探不到）定论。
+				legacyTurnEngineActivations += 1;
+				legacyStepEngineActivations += 1;
+			}
+			return false;
+		}
+		/** 渲染期定论：宿主没有官方 Process Group 契约（会话快照拿不到 grouped view /
+		 *  groupSource）→ 记一次 Step legacy 激活。Modern 宿主恒不触发（有官方分组）。
+		 *  只在进程内记一次（诊断/测试用，不做任何折叠语义）。 */
+		function noteLegacyStepEngine() {
+			if (legacyStepEngineNoted) return;
+			legacyStepEngineNoted = true;
+			legacyStepEngineActivations += 1;
+		}
+		/** 诊断/测试：Legacy 引擎激活计数（Modern 宿主必须恒为 0）。 */
+		function getLegacyEngineActivations() {
+			return { turn: legacyTurnEngineActivations, step: legacyStepEngineActivations };
+		}
+
 		// ---- Cordis 插件入口 ----
 		// 只替换官方 conversation.chat.node 的 "turn-process" 渲染器（keyed slot）。
 		// 不声明任何 inject 面：官方 ChatNodeSeat 会把 turnProcess owner state 与
@@ -2936,6 +3047,18 @@ window.__ModuleLoader__.load({
 			applyIconStyle();
 			ctx.inject(["slots"], function (scope) {
 				var slotsSvc = scope.slots;
+				// 能力优先：官方没有 turn-process 契约的宿主（0.1.1-rc.2 等）不注册现代
+				// 渲染器（注册也永远不会有节点），改走 legacy 决策；现代宿主上
+				// legacyTurnEngineActivations / legacyStepEngineActivations 恒为 0。
+				var caps = detectHostCapabilitiesAtRegistration(slotsSvc);
+				reportHostMode(caps, "registration");
+				// 任一 feature 走 legacy → 记一次激活（现代宿主两项都 modern ⇒ 恒为 0）。
+				// 引擎本体（从 main@356db80 移植）尚未移植：hybrid/legacy 宿主上只做能力判定
+				// 与诊断，不注册任何影子渲染器、不参与折叠语义。
+				if (caps.turnFold !== "modern" || caps.stepFold !== "modern") {
+					activateLegacyFoldEngine(caps);
+				}
+				if (caps.turnFold !== "modern") return;
 				safeRegisterSlot(slotsSvc, {
 					name: "conversation.chat.node",
 					key: "turn-process",
