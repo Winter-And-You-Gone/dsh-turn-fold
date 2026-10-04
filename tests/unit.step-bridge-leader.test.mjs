@@ -196,7 +196,7 @@ describe('Bridge session cache E/F/G：清理与隔离', () => {
     assert.equal(faceStyleTags(), tagsBefore, '已注入的变体样式元素不得被删/重复注入')
     assert.equal(cardRulesCss(), '', 'session 规则块已撤下')
   })
-  it('F：清 A 不影响 B（face 状态、bag、leader、规则都保持）', async () => {
+  it('F：清 A 不影响 B（face/bag/leader 保持），两个会话的块各自带作用域', async () => {
     const a = makeSession(['["process","f-a1",null]'])
     const b = makeSession(['["process","f-b1",null]'])
     renderSubtree(react.createElement(react.Fragment, null, [
@@ -205,8 +205,9 @@ describe('Bridge session cache E/F/G：清理与隔离', () => {
     assert.equal(T.getCompletedStepFaceCount('sess-A'), 1)
     assert.equal(T.getCompletedStepFaceCount('sess-B'), 1)
     const topB = T.completedStepTopFaces.get('sess-B').get('["process","f-b1",null]')
-    const rulesWithB = cardRulesCss()
-    assert.ok(rulesWithB.includes(T.cssAttrValue('["process","f-b1",null]')), 'B 的规则在场')
+    const cssBoth = cardRulesCss()
+    assert.ok(cssBoth.includes('[data-conversation-session="sess-A"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-a1",null]') + '"]'), 'A 的规则带自己的会话作用域')
+    assert.ok(cssBoth.includes('[data-conversation-session="sess-B"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-b1",null]') + '"]'), 'B 的规则带自己的会话作用域（互不覆盖）')
     // 卸载 A 的全部 bridge
     renderSubtree(bridgeNode(b, 'sess-B', 'B'))
     await flushMicrotasks()
@@ -216,7 +217,9 @@ describe('Bridge session cache E/F/G：清理与隔离', () => {
     assert.equal(T.hasCompletedStepBag('sess-B'), true, 'B 的 bag 不受影响')
     assert.equal(T.getStepCardBridgeLeaderCount('sess-B'), 1, 'B 仍有 leader')
     assert.equal(T.completedStepTopFaces.get('sess-B').get('["process","f-b1",null]'), topB, 'B 的 top face 不因清 A 而变')
-    assert.ok(cardRulesCss().includes(T.cssAttrValue('["process","f-b1",null]')), 'B 的规则仍在')
+    const afterA = cardRulesCss()
+    assert.ok(!afterA.includes('data-conversation-session="sess-A"'), 'A 的块已撤下')
+    assert.ok(afterA.includes('data-conversation-session="sess-B"'), 'B 的块保持')
   })
   it('G：session 重开重新分配（不复用被清掉的旧值），且变体资产不重复注入', async () => {
     const session = 'reopen-session'
@@ -268,10 +271,10 @@ describe('Bridge session cache E/F/G：清理与隔离', () => {
 })
 
 // ══════════════════════════════════════════════════════════════════════
-// I. 多 session 共存：规则分块合并，不互相覆盖
+// I. 多 session 共存：两块都输出，但各自带自己的会话作用域
 // ══════════════════════════════════════════════════════════════════════
-describe('Bridge 多 session：规则分块合并', () => {
-  it('两个 session 同时挂载 → 两个 session 的规则块都在，互不覆盖；各自 leader 恰好 1', () => {
+describe('Bridge 多 session：会话作用域化输出', () => {
+  it('两个 session 同时挂载 → 两块都在且各自绑定自己的 [data-conversation-session]；各自 leader 恰好 1', () => {
     const a = makeSession(['["process","m-a",null]'])
     const b = makeSession(['["process","m-b",null]'])
     renderSubtree(react.createElement(react.Fragment, null, [
@@ -281,12 +284,12 @@ describe('Bridge 多 session：规则分块合并', () => {
     assert.equal(T.getStepCardBridgeLeaderCount('multi-A'), 1)
     assert.equal(T.getStepCardBridgeLeaderCount('multi-B'), 1)
     const css = cardRulesCss()
-    assert.ok(css.includes(T.cssAttrValue('["process","m-a",null]')), 'A 的规则块在场')
-    assert.ok(css.includes(T.cssAttrValue('["process","m-b",null]')), 'B 的规则块在场（不被 A 覆盖）')
+    assert.ok(css.includes('[data-conversation-session="multi-A"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-a",null]') + '"]'), 'A 的规则带 A 作用域')
+    assert.ok(css.includes('[data-conversation-session="multi-B"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-b",null]') + '"]'), 'B 的规则带 B 作用域')
     // A 卸载 → 只撤下 A 的块
     renderSubtree(bridgeNode(b, 'multi-B', 'B2'))
     const after = cardRulesCss()
-    assert.ok(!after.includes(T.cssAttrValue('["process","m-a",null]')), 'A 的块已撤下')
-    assert.ok(after.includes(T.cssAttrValue('["process","m-b",null]')), 'B 的块保持')
+    assert.ok(!after.includes('data-conversation-session="multi-A"'), 'A 的块已撤下')
+    assert.ok(after.includes('data-conversation-session="multi-B"'), 'B 的块保持')
   })
 })

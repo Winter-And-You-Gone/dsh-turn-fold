@@ -903,10 +903,10 @@ window.__ModuleLoader__.load({
 		 *  清理会把刚分配的牌面误清掉（同一组重挂载就换牌）。微任务里再确认"该 session
 		 *  确实仍然没有任何 bridge 实例"才真正清理。 */
 		function scheduleCompletedStepSessionCleanup(sessionKey) {
-			stepCardPendingCleanup[sessionKey] = true;
+			stepCardPendingCleanup.add(sessionKey);
 			var run = function () {
-				if (stepCardPendingCleanup[sessionKey] !== true) return;
-				delete stepCardPendingCleanup[sessionKey];
+				if (!stepCardPendingCleanup.has(sessionKey)) return;
+				stepCardPendingCleanup.delete(sessionKey);
 				if (stepCardBridgeSessions.has(sessionKey)) return;   // 又被挂载 → 不清理
 				cleanupCompletedStepSession(sessionKey);
 			};
@@ -985,13 +985,27 @@ window.__ModuleLoader__.load({
 		function cssAttrValue(value) {
 			return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 		}
-		/** groupKey → 逐组牌面覆盖规则（3 张与 5 张都走这里）。两条规则都必须：
-		 *  (a) 特异性压过静态端点/回落规则，(b) 带 shimmer 排除子句——否则会把运行中的
-		 *  五牌面轮换 mask 压掉（软依赖：官方 shimmer 钩子改名 → 排除失效 → 最坏退化为
-		 *  静态牌堆/扇形，轮换不再显示）。组根同时带 data-step-process 与
-		 *  data-chat-group-key（官方真实 DOM）。 */
+		/** groupKey → 逐组牌面覆盖规则（3 张与 5 张都走这里），**按会话作用域**。
+		 *  最终 selector = `[data-conversation-session="<sessionId>"] [data-step-process]
+		 *  [data-chat-group-key="<groupKey>"] `：
+		 *   · 官方 GroupKey 是"one Session 内的 identity"（跨会话会重复），只按 groupKey
+		 *     匹配会让同名组在另一棵会话树里串样式；
+		 *   · 官方 DOM 提供会话级锚点——ui-conversation 的 ConversationContent 在会话内容根上
+		 *     渲染 `data-conversation-session={sessionId}`，官方自己的 stop-shortcut 就是
+		 *     `target.closest('[data-conversation-session]')` 解析会话；该元素包含
+		 *     conversation.session → conversation.view → 全部 chat 节点，因此它正是每棵
+		 *     会话树的稳定祖先（不写官方 DOM、不加属性，纯消费官方契约）。
+		 *  两条规则都必须：(a) 特异性压过静态端点/回落规则，(b) 带 shimmer 排除子句——
+		 *  否则会把运行中的五牌面轮换 mask 压掉（软依赖：官方 shimmer 钩子改名 → 排除失效
+		 *  → 最坏退化为静态牌堆/扇形，轮换不再显示）。
+		 *  sessionId 缺失（旧宿主/降级）→ 不加作用域前缀（回落为历史行为，且输出层只输出
+		 *  单块，见 writeStepCardRulesMerged）。 */
 		function buildStepCardRulesCss(map, sessionId) {
 			var rules = [];
+			var scope = "";
+			if (sessionId !== undefined && sessionId !== null && String(sessionId) !== "") {
+				scope = '[data-conversation-session="' + cssAttrValue(sessionId) + '"] ';
+			}
 			if (map) {
 				for (var key in map) {
 					if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
@@ -1002,7 +1016,7 @@ window.__ModuleLoader__.load({
 					if (!state || state.closed !== true) continue;
 					var set = completedFaceSetFor(count, completedStepTopFace(sessionId, key));
 					ensureCompletedFaceSetCss(set);
-					var host = '[data-step-process][data-chat-group-key="' + cssAttrValue(key) + '"]';
+					var host = scope + '[data-step-process][data-chat-group-key="' + cssAttrValue(key) + '"]';
 					var idle = ':not(:has([data-shimmer="true"])):not(:has([data-text-shimmer="true"]))';
 					rules.push(host + idle + ' [data-step-process-icon]::before' +
 						'{-webkit-mask-image:var(--tf-face-' + set.id + '-stack);mask-image:var(--tf-face-' + set.id +
@@ -1015,8 +1029,9 @@ window.__ModuleLoader__.load({
 			}
 			return rules.join("\n");
 		}
-		/** 更新某个 session 的逐组规则块（幂等：内容不变不写）。规则按 session 分块，
-		 *  合并后写进同一张样式表——多个 session 短暂共存时不会互相覆盖。 */
+		/** 更新某个 session 的逐组规则块（幂等：内容不变不写）。规则按 session 分块保存；
+		 *  带 `[data-conversation-session]` 作用域的块可以同时输出（各自只作用于自己的会话
+		 *  树），无作用域的块只在唯一时输出（见 writeStepCardRulesMerged）。 */
 		function writeStepCardRules(map, sessionId) {
 			try {
 				if (!stepCardStyleEl) return;
@@ -1027,16 +1042,28 @@ window.__ModuleLoader__.load({
 				writeStepCardRulesMerged();
 			} catch (e) { /* 视觉增强可以坏，官方折叠不受影响 */ }
 		}
-		/** 把各 session 的规则块按首次出现顺序合并写入样式元素（内容不变不写）。 */
+		/** 输出规则到样式元素（内容不变不写）。
+		 *  · 带会话作用域的块（sessionKey 非空 = 有 sessionId）**全部输出**：每条规则都限定在
+		 *    自己那棵会话树里（[data-conversation-session]），同名 groupKey 也不会互相影响，
+		 *    所以主会话与子代理侧栏会话可以同时保持各自的牌面；
+		 *  · 无作用域的块（旧宿主没给 sessionId，sessionKey === ""）只有在该 session 是唯一
+		 *    输出时才写——多棵树共存时绝不输出无作用域规则，避免串样式。 */
 		function writeStepCardRulesMerged() {
 			try {
 				if (!stepCardStyleEl) return;
-				var parts = [];
-				stepCardRulesBySession.forEach(function (chunk) { if (chunk) parts.push(chunk); });
-				var merged = parts.join("\n");
-				if (merged === stepCardRulesCache) return;
-				stepCardRulesCache = merged;
-				stepCardStyleEl.textContent = merged;
+				var scoped = [];
+				var plain = [];
+				stepCardRulesBySession.forEach(function (chunk, sessionKey) {
+					if (!chunk) return;
+					if (sessionKey === "") plain.push(chunk);
+					else scoped.push(chunk);
+				});
+				var out = scoped.length > 0
+					? scoped.join("\n")
+					: (plain.length === 1 ? plain[0] : "");
+				if (out === stepCardRulesCache) return;
+				stepCardRulesCache = out;
+				stepCardStyleEl.textContent = out;
 			} catch (e) { /* 同上 */ }
 		}
 		/** 某个 session 完全卸载：只撤下它自己的规则块（其它 session 不受影响）。 */
@@ -1070,7 +1097,7 @@ window.__ModuleLoader__.load({
 		var stepCardBridgeSessions = new Map();  // "<sessionKey>" → { instances: Map<id, {id, onLeader}>, leaderId }
 		var stepCardBridgeSeq = 0;
 		var stepCardRulesBySession = new Map();  // "<sessionKey>" → 该 session 的规则块
-		var stepCardPendingCleanup = {};         // "<sessionKey>" → true（微任务里确认后再清）
+		var stepCardPendingCleanup = new Set();  // sessionKey（卸载触发的缓存清理，微任务里确认）
 		/** 注册一个已挂载的 bridge 实例；若该 session 还没有 leader → 立即晋升它。 */
 		function registerStepCardBridge(sessionKey, instance) {
 			var session = stepCardBridgeSessions.get(sessionKey);
@@ -1080,7 +1107,7 @@ window.__ModuleLoader__.load({
 			}
 			if (session.instances.has(instance.id)) return;   // 幂等（StrictMode effect replay）
 			session.instances.set(instance.id, instance);
-			delete stepCardPendingCleanup[sessionKey];        // 同 commit 内重挂载 → 取消待清理
+			stepCardPendingCleanup.delete(sessionKey);        // 同 commit 内重挂载 → 取消待清理
 			promoteStepCardLeader(sessionKey);
 		}
 		/** 选一个仍挂载的实例当 leader（幂等：已有合法 leader 时不动）。 */

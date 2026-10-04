@@ -181,9 +181,17 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   leader 卸载时**从同一 session 仍挂载的实例里立即晋升一个**（纯 React mount/unmount
   registry；没有任何 DOM 查询或轮询，也不依赖"下次新组件 mount"）。接棒期间该 session 的
   规则**不清空、不闪回 fallback**；只有该 session 最后一个桥卸载才撤下它的规则块。
-  规则按 session 分块合并进同一张样式表，两个会话短暂共存时互不覆盖。session 完全卸载时
-  只清它的展示层分配（topFaces / bag），**全局共享的变体资产与已注入的样式元素保留复用**
-  （池 5 面 × 2 档位，天然有界）；同一 session 重新打开时重新随机（不持久化）；
+  session 完全卸载时只清它的展示层分配（topFaces / bag），**全局共享的变体资产与已注入的
+  样式元素保留复用**（池 5 面 × 2 档位，天然有界）；同一 session 重新打开时重新随机；
+- **规则按会话作用域隔离**（本轮修复）：最终 CSS selector 是
+  `[data-conversation-session="<sessionId>"] [data-step-process][data-chat-group-key="<groupKey>"] `
+  —— 官方 `GroupKey` 是"one Session 内的 identity"（跨会话会重复），官方 UI 又允许两棵会话树
+  并存（主会话 + 子代理右侧栏会话），只按 groupKey 匹配会让同名组串样式。作用域锚点用的是
+  **官方既有 DOM 契约**：ui-conversation 的 `ConversationContent` 在会话内容根上渲染
+  `data-conversation-session={sessionId}`（官方自己的 `stop-shortcut` 就是
+  `closest('[data-conversation-session]')` 解析会话），该元素包含该会话的全部 chat 节点。
+  插件只消费这个属性，不写官方 DOM、不加属性；多个会话的规则块可同时输出（各自只作用于
+  自己的会话树），无 sessionId 的旧宿主则回落为不带作用域的选择器且只在唯一时输出；
 - **每组牌面从哪来**（completed 组不再"牌数决定顶牌"）：旧行为是固定序
   `♦ ♣ ♠ ♥ 🐋` 取前 N 张 → 3 张永远 ♠、5 张永远 🐋。现在每个 **session 一个 top-face
   shuffle bag**（五牌面池；与 Turn 顶层 Poker 共用 `shufflePokerFaces` 纯函数、bag 状态
