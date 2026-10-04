@@ -1331,7 +1331,9 @@ window.__ModuleLoader__.load({
 				state.growing = false;
 				return hasCanonical ? canonicalTokens : undefined;
 			}
-			// ② 官方 usage 首次到达 / 更新：立即校准——display 直接等于新真实值，绝不慢慢滚过去
+			// ② 官方 usage 首次到达 / 更新：立即校准——display 直接等于新真实值，绝不慢慢滚过去。
+			//    校准只改展示值，不动订阅：若该 step 仍在可见生成（growing 不变），
+			//    ticker 保持订阅、下一 tick 从新基线继续；已进入工具/等待阶段则本来就未订阅。
 			if (state.canonical !== canonicalTokens) {
 				state.canonical = canonicalTokens;
 				state.grown = 0;

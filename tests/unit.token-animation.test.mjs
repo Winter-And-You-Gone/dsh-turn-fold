@@ -252,13 +252,34 @@ describe('token 视觉增长 B：无 canonical 的 bootstrap', () => {
   })
   it('canonical 首次到达 → 立即校准（offset 归零），下一 tick 从真实值继续', () => {
     renderProbe({ running: true, canonical: undefined, visible: true })
-    tick(19) // provisional 已到 1 + 73 = 74
+    tick(19) // provisional = 1 + offsetForTicks(19) = 1 + (6×12 + 1) = 74
     assert.equal(renderProbe({ running: true, canonical: undefined, visible: true }), '74')
     assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6214', 'display 立即等于官方真实值')
     tick(1)
     assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6215', '不是 6214 + 73')
     tick(2)
     assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6226', '从新基线按 +1/+1/+10 增长')
+  })
+  it('canonical 首次到达且**仍在可见生成** → 只校准、ticker 保持订阅，随后从真实基线继续', () => {
+    // 官方 usage 可以在 assistant-step 仍然 running（还在流式输出）时到达——
+    // 这一刻只允许"校准"：bootstrap/偏移清零、display 立即等于 canonical，
+    // 但 growing 条件（running + 可见生成 + 字段开 + 非 reduced）没有变化，
+    // 所以订阅必须原样保留，下一 tick 继续从 canonical 增长。
+    assert.equal(renderProbe({ running: true, canonical: undefined, visible: true }), '1')
+    assert.equal(listenerCount(), 1)
+    assert.equal(timerRunning(), true)
+    tick(3)
+    assert.equal(renderProbe({ running: true, canonical: undefined, visible: true }), '13')
+    // usage 到达（同一 running step 仍在可见生成）
+    assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6214', '瞬时校准')
+    assert.equal(listenerCount(), 1, '仍在可见生成 → 不得退订 ticker')
+    assert.equal(timerRunning(), true, 'interval 必须继续（不能停表再重启）')
+    tick(1)
+    assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6215', '校准后继续 +1')
+    tick(1)
+    assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6216', '继续 +1')
+    tick(1)
+    assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6226', '继续 +10')
   })
   it('settle：bootstrap 全部清零（历史会话 / F5 绝不留假值）', () => {
     renderProbe({ running: true, canonical: undefined, visible: true })
@@ -346,6 +367,23 @@ describe('token 视觉增长 D：reduced-motion', () => {
       assert.ok(grown > 6214, '先正常增长：' + grown)
       mock.set(true) // 用户在会话中途打开系统"减少动态效果"
       assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6214', '立即归真实值')
+      assert.equal(listenerCount(), 0, '同时退订 ticker')
+      assert.equal(timerRunning(), false)
+      tick(30)
+      assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6214')
+    })
+  })
+  it('已有 canonical 且偏移 > 0 时开启 reduced-motion → 立即回到 canonical（不是停在偏移值）', () => {
+    const mock = makeReducedMotionMock(false)
+    withMatchMedia(() => mock.mql, () => {
+      assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6214')
+      tick(12)
+      const grown = Number(renderProbe({ running: true, canonical: 6214, visible: true }))
+      assert.equal(grown, 6262, 'canonical + 48（12 tick 的闭式偏移）')
+      assert.equal(listenerCount(), 1)
+      assert.equal(timerRunning(), true)
+      mock.set(true)
+      assert.equal(renderProbe({ running: true, canonical: 6214, visible: true }), '6214', '立即丢弃已滚出的 48')
       assert.equal(listenerCount(), 0, '同时退订 ticker')
       assert.equal(timerRunning(), false)
       tick(30)
@@ -536,6 +574,54 @@ describe('token 视觉增长 F：Running Turn 栏端到端', () => {
     assert.equal(timerRunning(), false)
     tick(40)
     assert.ok(container.querySelector('.ccg-turn-bar-label').textContent.includes('370,202 token'), 'settle 后 tick 不改动')
+  })
+
+  it('canonical 首次到达但仍在可见生成 → 视觉瞬时校准 + ticker 保持订阅 + 随后继续增长', () => {
+    const usageOnly = { inputTokens: 1000, outputTokens: 3214, cacheReadTokens: 2000 }
+    const runningNoUsage = () => makeRunningStepData(1, { time: T0 + 100, blocks: [REASONING('正在分析请求 · For the leg, use ...')] })
+    const runningWithUsage = () => makeRunningStepData(1, { time: T0 + 100, blocks: [REASONING('正在分析请求 · For the leg, use ...'), REASONING('继续输出')], usage: usageOnly })
+    // bootstrap 阶段：无 canonical、可见生成
+    render(runningProps([runningNoUsage()]))
+    assert.equal(visualTokens(), 1)
+    assert.ok(srLabel().includes('— token'), '读屏仍是 —：' + srLabel())
+    assert.equal(listenerCount(), 1)
+    assert.equal(timerRunning(), true)
+    tick(3)
+    assert.equal(visualTokens(), 13)
+    // 官方 usage 到达，assistant-step 仍在 running 且仍有可见输出
+    render(runningProps([runningWithUsage()]))
+    assert.equal(visualTokens(), 6214, '瞬时校准到官方真实值')
+    assert.ok(srLabel().includes('6,214 token'), '读屏同步为真实值：' + srLabel())
+    assert.equal(listenerCount(), 1, '仍在可见生成 → ticker 不得退订')
+    assert.equal(timerRunning(), true, 'interval 必须继续')
+    tick(3)
+    assert.equal(visualTokens(), 6226, '校准后从真实基线继续 +1/+1/+10')
+    assert.ok(srLabel().includes('6,214 token'), '读屏恒为 canonical：' + srLabel())
+  })
+
+  it('已有 canonical 且偏移 > 0 时 reduced-motion ON → 视觉与读屏同时回到官方真实值并退订', () => {
+    const mock = makeReducedMotionMock(false)
+    withMatchMedia(() => mock.mql, () => {
+      render(runningProps([makeRunningStepData(1, {
+        time: T0 + 100,
+        blocks: [REASONING('正在分析请求 · For the leg, use ...')],
+        usage: { inputTokens: 1000, outputTokens: 3214, cacheReadTokens: 2000 },
+      })]))
+      assert.equal(visualTokens(), 6214, '起点 = 官方真实值')
+      assert.ok(srLabel().includes('6,214 token'))
+      assert.equal(listenerCount(), 1)
+      tick(6)
+      assert.equal(visualTokens(), 6238, 'canonical + 24')
+      assert.ok(srLabel().includes('6,214 token'), '读屏在动画期间恒为 canonical：' + srLabel())
+      mock.set(true)
+      assert.equal(visualTokens(), 6214, 'reduced-motion 立即丢弃已滚出的偏移')
+      assert.ok(srLabel().includes('6,214 token'), '读屏始终是真实值：' + srLabel())
+      assert.equal(listenerCount(), 0, '同时退订 ticker')
+      assert.equal(timerRunning(), false)
+      tick(20)
+      assert.equal(visualTokens(), 6214, '退订后 tick 不再改动显示')
+      assert.ok(srLabel().includes('6,214 token'))
+    })
   })
 
   it('F5 / 历史会话：settled Turn 只显示官方真实值，不订阅 ticker、不残留 provisional', () => {
