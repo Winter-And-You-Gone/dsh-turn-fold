@@ -176,6 +176,14 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   `data-chat-group-key`，插件只在自己的样式表里按它生成覆盖规则。官方分组算法、成员判定、
   open/closed、折叠交互、隐藏与搜索展开全部不重算、不接管；不写官方 DOM、不加官方属性。
   官方未提供这些 API 的旧宿主上不产出任何规则 → 行为回落为 5 张（固定牌面）；
+- **桥的 leader 生命周期**（per-session，本轮修复）：宿主里每个回合都会挂一个桥实例，
+  但每个 session 只允许一个真正订阅——mounted registry 里首个挂载的实例立即成为 leader，
+  leader 卸载时**从同一 session 仍挂载的实例里立即晋升一个**（纯 React mount/unmount
+  registry；没有任何 DOM 查询或轮询，也不依赖"下次新组件 mount"）。接棒期间该 session 的
+  规则**不清空、不闪回 fallback**；只有该 session 最后一个桥卸载才撤下它的规则块。
+  规则按 session 分块合并进同一张样式表，两个会话短暂共存时互不覆盖。session 完全卸载时
+  只清它的展示层分配（topFaces / bag），**全局共享的变体资产与已注入的样式元素保留复用**
+  （池 5 面 × 2 档位，天然有界）；同一 session 重新打开时重新随机（不持久化）；
 - **每组牌面从哪来**（completed 组不再"牌数决定顶牌"）：旧行为是固定序
   `♦ ♣ ♠ ♥ 🐋` 取前 N 张 → 3 张永远 ♠、5 张永远 🐋。现在每个 **session 一个 top-face
   shuffle bag**（五牌面池；与 Turn 顶层 Poker 共用 `shufflePokerFaces` 纯函数、bag 状态

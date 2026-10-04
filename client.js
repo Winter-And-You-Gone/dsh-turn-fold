@@ -814,7 +814,6 @@ window.__ModuleLoader__.load({
 		var STEP_CARD_COUNT_LARGE = 5;
 		var stepCardStyleEl = null;
 		var stepCardRulesCache = null;
-		var stepCardLeaderToken = null;
 		/** 官方 counts → 本组 tool call 总数（求和，不是 counts.length）。 */
 		function stepCardToolCallCount(counts) {
 			if (!counts || typeof counts.length !== "number") return undefined;
@@ -854,7 +853,7 @@ window.__ModuleLoader__.load({
 		//     其余牌面由 top face 播种的确定性洗牌给出（组内不重复；5 张用满池）。
 		// 身份 = sessionKey + 官方 groupKey（data-chat-group-key 的同一 key）；
 		// 不写 localStorage / projection / node data——F5 / 插件重载后重新随机。
-		var completedStepTopFaces = new Map();   // "<sessionKey>|group:<groupKey>" → topFace
+		var completedStepTopFaces = new Map();   // "<sessionKey>" → Map<"<groupKey>", topFace>（session 退出整体删）
 		var completedStepTopBags = new Map();    // "<sessionKey>" → { remaining, previous, pool }
 		var completedFaceSets = new Map();       // "<count>:<topFace>" → { id, count, faces }
 		var completedFaceSetSeq = 0;
@@ -862,16 +861,57 @@ window.__ModuleLoader__.load({
 		/** 该 session+group 的顶牌：只从 bag 取一次，之后任何重渲染都命中缓存。 */
 		function completedStepTopFace(sessionId, groupKey) {
 			var sessionKey = sessionKeyOf(sessionId);
-			var turnKey = sessionKey + "|group:" + String(groupKey);
-			if (completedStepTopFaces.has(turnKey)) return completedStepTopFaces.get(turnKey);
+			var bucket = completedStepTopFaces.get(sessionKey);
+			if (!bucket) {
+				bucket = new Map();
+				completedStepTopFaces.set(sessionKey, bucket);
+			}
+			var key = String(groupKey);
+			if (bucket.has(key)) return bucket.get(key);
 			var bag = completedStepTopBags.get(sessionKey);
 			if (!bag) {
 				bag = { remaining: [], previous: undefined, pool: "" };
 				completedStepTopBags.set(sessionKey, bag);
 			}
 			var face = nextTurnPokerFace(bag, Math.random);
-			completedStepTopFaces.set(turnKey, face);
+			bucket.set(key, face);
 			return face;
+		}
+		/** 该 session 已分配的组数（诊断/测试）。 */
+		function getCompletedStepFaceCount(sessionId) {
+			var bucket = completedStepTopFaces.get(sessionKeyOf(sessionId));
+			return bucket ? bucket.size : 0;
+		}
+		/** 该 session 是否还有 top-face bag（诊断/测试）。 */
+		function hasCompletedStepBag(sessionId) {
+			return completedStepTopBags.has(sessionKeyOf(sessionId));
+		}
+		/** session 完全卸载后的清理：只清该 session 的**展示层分配**（topFaces + bag）。
+		 *  completedFaceSets 与已注入的变体样式是全局共享、天然有界的资产（池 5 面 ×
+		 *  2 个牌数档位），跨 session 复用，不清理、不重复注入。 */
+		function cleanupCompletedStepSession(sessionIdOrKey) {
+			var sessionKey = sessionKeyOf(sessionIdOrKey);
+			completedStepTopBags.delete(sessionKey);
+			var bucket = completedStepTopFaces.get(sessionKey);
+			if (bucket) {
+				bucket.clear();
+				completedStepTopFaces.delete(sessionKey);
+			}
+		}
+		/** 卸载触发的 session 清理延迟到微任务：React（StrictMode 的 effect replay、
+		 *  同一 commit 内的结构性重挂载）会先 cleanup 再重新 mount 同一个 bridge——同步
+		 *  清理会把刚分配的牌面误清掉（同一组重挂载就换牌）。微任务里再确认"该 session
+		 *  确实仍然没有任何 bridge 实例"才真正清理。 */
+		function scheduleCompletedStepSessionCleanup(sessionKey) {
+			stepCardPendingCleanup[sessionKey] = true;
+			var run = function () {
+				if (stepCardPendingCleanup[sessionKey] !== true) return;
+				delete stepCardPendingCleanup[sessionKey];
+				if (stepCardBridgeSessions.has(sessionKey)) return;   // 又被挂载 → 不清理
+				cleanupCompletedStepSession(sessionKey);
+			};
+			if (typeof Promise === "function") Promise.resolve().then(run);
+			else run();
 		}
 		/** 字符串 → 32 位种子（FNV-1a）。 */
 		function faceSeedOf(text) {
@@ -975,15 +1015,35 @@ window.__ModuleLoader__.load({
 			}
 			return rules.join("\n");
 		}
-		/** 把逐组覆盖规则写进专属样式元素（幂等：内容不变不写）。 */
+		/** 更新某个 session 的逐组规则块（幂等：内容不变不写）。规则按 session 分块，
+		 *  合并后写进同一张样式表——多个 session 短暂共存时不会互相覆盖。 */
 		function writeStepCardRules(map, sessionId) {
 			try {
 				if (!stepCardStyleEl) return;
-				var css = buildStepCardRulesCss(map, sessionId);
-				if (css === stepCardRulesCache) return;
-				stepCardRulesCache = css;
-				stepCardStyleEl.textContent = css;
+				var sessionKey = sessionKeyOf(sessionId);
+				var css = map ? buildStepCardRulesCss(map, sessionId) : "";
+				if ((stepCardRulesBySession.get(sessionKey) || "") === css) return;
+				stepCardRulesBySession.set(sessionKey, css);
+				writeStepCardRulesMerged();
 			} catch (e) { /* 视觉增强可以坏，官方折叠不受影响 */ }
+		}
+		/** 把各 session 的规则块按首次出现顺序合并写入样式元素（内容不变不写）。 */
+		function writeStepCardRulesMerged() {
+			try {
+				if (!stepCardStyleEl) return;
+				var parts = [];
+				stepCardRulesBySession.forEach(function (chunk) { if (chunk) parts.push(chunk); });
+				var merged = parts.join("\n");
+				if (merged === stepCardRulesCache) return;
+				stepCardRulesCache = merged;
+				stepCardStyleEl.textContent = merged;
+			} catch (e) { /* 同上 */ }
+		}
+		/** 某个 session 完全卸载：只撤下它自己的规则块（其它 session 不受影响）。 */
+		function clearStepCardRulesForSession(sessionKey) {
+			if (!stepCardRulesBySession.has(sessionKey)) return;
+			stepCardRulesBySession.delete(sessionKey);
+			writeStepCardRulesMerged();
 		}
 		/** 官方会话快照 → 分组读端（身份稳定；数据更新不改变它，只改 entries/组快照）。 */
 		function selectChatGroupedView(snapshot) {
@@ -997,23 +1057,89 @@ window.__ModuleLoader__.load({
 			var grouped = selectChatGroupedView(snapshot);
 			return grouped ? grouped.entries : undefined;
 		}
-		/** 牌数桥 leader 判定：宿主里每个回合都有一个 turn-process 条目，但桥只需要一个
-		 *  订阅者（会话级）。第一个挂载的实例当 leader；leader 卸载 = 清空规则（回落
-		 *  5 张安全态），下一个挂载的实例接手。其余实例零订阅、零渲染。 */
-		function useStepCardBridgeLeader() {
+		// ---- 牌数桥 leader registry（per-session；mounted registry + 立即 promotion） ----
+		// 语义（不变量）：只要某个 session 还有 ≥1 个已挂载的 StepCardRulesBridge，
+		// 该 session 就必须恰好有 1 个 leader；leader 卸载 → 从**同一 session** 仍挂载的
+		// 实例里立即晋升一个（不依赖"下次新组件 mount"）。
+		// 实现只用 React mount/unmount registry：没有任何 DOM 查询或轮询（架构守卫）。
+		// per-session 而不是全局单 leader：官方 UI 的主会话是单个（retainedBy.mainView），
+		// 但 replaceMain 是"先 retain 新会话、再 release 旧会话"，结构上允许两份会话树在
+		// 同一个 commit 里短暂共存（子代理视图同理）——按 session 分治后，跨 session 不会
+		// 互相顶掉 leader，也不会让 A 的卸载影响 B。
+		// 规则按 session 分块存进同一张样式表（多个 session 共存时不互相覆盖）。
+		var stepCardBridgeSessions = new Map();  // "<sessionKey>" → { instances: Map<id, {id, onLeader}>, leaderId }
+		var stepCardBridgeSeq = 0;
+		var stepCardRulesBySession = new Map();  // "<sessionKey>" → 该 session 的规则块
+		var stepCardPendingCleanup = {};         // "<sessionKey>" → true（微任务里确认后再清）
+		/** 注册一个已挂载的 bridge 实例；若该 session 还没有 leader → 立即晋升它。 */
+		function registerStepCardBridge(sessionKey, instance) {
+			var session = stepCardBridgeSessions.get(sessionKey);
+			if (!session) {
+				session = { instances: new Map(), leaderId: null };
+				stepCardBridgeSessions.set(sessionKey, session);
+			}
+			if (session.instances.has(instance.id)) return;   // 幂等（StrictMode effect replay）
+			session.instances.set(instance.id, instance);
+			delete stepCardPendingCleanup[sessionKey];        // 同 commit 内重挂载 → 取消待清理
+			promoteStepCardLeader(sessionKey);
+		}
+		/** 选一个仍挂载的实例当 leader（幂等：已有合法 leader 时不动）。 */
+		function promoteStepCardLeader(sessionKey) {
+			var session = stepCardBridgeSessions.get(sessionKey);
+			if (!session) return null;
+			if (session.leaderId !== null && session.instances.has(session.leaderId)) return session.leaderId;
+			session.leaderId = null;
+			var iterator = session.instances.keys().next();
+			if (iterator.done) return null;
+			session.leaderId = iterator.value;
+			var instance = session.instances.get(session.leaderId);
+			try { instance.onLeader(true); } catch (e) { /* 单个实例的通知失败不影响其它实例 */ }
+			return session.leaderId;
+		}
+		/** 注销一个实例：leader 走了就立即接棒；该 session 真的空了才清规则 + 清展示层缓存。 */
+		function unregisterStepCardBridge(sessionKey, instance) {
+			var session = stepCardBridgeSessions.get(sessionKey);
+			if (!session) return;
+			if (!session.instances.has(instance.id)) return;  // 幂等
+			session.instances.delete(instance.id);
+			instance.onLeader = function () {};               // 不留悬挂的 React setter
+			if (session.leaderId === instance.id) {
+				session.leaderId = null;
+				if (session.instances.size > 0) promoteStepCardLeader(sessionKey);  // 立即接棒，规则不动
+			}
+			if (session.instances.size > 0) return;
+			stepCardBridgeSessions.delete(sessionKey);
+			clearStepCardRulesForSession(sessionKey);
+			scheduleCompletedStepSessionCleanup(sessionKey);
+		}
+		/** 某个 session 已挂载的 bridge 实例数（诊断/测试）。 */
+		function getStepCardBridgeInstanceCount(sessionId) {
+			var session = stepCardBridgeSessions.get(sessionKeyOf(sessionId));
+			return session ? session.instances.size : 0;
+		}
+		/** 某个 session 当前是否有 leader（诊断/测试；恒为 0 或 1）。 */
+		function getStepCardBridgeLeaderCount(sessionId) {
+			var session = stepCardBridgeSessions.get(sessionKeyOf(sessionId));
+			if (!session || session.leaderId === null) return 0;
+			return session.instances.has(session.leaderId) ? 1 : 0;
+		}
+		/** 当前有 bridge 挂载的 session 数（诊断/测试）。 */
+		function getStepCardBridgeSessionCount() {
+			return stepCardBridgeSessions.size;
+		}
+		/** 牌数桥 leader 判定：注册进 per-session registry，首个实例立即成为 leader；
+		 *  leader 卸载时由 registry 立即晋升下一个已挂载实例（无需新组件 mount）。 */
+		function useStepCardBridgeLeader(sessionId, enabled) {
 			var pair = react.useState(false);
 			var isLeader = pair[0], setIsLeader = pair[1];
+			var sessionKey = sessionKeyOf(sessionId);
+			var active = enabled === true;
 			react.useEffect(function () {
-				if (stepCardLeaderToken !== null) return undefined;
-				var token = {};
-				stepCardLeaderToken = token;
-				setIsLeader(true);
-				return function () {
-					if (stepCardLeaderToken !== token) return;
-					stepCardLeaderToken = null;
-					writeStepCardRules(null);
-				};
-			}, []);
+				if (!active) return undefined;
+				var instance = { id: ++stepCardBridgeSeq, onLeader: function (next) { setIsLeader(next); } };
+				registerStepCardBridge(sessionKey, instance);
+				return function () { unregisterStepCardBridge(sessionKey, instance); };
+			}, [sessionKey, active]);
 			return isLeader;
 		}
 		/** 一个 group key → 官方组快照 → 牌数（uSES 订阅官方 groupSource；source 身份稳定）。 */
@@ -1081,8 +1207,11 @@ window.__ModuleLoader__.load({
 		 *  → 默认 5 张固定牌面（安全 fallback）。sessionId 用于把 completed 组的
 		 *  顶牌 bag 按会话隔离（最小 prop 透传，不动 Fold 状态）。 */
 		function StepCardRulesBridge(props) {
-			var isLeader = useStepCardBridgeLeader();
-			if (!isLeader || typeof props.useConversation !== "function") return null;
+			var hasConversation = typeof props.useConversation === "function";
+			// Hook 无条件调用（Rules of Hooks）；没有 useConversation 的旧宿主不注册 leader
+			// —— 避免"占着 leader 却写不出规则"把同 session 的其它实例挡在门外。
+			var isLeader = useStepCardBridgeLeader(props.sessionId, hasConversation);
+			if (!isLeader || !hasConversation) return null;
 			return react.createElement(StepCardRuleWriter, {
 				useConversation: props.useConversation,
 				sessionId: props.sessionId

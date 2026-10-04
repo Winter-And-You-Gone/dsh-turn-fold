@@ -148,8 +148,11 @@ describe('Step 牌面 D/E/F：稳定性与隔离', () => {
     const before = T.completedStepTopBags.size
     const topA = T.completedStepTopFace('iso-session-A', 'same-group')
     const topB = T.completedStepTopFace('iso-session-B', 'same-group')
-    assert.ok(T.completedStepTopFaces.has('iso-session-A|group:same-group'), 'A 的记录 key 含 session')
-    assert.ok(T.completedStepTopFaces.has('iso-session-B|group:same-group'), 'B 的记录 key 含 session')
+    const bucketA = T.completedStepTopFaces.get('iso-session-A')
+    const bucketB = T.completedStepTopFaces.get('iso-session-B')
+    assert.ok(bucketA && bucketA.has('same-group'), 'A 的记录在 A 自己的 session bucket 里')
+    assert.ok(bucketB && bucketB.has('same-group'), 'B 的记录在 B 自己的 session bucket 里')
+    assert.notEqual(bucketA, bucketB, '两个 session 的 bucket 对象不同')
     assert.equal(T.completedStepTopBags.size, before + 2, '每 session 一个独立 bag')
     assert.notEqual(T.completedStepTopBags.get('iso-session-A'), T.completedStepTopBags.get('iso-session-B'), 'bag 对象不同')
     // 两个 session 各自消费 5 个组 → 各自一批完整（互不消耗对方余量）
