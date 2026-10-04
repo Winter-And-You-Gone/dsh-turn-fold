@@ -21,9 +21,12 @@
    （`data-step-process-icon` / `data-process-activity`）做一层**纯 CSS** 的扑克牌换装，
    花色按官方活动类型语义映射（♥ 思考/提问 · ♠ 读取/搜索 · ♦ 编辑/写入 · ♣ 命令/代码 ·
    🐋鲸鱼 编排/计划/子代理）。软依赖：钩子失效时皮消失、官方图标与折叠原样保留；
-4. **真实指标承诺**：全部数值来自官方真实数据（`TurnLocation.start/end`、step 的
-   `usage` 与 `finalNode.timing`、turn-tail 的官方聚合 `tokenUsage`）。**没有伪造增长**——
-   旧版的 +1/+11 动画偏移已删除：真实数据变化时数字才滚动，真实数据不变时数字不变；
+4. **真实指标承诺**：**所有统计计算完全使用官方真实数据**（`TurnLocation.start/end`、step 的
+   `usage` 与 `finalNode.timing`、turn-tail 的官方聚合 `tokenUsage`）。运行中的 token 字段
+   额外提供 **presentation-only 的视觉增长动画**，用来填补官方 usage 离散上报之间的静止
+   间隙：该偏移不参与 tok/s、缓存命中、TTFT、durable projection，也不被持久化；
+   真实 usage 更新时立即校准（界面直接跳到新真实值再继续缓慢增长），Turn 完成后
+   最终值始终等于官方真实 token（settle 即归零）；
 5. **插件设置**：回合栏字段显隐（耗时/首字/Token/tok/s/缓存命中）+ **统一折叠栏图标模式**
    `iconStyle`（动态扑克牌 / 官方图标，一个设置同时管 Turn 与 Step），持久化到
    `localStorage['dsh-turn-fold:settings']`。**与官方 transcriptView 完全解耦**——
@@ -60,7 +63,9 @@
 
 - **字段槽位始终存在**：设置里启用的字段从 0 秒起就占位（无真实数据显示 `—`），
   真实数据到达只替换 `—`、完成瞬间不新增字段段；关闭的字段整段消失（连 `—` 也不显示）。
-  全部数值均为官方真实数据，**绝不伪造**（没有估算 token、假增长；无数据 = `—`）。
+  全部数值均为官方真实数据，**绝不伪造**（没有估算、无数据 = `—`）。运行中显示的
+  token 数字 = 官方真实值 + 受限的 presentation-only 视觉偏移（见下「真实数据层 / 展示层」），
+  读屏文本（sr-only）始终是官方真实值。
 - **指标来源（全部官方真实数据）**：
   - 耗时：`TurnLocation.start.time → end.time`（运行中用实时时钟补足）；
   - 首字（TTFT）：**durable 优先**——插件自己的官方 projection `turnFoldMetrics`
@@ -90,6 +95,21 @@
   RELOAD / HISTORY 四条路径数据来源一致。旧宿主没有该服务时整个注册跳过，前端自动回落到
   客户端 step 数据（退化 = 重载后这两个字段为 `—`，不伪造）。每回合只存 3 个数字，
   上限 2000 回合（超出后最旧回合降级为 `—`）。
+- **真实数据层 / 展示层（运行中 token）**：
+  - `canonicalTokens`（真实数据层）= `computeTurnMetrics` 的 `tokens`（官方 usage / turn-tail 聚合），
+    是唯一权威值，参与 tok/s、缓存命中、TTFT 与 durable projection；
+  - `displayTokens`（展示层）= `canonicalTokens` + 小的、有上限的 **视觉偏移**，只用于运行中 UI：
+    偏移存在组件本地 ref（不写 localStorage / 不写 projection / 不写任何 node data），
+    不参与任何统计；
+  - **只在模型真的在流式生成 assistant 输出时增长**（官方 `assistant-step.status === 'running'`）：
+    工具执行、等待结果/审批/子代理等阶段该 step 已 settle，数字**冻结**不动；
+  - 节奏固定且确定性：**每 200ms 一个 UI tick**，步长序列 `+1, +1, +10` 循环（无随机 jitter）；
+  - 偏移上限 `min(500, max(20, canonicalTokens × 5%))`（例：1,000 → +50；10,000 → +500；
+    100,000 → +500），到顶即停，等下一次真实 usage；
+  - **官方 usage 更新 → 偏移归零**：界面下一帧直接等于新真实值（绝不从旧展示值慢慢滚过去），
+    再从新基线继续缓慢增长；**Turn settle → 偏移归零**，历史会话 / 刷新页面只显示官方真实值；
+  - 系统「减少动态效果」时不做视觉增长，直接显示真实值；此时读屏文本仍是真实值；
+    正常模式下视觉数字滚动、sr-only 文本同样保持 canonical（读屏永远拿到真实值）。
 - **滚轮数字动画**：运行中数值变化时逐位滚动（里程表效果，回弹缓动）；完整文案有
   sr-only 副本（读屏无障碍）；系统「减少动态效果」时自动退化为静态数字。
 - **回合栏下常驻分隔线**（`--dsw-alias-line-secondary` token 链式回退，随主题适配）。
@@ -233,7 +253,7 @@ npm run check      # 语法检查 client.js / index.js
 | `unit.css.test.mjs` | Step 皮总闸（`body[data-tf-step-skin]`）与官方 DOM 钩子规则；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
 | `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫） |
 | `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零**；官方四档 transcript 模式渲染兼容 |
-| `regression.test.mjs` | 历史回归：直播时钟空转定时器、**禁止假 token 增长（真实数据不变 → 数字不变）**、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
+| `regression.test.mjs` | 历史回归：直播时钟空转定时器、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
 
 > 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
 > `npm test` 中内置）；普通 Linux/macOS CI 同样可用该参数（Node ≥ 22.9）。

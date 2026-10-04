@@ -1173,6 +1173,118 @@ window.__ModuleLoader__.load({
 			return active ? Date.now() : undefined;
 		}
 
+		/** 只把 tokens 槽位换成 displayTokens（presentation-only 展示值）；
+		 *  duration / ttft / tok-s / 缓存等其余字段一律保持 canonical（绝不参与换算）。 */
+		function withDisplayTokens(filtered, running, displayTokens) {
+			if (!running || !filtered || displayTokens === undefined || filtered.tokens === undefined) return filtered;
+			return Object.assign({}, filtered, { tokens: displayTokens });
+		}
+		// ---- 运行中 token 视觉增长（presentation-only；绝不进入任何真实统计） ----
+		// 真实数据层（canonicalTokens = computeTurnMetrics 的 tokens / TTFT / tok-s / 缓存 /
+		// durable projection）保持 100% 真实；本段只提供一个小的、有上限的**展示偏移**，
+		// 用于填补官方 usage 离散上报之间的静止间隙（"正在输出"的连续观感）。
+		//   displayTokens = canonicalTokens + visualTokenOffset
+		// 偏移只在「Turn 运行中 && 模型正在流式生成 assistant 输出」时增长：
+		//   · 不持久化（不写 localStorage / 不写 projection / 不写任何 node data）
+		//   · 不参与 tok/s、缓存命中、TTFT、decode 统计
+		//   · 官方 usage 更新 → 偏移归零（display 立即等于新 canonical）后重新增长
+		//   · Turn settle → 偏移归零（历史会话 / F5 只可能看到 canonical）
+		var visualTokenTickMs = 200;
+		var visualTokenListeners = new Set();
+		var visualTokenTick = 0;
+		var visualTokenTimer = null;
+		/** 推进一次视觉 tick（有订阅者时才由定时器调用；测试可直接调用以确定性推进）。 */
+		function notifyVisualTokenTick() {
+			visualTokenTick++;
+			var fns = [];
+			visualTokenListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) {
+				try { fns[i](); } catch (e) { /* 单个订阅者抛错不带走 ticker */ }
+			}
+		}
+		/** 订阅 200ms 视觉 tick；首个订阅者起表、最后一个退订停表（不空转）。 */
+		function subscribeVisualTokenTicks(fn) {
+			visualTokenListeners.add(fn);
+			if (visualTokenTimer === null) visualTokenTimer = setInterval(notifyVisualTokenTick, visualTokenTickMs);
+			return function () {
+				visualTokenListeners.delete(fn);
+				if (visualTokenListeners.size === 0 && visualTokenTimer !== null) {
+					clearInterval(visualTokenTimer);
+					visualTokenTimer = null;
+				}
+			};
+		}
+		function getVisualTokenTick() { return visualTokenTick; }
+		/** 视觉偏移上限：小回合至少几十 token 的运动空间，大回合最多真实值的 5%，绝对上限 500。
+		 *  例：canonical 1,000 → 50；10,000 → 500；100,000 → 500。 */
+		function visualTokenCap(canonicalTokens) {
+			if (typeof canonicalTokens !== "number" || !isFinite(canonicalTokens) || canonicalTokens <= 0) return 0;
+			return Math.min(500, Math.max(20, Math.floor(canonicalTokens * 0.05)));
+		}
+		/** 确定性步长序列（无随机、无 jitter）：每 3 tick 中前两个 +1、第三个 +10。 */
+		function visualTokenStepForTick(n) { return n % 3 === 0 ? 10 : 1; }
+		/** 前 n 个增长 tick 的累计偏移（闭式：每 3 tick 共 +12），可测试、可复现。 */
+		function visualTokenOffsetForTicks(n) {
+			if (!(n > 0)) return 0;
+			var full = Math.floor(n / 3), rem = n % 3;
+			return full * 12 + (rem >= 1 ? 1 : 0) + (rem >= 2 ? 1 : 0);
+		}
+		/** 模型此刻是否真的在流式生成 assistant 输出：官方 assistant-step.status === "running"。
+		 *  官方 step = 一次模型调用 + 它请求的工具执行——工具执行 / 等待结果 / 等待审批 /
+		 *  等待 subagent 期间该 step 已 settle（或尚无新 step），因此自然暂停增长。
+		 *  不猜 DOM、不扫文本、不看 shimmer。 */
+		function assistantGenerationActive(stepDataList) {
+			if (!Array.isArray(stepDataList)) return false;
+			for (var i = 0; i < stepDataList.length; i++) {
+				var sd = stepDataList[i];
+				if (sd && sd.status === "running") return true;
+			}
+			return false;
+		}
+		/** reduced-motion：持续变化的数字本身就是动态效果，直接显示真实值。 */
+		function prefersReducedMotion() {
+			try {
+				return typeof window !== "undefined" && typeof window.matchMedia === "function"
+					&& window.matchMedia("(prefers-reduced-motion: reduce)").matches === true;
+			} catch (e) { return false; }
+		}
+		/** Running Turn 的展示 token（canonical + 受限视觉偏移）。
+		 *  返回 undefined 表示没有真实基线（UI 保持 "— token"，绝不从 0 伪增）。
+		 *  偏移是组件本地的 presentation state（useRef），不外出、不持久化。 */
+		function useDisplayTokenAnimation(running, canonicalTokens, generationActive) {
+			var tick = useSyncExternalStore(subscribeVisualTokenTicks, getVisualTokenTick);
+			// 初始 tick 锚定在挂载时的全局 tick：新挂载的栏不得把此前累计的 tick 一次性算成增长
+			var stateRef = react.useRef({ canonical: undefined, tick: getVisualTokenTick(), grown: 0, offset: 0 });
+			var hasCanonical = typeof canonicalTokens === "number" && isFinite(canonicalTokens);
+			var state = stateRef.current;
+			if (!running || !hasCanonical) {
+				// settle / 无真实基线：偏移彻底归零（历史会话与 F5 只可能看到 canonical）
+				state.canonical = canonicalTokens;
+				state.tick = tick;
+				state.grown = 0;
+				state.offset = 0;
+				return hasCanonical ? canonicalTokens : undefined;
+			}
+			if (state.canonical !== canonicalTokens) {
+				// 官方 usage 更新：权威值立刻接管基线，偏移归零，增长时钟从这一 tick 重新起算
+				state.canonical = canonicalTokens;
+				state.grown = 0;
+				state.offset = 0;
+				state.tick = tick;
+			}
+			var active = generationActive === true && canonicalTokens > 0 && !prefersReducedMotion();
+			var steps = tick > state.tick ? tick - state.tick : 0;
+			if (active && steps > 0) {
+				var cap = visualTokenCap(canonicalTokens);
+				var grown = state.grown + steps;
+				state.offset = Math.min(cap, state.offset + (visualTokenOffsetForTicks(grown) - visualTokenOffsetForTicks(state.grown)));
+				state.grown = grown;
+			}
+			// 非 active（工具执行 / 等待 / reduced-motion）：冻结当前偏移不增长；
+			// tick 指针照常推进，恢复生成时从当前偏移继续。
+			state.tick = tick;
+			return canonicalTokens + state.offset;
+		}
 		// ---- 回合性能指标（全部来自官方真实数据） ----
 		/** 缓存命中率：固定两位小数（如 "66.67"、"99.99"、"100.00"）；无可计费输入返回 null。 */
 		function cacheHitPercent(uncachedInputTokens, cacheReadTokens, cacheWriteTokens) {
@@ -1851,7 +1963,7 @@ window.__ModuleLoader__.load({
 			return react.createElement(
 				"span",
 				{ className: "ccg-roll-label" },
-				react.createElement("span", { className: "ccg-sr-only" }, label),
+				react.createElement("span", { className: "ccg-sr-only" }, typeof props.srLabel === "string" ? props.srLabel : label),
 				kids
 			);
 		}
@@ -1914,7 +2026,7 @@ window.__ModuleLoader__.load({
 					if (s.open && s.openerId === uid) setPopupOpen(false, uid);
 				};
 			}, []);
-			var titleContent = running ? react.createElement(AnimatedLabel, { label: label }) : label;
+			var titleContent = running ? react.createElement(AnimatedLabel, { label: label, srLabel: props.srLabel }) : label;
 			var kids = [];
 			if (poker) kids.push(poker);
 			if (statusText) {
@@ -2304,6 +2416,15 @@ window.__ModuleLoader__.load({
 			// 生成视觉选择器（见 buildStepCardRulesCss）。
 			var cardBridge = react.createElement(StepCardRulesBridge, { useConversation: props.useConversation });
 			var liveNow = useLiveNow(running);
+			// 指标 + 运行中展示 token：全部在条件 return 之前（useDisplayTokenAnimation 无条件订阅）。
+			// canonical（真实数据层）与 display（presentation-only）在这里分岔，之后只交换 tokens 槽位。
+			var metrics = computeTurnMetrics(clock, stepDataList, tail, running ? liveNow : undefined, durableTurn, props.sessionId);
+			var filtered = filterVisibleMetrics(metrics);
+			var generationActive = running && assistantGenerationActive(stepDataList);
+			var displayTokens = useDisplayTokenAnimation(running, metrics ? metrics.tokens : undefined, generationActive);
+			var canonicalLabel = turnHeaderLabel(filtered);
+			var label = turnHeaderLabel(withDisplayTokens(filtered, running, displayTokens));
+			var round = turnRoundLabel(clock ? clock.number : (node && node.data ? node.data.turn : undefined));
 			if (!clock) {
 				// 无法定位回合（异常数据）：渲染最小占位栏（仅官方 data 字段），不可折叠。
 				var data = node && node.data;
@@ -2317,10 +2438,6 @@ window.__ModuleLoader__.load({
 					cardBridge
 				);
 			}
-			var metrics = computeTurnMetrics(clock, stepDataList, tail, running ? liveNow : undefined, durableTurn, props.sessionId);
-			var filtered = filterVisibleMetrics(metrics);
-			var label = turnHeaderLabel(filtered);
-			var round = turnRoundLabel(clock.number);
 			if (running) {
 				// 运行中：状态表面（非交互）。无 Fold 状态、不隐藏任何成员、
 				// 不调用任何 setOpen——官方 liveProcess 阶段成员本来就展开显示。
@@ -2330,6 +2447,7 @@ window.__ModuleLoader__.load({
 						running: true,
 						turnNumber: clock.number,
 						label: label || (currentLocale() === "zh" ? "0秒" : "0s"),
+						srLabel: canonicalLabel || (currentLocale() === "zh" ? "0秒" : "0s"),
 						poker: turnPokerIcon(iconStyle, cardCountRunning, true, false, clock.number, false),
 						round: round
 					}),

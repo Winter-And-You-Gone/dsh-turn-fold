@@ -473,8 +473,14 @@ describe('Step 牌数 E：只读视觉桥', () => {
   it('官方数据路径契约：只读 views.grouped("chat")（不重建 group store、不复制分组算法）', async () => {
     const src = await import('node:fs').then((fs) => fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8'))
     assert.ok(src.includes('snapshot.views.grouped("chat")'), '必须走官方 ConversationViewSnapshotStore.grouped')
+    // 守卫只针对**桥自身的代码段**：桥是纯数据订阅→视觉选择器，禁止任何 DOM 轮询/定时扫描。
+    // （源码其它部分另有合法的 200ms 视觉 tick / 1s 秒表时钟，不属于桥。）
+    const start = src.indexOf('// ---- Step 牌数桥（官方 group snapshot')
+    const end = src.indexOf('// ---- 注入样式（记录在案的软兼容点） ----')
+    assert.ok(start > 0 && end > start, '桥代码段可定位')
+    const bridge = src.slice(start, end)
     for (const banned of ['MutationObserver', 'querySelectorAll("[data-chat-call-id]', 'setInterval(', 'requestAnimationFrame(']) {
-      assert.ok(!src.includes(banned), '桥不得使用 ' + banned)
+      assert.ok(!bridge.includes(banned), '桥不得使用 ' + banned)
     }
   })
 })
