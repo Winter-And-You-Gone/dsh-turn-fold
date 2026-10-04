@@ -1174,21 +1174,26 @@ window.__ModuleLoader__.load({
 		}
 
 		/** 只把 tokens 槽位换成 displayTokens（presentation-only 展示值）；
-		 *  duration / ttft / tok-s / 缓存等其余字段一律保持 canonical（绝不参与换算）。 */
+		 *  duration / ttft / tok-s / 缓存等其余字段一律保持 canonical（绝不参与换算）。
+		 *  槽位区分：**不存在** = 用户关闭了 Token 字段（绝不因动画加回）；
+		 *  **存在但为 undefined** = 字段已启用、真实值未到（允许用展示值填充）。 */
 		function withDisplayTokens(filtered, running, displayTokens) {
-			if (!running || !filtered || displayTokens === undefined || filtered.tokens === undefined) return filtered;
+			if (!running || !filtered || displayTokens === undefined
+				|| !Object.prototype.hasOwnProperty.call(filtered, "tokens")) return filtered;
 			return Object.assign({}, filtered, { tokens: displayTokens });
 		}
 		// ---- 运行中 token 视觉增长（presentation-only；绝不进入任何真实统计） ----
 		// 真实数据层（canonicalTokens = computeTurnMetrics 的 tokens / TTFT / tok-s / 缓存 /
-		// durable projection）保持 100% 真实；本段只提供一个小的、有上限的**展示偏移**，
-		// 用于填补官方 usage 离散上报之间的静止间隙（"正在输出"的连续观感）。
-		//   displayTokens = canonicalTokens + visualTokenOffset
-		// 偏移只在「Turn 运行中 && 模型正在流式生成 assistant 输出」时增长：
+		// durable projection）保持 100% 真实；本段只提供一个小的、有上限的**展示值**，
+		// 用于填补官方 usage 离散上报之间的静止间隙（"正在输出"的连续观感）：
+		//   有 canonical：display = canonical + visualTokenOffset（≤ min(500, max(20, 5%))）
+		//   无 canonical：display = bootstrap 计数（1 起步、≤ 500）——仅在 running 的
+		//                 assistant-step 已出现可见 text/reasoning 时启动（官方 blockIsVisible 语义）
 		//   · 不持久化（不写 localStorage / 不写 projection / 不写任何 node data）
-		//   · 不参与 tok/s、缓存命中、TTFT、decode 统计
-		//   · 官方 usage 更新 → 偏移归零（display 立即等于新 canonical）后重新增长
-		//   · Turn settle → 偏移归零（历史会话 / F5 只可能看到 canonical）
+		//   · 不参与 tok/s、缓存命中、TTFT、decode 统计；读屏值恒为 canonical
+		//   · 官方 usage 更新 → bootstrap/偏移归零（display 下一帧立即等于新 canonical）
+		//   · Turn settle → 全部归零（历史会话 / F5 只可能看到 canonical）
+		//   · 只在真正动画（running + 可见输出 + 未 reduced-motion + 字段开启）时订阅 ticker
 		var visualTokenTickMs = 200;
 		var visualTokenListeners = new Set();
 		var visualTokenTick = 0;
@@ -1215,8 +1220,12 @@ window.__ModuleLoader__.load({
 			};
 		}
 		function getVisualTokenTick() { return visualTokenTick; }
-		/** 视觉偏移上限：小回合至少几十 token 的运动空间，大回合最多真实值的 5%，绝对上限 500。
-		 *  例：canonical 1,000 → 50；10,000 → 500；100,000 → 500。 */
+		/** 诊断（仅测试/验收）：0 订阅者 + 定时器已停 = 页面没有任何视觉动画在跑。 */
+		function getVisualTokenListenerCount() { return visualTokenListeners.size; }
+		function isVisualTokenTimerRunning() { return visualTokenTimer !== null; }
+		/** 视觉偏移上限（canonical 已到达时）：小回合至少几十 token 的运动空间，
+		 *  大回合最多真实值的 5%，绝对上限 500。例：1,000 → 50；10,000 → 500；100,000 → 500。
+		 *  无 canonical 的 bootstrap 阶段用独立上限 visualTokenBootstrapCap。 */
 		function visualTokenCap(canonicalTokens) {
 			if (typeof canonicalTokens !== "number" || !isFinite(canonicalTokens) || canonicalTokens <= 0) return 0;
 			return Math.min(500, Math.max(20, Math.floor(canonicalTokens * 0.05)));
@@ -1229,61 +1238,123 @@ window.__ModuleLoader__.load({
 			var full = Math.floor(n / 3), rem = n % 3;
 			return full * 12 + (rem >= 1 ? 1 : 0) + (rem >= 2 ? 1 : 0);
 		}
-		/** 模型此刻是否真的在流式生成 assistant 输出：官方 assistant-step.status === "running"。
-		 *  官方 step = 一次模型调用 + 它请求的工具执行——工具执行 / 等待结果 / 等待审批 /
-		 *  等待 subagent 期间该 step 已 settle（或尚无新 step），因此自然暂停增长。
-		 *  不猜 DOM、不扫文本、不看 shimmer。 */
-		function assistantGenerationActive(stepDataList) {
+		/** 无 canonical 阶段的 bootstrap 上限：官方 usage 迟迟不来也不会无限增长。 */
+		var visualTokenBootstrapCap = 500;
+		/** 无 canonical 时的 provisional 展示值：第 1 帧就是 1（不等 200ms），之后按
+		 *  +1/+1/+10 增长，封顶 500。这是观感计数、不是统计值——官方 usage 一到就被
+		 *  canonical 立即取代（校准不留残值）。 */
+		function visualTokenBootstrapValue(grownTicks) {
+			if (!(grownTicks > 0)) return 1;
+			return Math.min(visualTokenBootstrapCap, 1 + visualTokenOffsetForTicks(grownTicks));
+		}
+		/** 官方 assistant.ts blockIsVisible 的等价判定：tool-call / 空 block 不算可见；
+		 *  text / reasoning 需 trim() 非空；其它非 tool-call block 视为可见。 */
+		function assistantBlockVisible(block) {
+			if (!block || typeof block !== "object") return false;
+			if (block.kind === "tool-call") return false;
+			if (block.kind === "text" || block.kind === "reasoning") {
+				return typeof block.text === "string" && block.text.trim() !== "";
+			}
+			return true;
+		}
+		/** 模型此刻是否已在流式生成**可见**的 assistant 输出：只看 status === "running"
+		 *  的 assistant-step，且该 step 内已存在可见 block——历史 settled step 的旧文本
+		 *  一律不算（不能因为上一 step 有文字就启动）。
+		 *  工具执行 / 等待结果 / 等待审批 / 等待 subagent 期间没有 running 的 assistant-step
+		 *  （或它还没产出可见内容）→ false → 暂停增长。不猜 DOM、不扫文本、不看 shimmer。 */
+		function assistantVisibleGenerationActive(stepDataList) {
 			if (!Array.isArray(stepDataList)) return false;
 			for (var i = 0; i < stepDataList.length; i++) {
 				var sd = stepDataList[i];
-				if (sd && sd.status === "running") return true;
+				if (!sd || sd.status !== "running" || !Array.isArray(sd.blocks)) continue;
+				for (var j = 0; j < sd.blocks.length; j++) {
+					if (assistantBlockVisible(sd.blocks[j])) return true;
+				}
 			}
 			return false;
 		}
-		/** reduced-motion：持续变化的数字本身就是动态效果，直接显示真实值。 */
+		/** 只有 UI 数字确实可能在下一 tick 变化时才订阅 ticker：历史 / settled /
+		 *  工具执行 / 等待 / 尚无可见输出 / reduced-motion / Token 字段关闭 → 不订阅。 */
+		function visualTokenShouldSubscribe(running, visibleGeneration, fieldEnabled, reducedMotion) {
+			return running === true && visibleGeneration === true
+				&& fieldEnabled !== false && reducedMotion !== true;
+		}
+		/** reduced-motion 实时读数：持续变化的数字本身就是动态效果，直接显示真实值。 */
 		function prefersReducedMotion() {
 			try {
 				return typeof window !== "undefined" && typeof window.matchMedia === "function"
 					&& window.matchMedia("(prefers-reduced-motion: reduce)").matches === true;
 			} catch (e) { return false; }
 		}
-		/** Running Turn 的展示 token（canonical + 受限视觉偏移）。
-		 *  返回 undefined 表示没有真实基线（UI 保持 "— token"，绝不从 0 伪增）。
-		 *  偏移是组件本地的 presentation state（useRef），不外出、不持久化。 */
-		function useDisplayTokenAnimation(running, canonicalTokens, generationActive) {
-			var tick = useSyncExternalStore(subscribeVisualTokenTicks, getVisualTokenTick);
+		/** 订阅 reduced-motion 媒体查询：用户在会话中途切换 → 组件重渲染 → 立即归
+		 *  canonical/— 并退订视觉 ticker（不靠"下一次 tick 碰巧修正"）。 */
+		function subscribeReducedMotion(fn) {
+			var mq = null;
+			try {
+				mq = typeof window !== "undefined" && typeof window.matchMedia === "function"
+					? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+			} catch (e) { mq = null; }
+			if (!mq || typeof mq.addEventListener !== "function") return subscribeNothing();
+			mq.addEventListener("change", fn);
+			return function () {
+				try { if (typeof mq.removeEventListener === "function") mq.removeEventListener("change", fn); }
+				catch (e) { /* 环境差异：退订失败不影响正确性 */ }
+			};
+		}
+		function usePrefersReducedMotion() {
+			return useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion);
+		}
+		/** Running Turn 的展示 token（presentation-only）：
+		 *   · 有 canonical → canonical + 受限视觉偏移；
+		 *   · 无 canonical、但 running 的 assistant-step 已有可见输出 → bootstrap 计数
+		 *     （第 1 帧 1，之后 +1/+1/+10，封顶 500）；
+		 *   · 其余情况 → undefined（UI 保持 "— token"）。
+		 *  返回值只进 UI 的 tokens 槽位；canonical 与其它指标一律不受影响。
+		 *  全部状态都是组件本地 ref（不外出、不持久化、settle 必归零）。 */
+		function useDisplayTokenAnimation(running, canonicalTokens, visibleGeneration, fieldEnabled) {
+			var reduced = usePrefersReducedMotion();
+			// Hook 无条件调用；只切换订阅函数（Rules of Hooks）——历史 / settled / 工具 /
+			// reduced-motion 一律不订阅，没有活动动画时 module 级 ticker 彻底停表。
+			var growing = visualTokenShouldSubscribe(running, visibleGeneration, fieldEnabled, reduced);
+			var tick = useSyncExternalStore(growing ? subscribeVisualTokenTicks : subscribeNothing, getVisualTokenTick);
 			// 初始 tick 锚定在挂载时的全局 tick：新挂载的栏不得把此前累计的 tick 一次性算成增长
-			var stateRef = react.useRef({ canonical: undefined, tick: getVisualTokenTick(), grown: 0, offset: 0 });
-			var hasCanonical = typeof canonicalTokens === "number" && isFinite(canonicalTokens);
+			var stateRef = react.useRef({ canonical: undefined, tick: getVisualTokenTick(), grown: 0, offset: 0, bootstrap: 0, growing: false });
 			var state = stateRef.current;
-			if (!running || !hasCanonical) {
-				// settle / 无真实基线：偏移彻底归零（历史会话与 F5 只可能看到 canonical）
+			var hasCanonical = typeof canonicalTokens === "number" && isFinite(canonicalTokens);
+			// ① Turn 结束 / reduced-motion：展示层彻底归零（settle、历史、F5 只可能看到 canonical）
+			if (running !== true || reduced === true) {
 				state.canonical = canonicalTokens;
 				state.tick = tick;
 				state.grown = 0;
 				state.offset = 0;
+				state.bootstrap = 0;
+				state.growing = false;
 				return hasCanonical ? canonicalTokens : undefined;
 			}
+			// ② 官方 usage 首次到达 / 更新：立即校准——display 直接等于新真实值，绝不慢慢滚过去
 			if (state.canonical !== canonicalTokens) {
-				// 官方 usage 更新：权威值立刻接管基线，偏移归零，增长时钟从这一 tick 重新起算
 				state.canonical = canonicalTokens;
 				state.grown = 0;
 				state.offset = 0;
+				state.bootstrap = 0;
 				state.tick = tick;
 			}
-			var active = generationActive === true && canonicalTokens > 0 && !prefersReducedMotion();
+			// ③ 无 canonical：模型已开始可见输出 → 第一帧就从 1 起（不等 200ms）
+			if (!hasCanonical && growing && state.bootstrap === 0) state.bootstrap = 1;
+			// ④ 从「不增长」切到「增长」：重新锚定 tick——未启动 / 暂停（工具、等待）期间
+			//    流逝的 tick 一律不计入增长（退订期间根本没有重渲染，指针会停在旧值）。
+			if (growing && state.growing !== true) state.tick = tick;
+			state.growing = growing;
+			// ⑤ 只在真正生成中按 tick 增长；暂停期间不累计（恢复后从冻结值继续）
 			var steps = tick > state.tick ? tick - state.tick : 0;
-			if (active && steps > 0) {
-				var cap = visualTokenCap(canonicalTokens);
-				var grown = state.grown + steps;
-				state.offset = Math.min(cap, state.offset + (visualTokenOffsetForTicks(grown) - visualTokenOffsetForTicks(state.grown)));
-				state.grown = grown;
+			if (growing && steps > 0) {
+				state.grown += steps;
+				if (hasCanonical) state.offset = Math.min(visualTokenCap(canonicalTokens), visualTokenOffsetForTicks(state.grown));
+				else state.bootstrap = visualTokenBootstrapValue(state.grown);
 			}
-			// 非 active（工具执行 / 等待 / reduced-motion）：冻结当前偏移不增长；
-			// tick 指针照常推进，恢复生成时从当前偏移继续。
 			state.tick = tick;
-			return canonicalTokens + state.offset;
+			if (hasCanonical) return canonicalTokens + state.offset;
+			return state.bootstrap > 0 ? state.bootstrap : undefined;
 		}
 		// ---- 回合性能指标（全部来自官方真实数据） ----
 		/** 缓存命中率：固定两位小数（如 "66.67"、"99.99"、"100.00"）；无可计费输入返回 null。 */
@@ -1995,7 +2066,7 @@ window.__ModuleLoader__.load({
 		var turnBarSeq = 0;
 		// ---- Turn 栏（插件渲染器的 UI 核心） ----
 		// TurnBarView 是运行中（running）与结束态（closed）共用的单根视觉：
-		//   [扑克图标] [状态词?] [指标文案（运行中滚轮/结束静态）] ...... [第N轮] [箭头?] | [⚙]
+		//   [前导图标（扑克/native chevron）] [状态词?] [指标文案（运行中滚轮/结束静态）] ...... [第N轮] | [⚙]
 		// 兄弟交互结构：主按钮只负责 Fold toggle、齿轮 <button> 只负责设置——
 		// 不嵌套交互控件、不依赖 stopPropagation，Tab 次序 = 主按钮 → 齿轮。
 		// 折叠语义全部来自外部：canCollapse/open/onToggle 由 EnhancedTurnProcessView
@@ -2407,7 +2478,7 @@ window.__ModuleLoader__.load({
 			// TurnBarView 不得再自行 useIconStyle()：它的 canToggle 随回合生命周期
 			// 变化，条件调用 Hook 会让 hook 数量在 running→settled 之间变化
 			//（Rules of Hooks 违规，可能触发 "Rendered more hooks…"）。
-			useFieldVisibility();
+			var fieldVisibility = useFieldVisibility();
 			var iconStyle = useIconStyle();
 			// Step 牌数桥：会话级只读订阅者，由本渲染器承载（插件既有的官方挂载点；
 			// 每个回合挂一份，leader 选举保证只有一个真的订阅与写规则）。
@@ -2416,12 +2487,15 @@ window.__ModuleLoader__.load({
 			// 生成视觉选择器（见 buildStepCardRulesCss）。
 			var cardBridge = react.createElement(StepCardRulesBridge, { useConversation: props.useConversation });
 			var liveNow = useLiveNow(running);
-			// 指标 + 运行中展示 token：全部在条件 return 之前（useDisplayTokenAnimation 无条件订阅）。
+			// 指标 + 运行中展示 token：全部在条件 return 之前（两个 Hook 都无条件调用）。
 			// canonical（真实数据层）与 display（presentation-only）在这里分岔，之后只交换 tokens 槽位。
 			var metrics = computeTurnMetrics(clock, stepDataList, tail, running ? liveNow : undefined, durableTurn, props.sessionId);
 			var filtered = filterVisibleMetrics(metrics);
-			var generationActive = running && assistantGenerationActive(stepDataList);
-			var displayTokens = useDisplayTokenAnimation(running, metrics ? metrics.tokens : undefined, generationActive);
+			// 可见生成判定完全走官方 assistant-step 数据（running + 该 step 已有可见 block）；
+			// Token 字段关闭时连视觉 ticker 都不订阅（不产生任何无意义的 5Hz 重渲染）。
+			var visibleGeneration = running && assistantVisibleGenerationActive(stepDataList);
+			var displayTokens = useDisplayTokenAnimation(
+				running, metrics ? metrics.tokens : undefined, visibleGeneration, fieldVisibility.tokens !== false);
 			var canonicalLabel = turnHeaderLabel(filtered);
 			var label = turnHeaderLabel(withDisplayTokens(filtered, running, displayTokens));
 			var round = turnRoundLabel(clock ? clock.number : (node && node.data ? node.data.turn : undefined));

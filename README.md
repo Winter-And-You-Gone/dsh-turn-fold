@@ -23,10 +23,10 @@
    🐋鲸鱼 编排/计划/子代理）。软依赖：钩子失效时皮消失、官方图标与折叠原样保留；
 4. **真实指标承诺**：**所有统计计算完全使用官方真实数据**（`TurnLocation.start/end`、step 的
    `usage` 与 `finalNode.timing`、turn-tail 的官方聚合 `tokenUsage`）。运行中的 token 字段
-   额外提供 **presentation-only 的视觉增长动画**，用来填补官方 usage 离散上报之间的静止
-   间隙：该偏移不参与 tok/s、缓存命中、TTFT、durable projection，也不被持久化；
-   真实 usage 更新时立即校准（界面直接跳到新真实值再继续缓慢增长），Turn 完成后
-   最终值始终等于官方真实 token（settle 即归零）；
+   额外提供 **presentation-only 的视觉计数**，用来填补官方 usage 离散上报之间的静止间隙：
+   该值不参与 tok/s、缓存命中、TTFT、durable projection，也不被持久化；真实 usage 更新时
+   立即校准（界面直接跳到新真实值再继续缓慢增长），Turn 完成后最终值始终等于官方真实
+   token（settle 即归零）；
 5. **插件设置**：回合栏字段显隐（耗时/首字/Token/tok/s/缓存命中）+ **统一折叠栏图标模式**
    `iconStyle`（动态扑克牌 / 官方图标，一个设置同时管 Turn 与 Step），持久化到
    `localStorage['dsh-turn-fold:settings']`。**与官方 transcriptView 完全解耦**——
@@ -63,9 +63,10 @@
 
 - **字段槽位始终存在**：设置里启用的字段从 0 秒起就占位（无真实数据显示 `—`），
   真实数据到达只替换 `—`、完成瞬间不新增字段段；关闭的字段整段消失（连 `—` 也不显示）。
-  全部数值均为官方真实数据，**绝不伪造**（没有估算、无数据 = `—`）。运行中显示的
-  token 数字 = 官方真实值 + 受限的 presentation-only 视觉偏移（见下「真实数据层 / 展示层」），
-  读屏文本（sr-only）始终是官方真实值。
+  统计数值全部来自官方真实数据，**绝不伪造**（没有估算、无数据 = `—`）。运行中显示的
+  token 数字是 presentation-only 的展示值：有官方数据时 = 真实值 + 受限视觉偏移，官方
+  usage 还没首次上报时 = 独立的视觉计数（详见下「真实数据层 / 展示层」）；
+  读屏文本（sr-only）**始终**是官方真实值（真实值未到就是 `— token`）。
 - **指标来源（全部官方真实数据）**：
   - 耗时：`TurnLocation.start.time → end.time`（运行中用实时时钟补足）；
   - 首字（TTFT）：**durable 优先**——插件自己的官方 projection `turnFoldMetrics`
@@ -97,19 +98,32 @@
   上限 2000 回合（超出后最旧回合降级为 `—`）。
 - **真实数据层 / 展示层（运行中 token）**：
   - `canonicalTokens`（真实数据层）= `computeTurnMetrics` 的 `tokens`（官方 usage / turn-tail 聚合），
-    是唯一权威值，参与 tok/s、缓存命中、TTFT 与 durable projection；
-  - `displayTokens`（展示层）= `canonicalTokens` + 小的、有上限的 **视觉偏移**，只用于运行中 UI：
-    偏移存在组件本地 ref（不写 localStorage / 不写 projection / 不写任何 node data），
-    不参与任何统计；
-  - **只在模型真的在流式生成 assistant 输出时增长**（官方 `assistant-step.status === 'running'`）：
-    工具执行、等待结果/审批/子代理等阶段该 step 已 settle，数字**冻结**不动；
+    是唯一权威值，参与 tok/s、缓存命中、TTFT 与 durable projection；官方 usage 未到时它
+    **保持 `undefined`**，绝不由展示值回写；
+  - `displayTokens`（展示层），只用于运行中 UI，全部状态存在组件本地 ref
+    （不写 localStorage / 不写 projection / 不写任何 node data），不参与任何统计：
+    - **有 canonical**：`displayTokens = canonicalTokens + 视觉偏移`；
+    - **无 canonical（官方 usage 尚未首次上报）**：当 **running 的 assistant-step 已经出现
+      可见 reasoning/text**（官方 `blockIsVisible` 语义：tool-call / 空白文本不算）时，
+      token 槽启动 **presentation-only 视觉计数**——第 1 帧就是 `1`，之后按同一节奏增长，
+      独立封顶 **500**；该数值不是统计值，首次真实 usage 到达后**立即校准**到官方 token；
+      读屏文本在真实值到达前仍显示 `— token`；
+    - **提示**：刚发消息、模型还没有产出任何可见内容时不启动（不会自己从 0 开始跳）；
+  - **只在模型真的在流式生成可见 assistant 输出时增长**：工具执行、等待结果/审批/子代理、
+    等待期间该 step 已 settle（或尚无可见 block），数字**冻结**不动，也不会退回 `— token`
+    （避免 `137 → — → 数字` 的跳变）；
   - 节奏固定且确定性：**每 200ms 一个 UI tick**，步长序列 `+1, +1, +10` 循环（无随机 jitter）；
-  - 偏移上限 `min(500, max(20, canonicalTokens × 5%))`（例：1,000 → +50；10,000 → +500；
-    100,000 → +500），到顶即停，等下一次真实 usage；
-  - **官方 usage 更新 → 偏移归零**：界面下一帧直接等于新真实值（绝不从旧展示值慢慢滚过去），
-    再从新基线继续缓慢增长；**Turn settle → 偏移归零**，历史会话 / 刷新页面只显示官方真实值；
-  - 系统「减少动态效果」时不做视觉增长，直接显示真实值；此时读屏文本仍是真实值；
-    正常模式下视觉数字滚动、sr-only 文本同样保持 canonical（读屏永远拿到真实值）。
+  - canonical 偏移上限 `min(500, max(20, canonicalTokens × 5%))`（例：1,000 → +50；
+    10,000 → +500；100,000 → +500），到顶即停，等下一次真实 usage；
+  - **官方 usage 更新 → 立即校准**：bootstrap/偏移全部清零，界面下一帧直接等于新真实值
+    （绝不从旧展示值慢慢滚过去），再从新基线继续缓慢增长；**Turn settle → 全部归零**，
+    历史会话 / 刷新页面只显示官方真实值（无 canonical 则回到 `— token`）；
+  - **性能**：视觉 ticker 只在**真正有动画**（运行中 + 已有可见输出 + Token 字段开启 +
+    未开启减少动态效果）时订阅——历史回合、已结束回合、工具执行/等待阶段一律不订阅；
+    没有任何活动订阅者时 module 级 interval **彻底停止**（100 个历史 Turn = 0 订阅者 + 0 定时器）；
+  - 系统「减少动态效果」开启时**立即**归位（丢弃已有视觉偏移，直接显示真实值）并退订 ticker；
+    会话中途切换该设置会实时生效（媒体查询 change 事件驱动重渲染）；正常模式下视觉数字滚动、
+    sr-only 文本保持 canonical（读屏永远拿到真实值）。
 - **滚轮数字动画**：运行中数值变化时逐位滚动（里程表效果，回弹缓动）；完整文案有
   sr-only 副本（读屏无障碍）；系统「减少动态效果」时自动退化为静态数字。
 - **回合栏下常驻分隔线**（`--dsw-alias-line-secondary` token 链式回退，随主题适配）。

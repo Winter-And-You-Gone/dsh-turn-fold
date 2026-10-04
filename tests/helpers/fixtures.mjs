@@ -80,10 +80,12 @@ export function makeStepData(step, { usage, timing } = {}) {
 }
 
 /** 一个 running 的 assistant-step 数据（官方 projectAssistant：status='running'、
- *  time = firstVisibleTime（第一个可见 text/reasoning block 的事件时间）、无 finalNode）。
- *  @param {number} time - 第一个可见内容的事件时间（epoch ms）。 */
-export function makeRunningStepData(step, { time, usage } = {}) {
-  return { turn: 13, step, status: 'running', time, usage }
+ *  blocks = 当前已流出的官方 AssistantBlock 列表、time = firstVisibleTime（第一个可见
+ *  text/reasoning block 的事件时间）、无 finalNode）。
+ *  @param {number} [opts.time] - 第一个可见内容的事件时间（epoch ms）。
+ *  @param {Array} [opts.blocks] - 官方 AssistantBlock[]（默认 []——刚发起、尚无可见输出）。 */
+export function makeRunningStepData(step, { time, usage, blocks } = {}) {
+  return { turn: 13, step, status: 'running', blocks: blocks ?? [], time, usage }
 }
 
 /** StepLocation 最小形状（start = step/start 事件，与官方 AssistantTiming.stepStartTime
