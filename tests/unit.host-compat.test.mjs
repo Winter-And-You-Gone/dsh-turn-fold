@@ -454,3 +454,183 @@ describe('兼容架构 F：诊断两行制（probing → resolved，每有效变
     } finally { release() }
   })
 })
+
+describe('兼容架构 G：feature-aware resolver（各 feature 独立合法值域）', () => {
+  const MATRIX = [
+    ['turnFold', ['modern', 'legacy'], ['reactive', 'fallback', 'official', 'tree-only', 'none', 'unknown', undefined]],
+    ['stepFold', ['modern', 'legacy'], ['reactive', 'fallback', 'official', 'tree-only', 'none', 'unknown', undefined]],
+    ['metrics', ['reactive', 'fallback'], ['modern', 'legacy', 'official', 'tree-only', 'none', 'unknown', undefined]],
+    ['sessionScope', ['official', 'tree-only', 'none'], ['modern', 'legacy', 'reactive', 'fallback', 'unknown', undefined]],
+  ]
+  for (const [feature, allowed, rejected] of MATRIX) {
+    it(feature + '：允许 ' + allowed.join('/') + '；拒绝跨域值', () => {
+      for (const bad of rejected) {
+        T.hostCapabilityState[feature] = 'unknown'
+        assert.equal(T.resolveHostFeature(feature, bad), false, feature + ' 必须拒绝 ' + String(bad))
+        assert.equal(T.hostCapabilityState[feature], 'unknown', '拒绝值不得写入状态')
+      }
+      for (const good of allowed) {
+        T.hostCapabilityState[feature] = 'unknown'
+        assert.equal(T.resolveHostFeature(feature, good), true, feature + ' 必须接受 ' + good)
+        assert.equal(T.hostCapabilityState[feature], good)
+      }
+      T.hostCapabilityState[feature] = 'unknown'
+    })
+  }
+})
+
+describe('兼容架构 H：PROBE != COMMIT（render 只读，effect 才 resolve）', () => {
+  const originalInfo = console.info
+  let lines = []
+  function capture() {
+    lines = []
+    console.info = (...args) => { lines.push(args.join(' ')) }
+  }
+  function release() { console.info = originalInfo }
+  function makeConv(snapshot) {
+    return (selector) => react.useSyncExternalStore(() => () => {}, () => selector(snapshot))
+  }
+  function renderBridge(useConversation, sessionId) {
+    const container = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(container)
+    const root = createRoot(container)
+    act(() => { root.render(react.createElement(T.StepCardRulesBridge, { useConversation, sessionId })) })
+    return { root, container }
+  }
+  function teardown(h) { act(() => { h.root.unmount() }); h.container.remove() }
+  function mountView(el) {
+    const container = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(container)
+    const root = createRoot(container)
+    act(() => { root.render(el) })
+    return { root, container }
+  }
+  const RUNNING_NODE = { data: { turn: 1, status: 'open', startTime: 1000, endTime: null } }
+
+  it('H1 render 未 flush effect → 全局 capability 不变；flush 后才 resolve', async () => {
+    T.hostCapabilityState.stepFold = 'unknown'
+    const prevActEnv = globalThis.IS_REACT_ACT_ENVIRONMENT
+    globalThis.IS_REACT_ACT_ENVIRONMENT = false   // 允许 render 不 flush（仅本用例）
+    const container = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      root.render(react.createElement(T.StepCardRulesBridge, {
+        useConversation: makeConv({ views: {} }), sessionId: 'h1-sess',
+      }))
+      assert.equal(T.hostCapabilityState.stepFold, 'unknown', 'render body 不修改全局 capability state')
+    } finally {
+      globalThis.IS_REACT_ACT_ENVIRONMENT = prevActEnv
+    }
+    try {
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)) })   // flush committed effects
+      assert.equal(T.hostCapabilityState.stepFold, 'legacy', 'committed effect 才 resolve')
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+  it('H2 StrictMode：contract=false effect replay → step=legacy 且激活恰一次', () => {
+    T.hostCapabilityState.stepFold = 'unknown'
+    const before = T.getLegacyEngineActivations()
+    const container = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(container)
+    const root = createRoot(container)
+    try {
+      act(() => { root.render(react.createElement(react.StrictMode, null,
+        react.createElement(T.StepCardRulesBridge, { useConversation: makeConv({ views: {} }), sessionId: 'h2-sess' }))) })
+      assert.equal(T.hostCapabilityState.stepFold, 'legacy')
+      assert.equal(T.getLegacyEngineActivations().step - before.step, 1, 'StrictMode effect replay 不得重复激活（unknown→legacy 只有一次）')
+      const h = renderBridge(makeConv({ views: {} }), 'h2-sess')
+      teardown(h)
+      assert.equal(T.getLegacyEngineActivations().step - before.step, 1, '后续重渲染仍不重复')
+    } finally { act(() => { root.unmount() }); container.remove() }
+  })
+  it('H3 StrictMode：metrics reactive 只定论一次、诊断只输出一次 resolved 行', () => {
+    capture()
+    try {
+      T.resetHostCapabilityDiagnostics()
+      T.hostCapabilityState.turnFold = 'modern'
+      T.hostCapabilityState.stepFold = 'modern'
+      T.hostCapabilityState.metrics = 'unknown'
+      const EMPTY_LIST = []
+      const emptySource = { getSnapshot: () => EMPTY_LIST, subscribe: () => () => {} }
+      const useChat = (selector) => selector({ nodes: { turnDataSource: () => emptySource } })
+      const h = mountView(react.createElement(react.StrictMode, null,
+        react.createElement(T.EnhancedTurnProcessView, { node: RUNNING_NODE, useChat })))
+      try {
+        assert.equal(T.hostCapabilityState.metrics, 'reactive')
+        const modeLines = lines.filter((l) => l.includes('host mode:'))
+        assert.equal(modeLines.length, 1, 'resolved mode 只输出一次：' + JSON.stringify(modeLines))
+        assert.ok(modeLines[0].includes('host mode: modern'), modeLines[0])
+      } finally { teardown(h) }
+    } finally { release() }
+  })
+  it('H4 hybrid 不变量（committed effects 后）：turn modern / step legacy / metrics fallback，激活 Turn=0 Step=1', () => {
+    T.hostCapabilityState.turnFold = 'modern'
+    T.hostCapabilityState.stepFold = 'unknown'
+    T.hostCapabilityState.metrics = 'unknown'
+    const before = T.getLegacyEngineActivations()
+    const useChatLegacy = (selector) => selector({ nodes: {} })   // 无 turnDataSource（0.1.2~0.1.6 形状）
+    const h = mountView(react.createElement(react.Fragment, null, [
+      react.createElement(T.StepCardRulesBridge, { useConversation: makeConv({ views: {} }), sessionId: 'h4-sess' }),
+      react.createElement(T.EnhancedTurnProcessView, { node: RUNNING_NODE, useChat: useChatLegacy }),
+    ]))
+    try {
+      assert.equal(T.hostCapabilityState.turnFold, 'modern')
+      assert.equal(T.hostCapabilityState.stepFold, 'legacy')
+      assert.equal(T.hostCapabilityState.metrics, 'fallback')
+      assert.equal(T.getLegacyEngineActivations().turn - before.turn, 0)
+      assert.equal(T.getLegacyEngineActivations().step - before.step, 1)
+    } finally { teardown(h) }
+  })
+  it('H5 unknown 零副作用：快照/nodes 未就绪 → 保持 unknown、无激活、无最终 mode 行', () => {
+    capture()
+    try {
+      T.resetHostCapabilityDiagnostics()
+      T.hostCapabilityState.turnFold = 'modern'
+      T.hostCapabilityState.stepFold = 'unknown'
+      T.hostCapabilityState.metrics = 'unknown'
+      const before = T.getLegacyEngineActivations()
+      const useChatUnready = (selector) => selector(undefined)
+      const h = mountView(react.createElement(react.Fragment, null, [
+        react.createElement(T.StepCardRulesBridge, { useConversation: makeConv(undefined), sessionId: 'h5-sess' }),
+        react.createElement(T.EnhancedTurnProcessView, { node: RUNNING_NODE, useChat: useChatUnready }),
+      ]))
+      try {
+        assert.equal(T.hostCapabilityState.stepFold, 'unknown')
+        assert.equal(T.hostCapabilityState.metrics, 'unknown')
+        assert.deepEqual(T.getLegacyEngineActivations(), before, 'unknown 不产生任何 legacy 副作用')
+        assert.equal(lines.filter((l) => l.includes('host mode:')).length, 0, '无最终结论行')
+      } finally { teardown(h) }
+    } finally { release() }
+  })
+})
+
+describe('兼容架构 I：resolveLegacyStepCapability 契约（0.1.1 下轮接口；本轮不实现引擎）', () => {
+  it('I1 未就绪（undefined）→ 返回 false、保持 unknown', () => {
+    T.hostCapabilityState.stepFold = 'unknown'
+    const before = T.getLegacyEngineActivations()
+    assert.equal(T.resolveLegacyStepCapability({ nativeStepGroups: undefined }), false)
+    assert.equal(T.resolveLegacyStepCapability({}), false)
+    assert.equal(T.resolveLegacyStepCapability(), false)
+    assert.equal(T.hostCapabilityState.stepFold, 'unknown')
+    assert.deepEqual(T.getLegacyEngineActivations(), before)
+  })
+  it('I2 显式 false → step=legacy 且激活恰一次；重复调用幂等', () => {
+    T.hostCapabilityState.stepFold = 'unknown'
+    const before = T.getLegacyEngineActivations()
+    assert.equal(T.resolveLegacyStepCapability({ nativeStepGroups: false }), true, 'unknown → legacy 迁移返回 true')
+    assert.equal(T.hostCapabilityState.stepFold, 'legacy')
+    assert.equal(T.getLegacyEngineActivations().step - before.step, 1)
+    assert.equal(T.resolveLegacyStepCapability({ nativeStepGroups: false }), false, '已定论 → false')
+    assert.equal(T.getLegacyEngineActivations().step - before.step, 1, '不重复激活')
+    T.hostCapabilityState.stepFold = 'unknown'
+  })
+  it('I3 true（理论兜底）→ step=modern；与 Modern 契约探针同一 resolve 通道', () => {
+    T.hostCapabilityState.stepFold = 'unknown'
+    assert.equal(T.resolveLegacyStepCapability({ nativeStepGroups: true }), true)
+    assert.equal(T.hostCapabilityState.stepFold, 'modern')
+    T.hostCapabilityState.stepFold = 'unknown'
+  })
+})

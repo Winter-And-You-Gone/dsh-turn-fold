@@ -79,6 +79,7 @@ const TEST_EXPORTS = [
   'selectConversationGroupContract',
   'selectChatNodeShape',
   'probeOfficialSessionScope',
+  'resolveLegacyStepCapability',
   'resetOfficialSessionScopeProbe',
   'writeStepCardRulesMerged',
   'clearStepCardRulesForSession',

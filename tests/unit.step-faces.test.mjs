@@ -305,15 +305,23 @@ describe('Step 牌面 K：running 组不消耗 bag', () => {
   it('桥写入的规则里 running 组不出现；run 组 settle 后同一 groupKey 才出现', () => {
     T.writeStepCardRules(null)
     const session = 'running-bridge-session'
-    T.writeStepCardRules({ runA: { count: 3, closed: false } }, session)
-    assert.equal(cardRulesCss(), '', 'running 组不写规则')
-    T.writeStepCardRules({ runA: { count: 3, closed: true } }, session)
-    const css = cardRulesCss()
-    assert.ok(css.includes('[data-chat-group-key="runA"]'), 'settle 后写入规则')
-    for (const line of css.split('\n').filter(Boolean)) {
-      assert.ok(line.includes(':not(:has([data-shimmer="true"]))'), '规则仍排除 running（轮换优先）')
+    // 输出策略按**活跃会话数**判断（tree-only 安全降级）——直接写 chunk 的单元测试
+    // 必须让该会话在 registry 里真实在场（无 bridge 的陈旧块会被安全撤下）。
+    const instance = { id: 424242, onLeader() {} }
+    T.registerStepCardBridge(session, instance)
+    try {
+      T.writeStepCardRules({ runA: { count: 3, closed: false } }, session)
+      assert.equal(cardRulesCss(), '', 'running 组不写规则')
+      T.writeStepCardRules({ runA: { count: 3, closed: true } }, session)
+      const css = cardRulesCss()
+      assert.ok(css.includes('[data-chat-group-key="runA"]'), 'settle 后写入规则')
+      for (const line of css.split('\n').filter(Boolean)) {
+        assert.ok(line.includes(':not(:has([data-shimmer="true"]))'), '规则仍排除 running（轮换优先）')
+      }
+    } finally {
+      T.unregisterStepCardBridge(session, instance)
+      T.writeStepCardRules(null)
     }
-    T.writeStepCardRules(null)
   })
 })
 

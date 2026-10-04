@@ -299,18 +299,29 @@ describe('Session 作用域 F/G/H：零回归', () => {
 //    回落基础 Step Poker（running 五牌面轮换在皮肤表，不受影响）。
 // ══════════════════════════════════════════════════════════════════════
 describe('Session 作用域 K：tree-only 多会话安全降级', () => {
-  it('K0 合并策略单元语义：无 official 锚点 + 双候选块 → 一律不输出（含 plain 块）', () => {
+  it('K0 合并策略单元语义：安全判据是 active session count，不是 chunk 数', () => {
+    // 零活跃会话：即使有 chunk 候选（陈旧块）也不输出
     seedBag('', ['club'])
     T.stepCardRulesBySession.set('', 'PLAIN-CHUNK')
     T.stepCardRulesBySession.set('sess-A', 'SCOPED-CHUNK')
     T.writeStepCardRulesMerged()
-    assert.equal(cardRulesCss(), '', 'tree-only 多会话：所有 session-specific 覆盖撤下（少个性 > 串样式）')
+    assert.equal(cardRulesCss(), '', '零活跃会话：陈旧块不输出')
     T.stepCardRulesBySession.clear()
     T.writeStepCardRulesMerged()
-    // 单候选块仍可输出（它只可能命中自己那棵树）
+    // 单一活跃会话 + 单块 → 输出
+    const instA = { id: 900001, onLeader() {} }
+    T.registerStepCardBridge('sess-A', instA)
     T.stepCardRulesBySession.set('sess-A', 'SCOPED-CHUNK')
     T.writeStepCardRulesMerged()
-    assert.equal(cardRulesCss(), 'SCOPED-CHUNK', '单会话照常输出')
+    assert.equal(cardRulesCss(), 'SCOPED-CHUNK', '单活跃会话照常输出')
+    // 第二个会话一进 registry（哪怕还没有任何 chunk）→ 立即撤下
+    const instB = { id: 900002, onLeader() {} }
+    T.registerStepCardBridge('sess-B', instB)
+    assert.equal(cardRulesCss(), '', 'active=2 > 1：立即撤下（不等 B 自己生成 chunk）')
+    // B 卸载 → 立即恢复（无需 A 重渲染/新事件）
+    T.unregisterStepCardBridge('sess-B', instB)
+    assert.equal(cardRulesCss(), 'SCOPED-CHUNK', 'B 卸载立即恢复')
+    T.unregisterStepCardBridge('sess-A', instA)
     T.stepCardRulesBySession.clear()
     T.writeStepCardRulesMerged()
   })
@@ -325,7 +336,7 @@ describe('Session 作用域 K：tree-only 多会话安全降级', () => {
       renderSubtree(react.createElement(react.Fragment, null, [
         bridgeNode(a, 'sess-A', 'A'), bridgeNode(b, 'sess-B', 'B'),
       ]))
-      assert.equal(T.probeOfficialSessionScope(), true, '官方锚点在场 → official 定论')
+      assert.equal(T.probeOfficialSessionScope(), 'official', '官方锚点在场 → official 定论（单一事实源）')
       assert.equal(T.hostCapabilityState.sessionScope, 'official', 'sessionScope 运行时定论')
       const css = cardRulesCss()
       assert.ok(css.includes('data-conversation-session="sess-A"') && css.includes('data-conversation-session="sess-B"'), '双作用域块同时在场')
@@ -397,22 +408,62 @@ describe('Session 作用域 K：tree-only 多会话安全降级', () => {
     assert.ok(skin.includes(':has([data-text-shimmer="true"]) [data-step-process-icon]::before'), '双契约 running 规则仍在')
     assert.ok(skin.includes('@keyframes tf-step-open'), 'completed 通用双态（默认 5 张）仍在')
   })
-  it('K6 会话作用域运行时定论：内容锚点在场但无 session 锚点 → tree-only（粘性否定）', () => {
+  it('K6 会话作用域定论进统一 controller：official / tree-only / unknown 三态', () => {
+    // 无会话 DOM → unknown（绝不因"当前没查到"定论 none）
+    T.resetOfficialSessionScopeProbe()
+    assert.equal(T.probeOfficialSessionScope(), 'unknown')
+    assert.equal(T.hostCapabilityState.sessionScope, 'unknown')
+    // content 锚点在场、无 session 锚点 → 真正 resolve 成 tree-only（不是 CSS 子系统私有状态）
     const rc1Tree = sharedDocument.createElement('div')
     rc1Tree.setAttribute('data-conversation-content', '')
     sharedDocument.body.appendChild(rc1Tree)
     try {
-      T.resetOfficialSessionScopeProbe()
-      assert.equal(T.probeOfficialSessionScope(), false, '无 session 锚点 → 非 official')
-      assert.equal(T.probeOfficialSessionScope(), false, '重复读取结论一致（粘性否定：rc.2+ 上两属性同 commit 渲染，"有 content 无 session"即定论）')
-      assert.equal(T.hostCapabilityState.sessionScope, 'unknown', 'tree-only 是审计层结论；运行时 DOM 只定论 official')
-      // 换一棵 official 树（新探针）→ 定论 official
+      assert.equal(T.probeOfficialSessionScope(), 'tree-only')
+      assert.equal(T.hostCapabilityState.sessionScope, 'tree-only', '单一事实源：hostCapabilityState 即结论（无第二份 denied 布尔）')
+      assert.equal(T.probeOfficialSessionScope(), 'tree-only', '已定论后重复读取一致（不再触碰 DOM）')
+      // official 树 → 定论 official
       T.resetOfficialSessionScopeProbe()
       const rc2Tree = buildTree('rc2-sess', SAME_KEY)
       try {
-        assert.equal(T.probeOfficialSessionScope(), true, '官方锚点在场 → official')
-        assert.equal(T.hostCapabilityState.sessionScope, 'official', 'sessionScope 运行时定论')
+        assert.equal(T.probeOfficialSessionScope(), 'official')
+        assert.equal(T.hostCapabilityState.sessionScope, 'official')
       } finally { rc2Tree.body.remove() }
     } finally { rc1Tree.remove() }
+  })
+  it('K7 official 作用域不受 active session count 限制：B mount（无 chunk）也不撤 A', () => {
+    seedBag('off-A', ['spade'])
+    const treeA = buildTree('off-A', SAME_KEY)
+    const treeB = buildTree('off-B', SAME_KEY)
+    try {
+      const a = makeSession([SAME_KEY])
+      renderSubtree(bridgeNode(a, 'off-A', 'A'))
+      // B 只进 registry（模拟刚 mount、尚未生成 chunk）
+      const instB = { id: 900003, onLeader() {} }
+      T.registerStepCardBridge('off-B', instB)
+      assert.equal(T.getStepCardBridgeSessionCount(), 2)
+      assert.equal(T.probeOfficialSessionScope(), 'official')
+      const css = cardRulesCss()
+      assert.ok(css.includes('data-conversation-session="off-A"'), 'A 的 chunk 继续输出（official 已按会话限定，多会话安全）')
+      assert.ok(css.includes('--tf-face-' + T.completedFaceSetFor(3, 'spade').id + '-stack'), 'A 的 set 在场')
+      T.unregisterStepCardBridge('off-B', instB)
+      assert.ok(cardRulesCss().includes('data-conversation-session="off-A"'), 'B 卸载后 A 仍输出')
+    } finally {
+      treeA.body.remove()
+      treeB.body.remove()
+    }
+  })
+  it('K8 tree-only mount window：B 刚 mount（无 chunk）→ A 规则立即撤下；B unmount → 立即恢复', () => {
+    seedBag('win-A', ['spade'])
+    const a = makeSession([SAME_KEY])
+    renderSubtree(bridgeNode(a, 'win-A', 'A'))
+    assert.ok(cardRulesCss().includes('data-chat-group-key='), 'A 规则在场（单会话）')
+    // 关键窗口：B 进 registry 的瞬间（尚无任何 chunk）→ 必须立即撤下
+    const instB = { id: 900004, onLeader() {} }
+    T.registerStepCardBridge('win-B', instB)
+    assert.equal(T.getStepCardBridgeSessionCount(), 2)
+    assert.equal(cardRulesCss(), '', 'mount 瞬间立即撤下——不能等 B 的 writer effect')
+    // B unmount（它从未有过 chunk）→ 立即恢复
+    T.unregisterStepCardBridge('win-B', instB)
+    assert.ok(cardRulesCss().includes('--tf-face-' + T.completedFaceSetFor(3, 'spade').id + '-stack'), '立即恢复，无需 A 重渲染/新组事件/刷新')
   })
 })
