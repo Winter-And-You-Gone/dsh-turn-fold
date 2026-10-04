@@ -209,11 +209,14 @@ describe('架构守卫（源码扫描）', () => {
   it('订阅最小切片：useChat 一律传具名 selector，禁止整快照/内联 selector', () => {
     assert.ok(!src.includes('useChat(s => s)'), 'useChat(s => s) 必须消失')
     // 任何内联函数/箭头作为 useChat 参数都被禁止（等价"返回整个 snapshot"的
-    // selector 由该模式统一拦截）；只允许具名 selector（selectTurnNodeSource）。
+    // selector 由该模式统一拦截）；只允许具名 selector。现有两处订阅：
+    // selectTurnNodeSource（本 Turn 的 assistant-step 数据源）与
+    // selectChatNodeShape（store 形状探针，metrics capability 运行时定论用）。
     assert.ok(!/useChat\(\s*(function|\()/.test(src), 'useChat 只能传具名 selector')
     const calls = src.match(/useChat\(/g) || []
-    assert.equal(calls.length, 1, 'useChat 只在订阅 assistant-step 数据源处调用一次')
+    assert.equal(calls.length, 2, 'useChat 恰好两处具名订阅（数据源 + store 形状探针）')
     assert.ok(src.includes('selectTurnNodeSource(number, "assistant-step")'), '订阅面 = 本 Turn 的 assistant-step 源')
+    assert.ok(src.includes('useChat(selectChatNodeShape)'), 'store 形状探针也是具名 selector')
   })
 
   it('插件不再 shadow tool-call / assistant-step / context / user（仅 turn-process）', () => {

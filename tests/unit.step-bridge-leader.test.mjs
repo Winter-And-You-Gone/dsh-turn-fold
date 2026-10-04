@@ -29,6 +29,7 @@ beforeEach(() => {
   T.writeStepCardRules(null)
   T.completedStepTopFaces.clear()
   T.completedStepTopBags.clear()
+  T.resetOfficialSessionScopeProbe()
 })
 afterEach(() => {
   act(() => { root.unmount() })
@@ -36,11 +37,27 @@ afterEach(() => {
   container = null
   root = null
   T.writeStepCardRules(null)
+  T.resetOfficialSessionScopeProbe()
 })
 
 const cardRulesCss = () => (sharedDocument.querySelector('style[data-plugin-css="' + T.STEP_CARD_CSS_ID + '"]') || { textContent: '' }).textContent
 /** 微任务（session 缓存清理是延迟到微任务执行的——见 client.js 的注释）。 */
 const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+/** 在 document 里搭一棵 official 形状会话树（rc.2+：内容根带 data-conversation-session）。
+ *  双 session 输出测试需要 official 锚点在场——tree-only 多会话会触发安全降级（撤下
+ *  全部 session-specific 覆盖），那是 session-scope 测试文件 K 组的专责。 */
+function buildOfficialTree(sessionId, groupKey) {
+  const body = sharedDocument.createElement('div')
+  body.setAttribute('data-conversation-session', sessionId)
+  body.setAttribute('data-conversation-content', '')
+  const group = sharedDocument.createElement('div')
+  group.setAttribute('data-step-process', '')
+  group.setAttribute('data-chat-group-key', groupKey)
+  body.appendChild(group)
+  sharedDocument.body.appendChild(body)
+  return body
+}
 
 /** 一个 session 的假 conversation 面（官方 grouped/entries/groupSource 形状）。 */
 function makeSession(groupKeys) {
@@ -197,29 +214,38 @@ describe('Bridge session cache E/F/G：清理与隔离', () => {
     assert.equal(cardRulesCss(), '', 'session 规则块已撤下')
   })
   it('F：清 A 不影响 B（face/bag/leader 保持），两个会话的块各自带作用域', async () => {
+    // official 锚点在场（rc.2+ 形状）→ 双作用域块正常输出
+    const treeA = buildOfficialTree('sess-A', '["process","f-a1",null]')
+    const treeB = buildOfficialTree('sess-B', '["process","f-b1",null]')
     const a = makeSession(['["process","f-a1",null]'])
     const b = makeSession(['["process","f-b1",null]'])
-    renderSubtree(react.createElement(react.Fragment, null, [
-      bridgeNode(a, 'sess-A', 'A'), bridgeNode(b, 'sess-B', 'B'),
-    ]))
-    assert.equal(T.getCompletedStepFaceCount('sess-A'), 1)
-    assert.equal(T.getCompletedStepFaceCount('sess-B'), 1)
-    const topB = T.completedStepTopFaces.get('sess-B').get('["process","f-b1",null]')
-    const cssBoth = cardRulesCss()
-    assert.ok(cssBoth.includes('[data-conversation-session="sess-A"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-a1",null]') + '"]'), 'A 的规则带自己的会话作用域')
-    assert.ok(cssBoth.includes('[data-conversation-session="sess-B"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-b1",null]') + '"]'), 'B 的规则带自己的会话作用域（互不覆盖）')
-    // 卸载 A 的全部 bridge
-    renderSubtree(bridgeNode(b, 'sess-B', 'B'))
-    await flushMicrotasks()
-    assert.equal(T.getCompletedStepFaceCount('sess-A'), 0, 'A 已清')
-    assert.equal(T.hasCompletedStepBag('sess-A'), false)
-    assert.equal(T.getCompletedStepFaceCount('sess-B'), 1, 'B 的分配不受影响')
-    assert.equal(T.hasCompletedStepBag('sess-B'), true, 'B 的 bag 不受影响')
-    assert.equal(T.getStepCardBridgeLeaderCount('sess-B'), 1, 'B 仍有 leader')
-    assert.equal(T.completedStepTopFaces.get('sess-B').get('["process","f-b1",null]'), topB, 'B 的 top face 不因清 A 而变')
-    const afterA = cardRulesCss()
-    assert.ok(!afterA.includes('data-conversation-session="sess-A"'), 'A 的块已撤下')
-    assert.ok(afterA.includes('data-conversation-session="sess-B"'), 'B 的块保持')
+    try {
+      renderSubtree(react.createElement(react.Fragment, null, [
+        bridgeNode(a, 'sess-A', 'A'), bridgeNode(b, 'sess-B', 'B'),
+      ]))
+      assert.equal(T.getCompletedStepFaceCount('sess-A'), 1)
+      assert.equal(T.getCompletedStepFaceCount('sess-B'), 1)
+      const topB = T.completedStepTopFaces.get('sess-B').get('["process","f-b1",null]')
+      const cssBoth = cardRulesCss()
+      // 新 selector 形状：会话前缀与组条件在同一支内（完整 host），两支以逗号并列
+      assert.ok(cssBoth.includes('[data-conversation-session="sess-A"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-a1",null]') + '"]'), 'A 的规则带自己的会话作用域')
+      assert.ok(cssBoth.includes('[data-conversation-session="sess-B"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","f-b1",null]') + '"]'), 'B 的规则带自己的会话作用域（互不覆盖）')
+      // 卸载 A 的全部 bridge
+      renderSubtree(bridgeNode(b, 'sess-B', 'B'))
+      await flushMicrotasks()
+      assert.equal(T.getCompletedStepFaceCount('sess-A'), 0, 'A 已清')
+      assert.equal(T.hasCompletedStepBag('sess-A'), false)
+      assert.equal(T.getCompletedStepFaceCount('sess-B'), 1, 'B 的分配不受影响')
+      assert.equal(T.hasCompletedStepBag('sess-B'), true, 'B 的 bag 不受影响')
+      assert.equal(T.getStepCardBridgeLeaderCount('sess-B'), 1, 'B 仍有 leader')
+      assert.equal(T.completedStepTopFaces.get('sess-B').get('["process","f-b1",null]'), topB, 'B 的 top face 不因清 A 而变')
+      const afterA = cardRulesCss()
+      assert.ok(!afterA.includes('data-conversation-session="sess-A"'), 'A 的块已撤下')
+      assert.ok(afterA.includes('data-conversation-session="sess-B"'), 'B 的块保持')
+    } finally {
+      treeA.remove()
+      treeB.remove()
+    }
   })
   it('G：session 重开重新分配（不复用被清掉的旧值），且变体资产不重复注入', async () => {
     const session = 'reopen-session'
@@ -275,21 +301,29 @@ describe('Bridge session cache E/F/G：清理与隔离', () => {
 // ══════════════════════════════════════════════════════════════════════
 describe('Bridge 多 session：会话作用域化输出', () => {
   it('两个 session 同时挂载 → 两块都在且各自绑定自己的 [data-conversation-session]；各自 leader 恰好 1', () => {
+    // official 锚点在场 → 双作用域块正常输出（tree-only 降级是 K 组专责）
+    const treeA = buildOfficialTree('multi-A', '["process","m-a",null]')
+    const treeB = buildOfficialTree('multi-B', '["process","m-b",null]')
     const a = makeSession(['["process","m-a",null]'])
     const b = makeSession(['["process","m-b",null]'])
-    renderSubtree(react.createElement(react.Fragment, null, [
-      bridgeNode(a, 'multi-A', 'A'), bridgeNode(b, 'multi-B', 'B2'),
-    ]))
-    assert.equal(T.getStepCardBridgeSessionCount() >= 2, true, '两个 session 都有 bridge')
-    assert.equal(T.getStepCardBridgeLeaderCount('multi-A'), 1)
-    assert.equal(T.getStepCardBridgeLeaderCount('multi-B'), 1)
-    const css = cardRulesCss()
-    assert.ok(css.includes('[data-conversation-session="multi-A"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-a",null]') + '"]'), 'A 的规则带 A 作用域')
-    assert.ok(css.includes('[data-conversation-session="multi-B"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-b",null]') + '"]'), 'B 的规则带 B 作用域')
-    // A 卸载 → 只撤下 A 的块
-    renderSubtree(bridgeNode(b, 'multi-B', 'B2'))
-    const after = cardRulesCss()
-    assert.ok(!after.includes('data-conversation-session="multi-A"'), 'A 的块已撤下')
-    assert.ok(after.includes('data-conversation-session="multi-B"'), 'B 的块保持')
+    try {
+      renderSubtree(react.createElement(react.Fragment, null, [
+        bridgeNode(a, 'multi-A', 'A'), bridgeNode(b, 'multi-B', 'B2'),
+      ]))
+      assert.equal(T.getStepCardBridgeSessionCount() >= 2, true, '两个 session 都有 bridge')
+      assert.equal(T.getStepCardBridgeLeaderCount('multi-A'), 1)
+      assert.equal(T.getStepCardBridgeLeaderCount('multi-B'), 1)
+      const css = cardRulesCss()
+      assert.ok(css.includes('[data-conversation-session="multi-A"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-a",null]') + '"]'), 'A 的规则带 A 作用域')
+      assert.ok(css.includes('[data-conversation-session="multi-B"] [data-step-process][data-chat-group-key="' + T.cssAttrValue('["process","m-b",null]') + '"]'), 'B 的规则带 B 作用域')
+      // A 卸载 → 只撤下 A 的块
+      renderSubtree(bridgeNode(b, 'multi-B', 'B2'))
+      const after = cardRulesCss()
+      assert.ok(!after.includes('data-conversation-session="multi-A"'), 'A 的块已撤下')
+      assert.ok(after.includes('data-conversation-session="multi-B"'), 'B 的块保持')
+    } finally {
+      treeA.remove()
+      treeB.remove()
+    }
   })
 })

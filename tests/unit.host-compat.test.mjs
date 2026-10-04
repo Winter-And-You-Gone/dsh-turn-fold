@@ -1,11 +1,16 @@
-// 跨版本兼容架构测试：能力探测 → feature-level 模式 → 注册门控。
+// 跨版本兼容架构测试：能力探测 → feature-level 模式 → 注册门控 → 运行时定论。
 //
 // 目标不变量：
+//   · UNKNOWN ≠ LEGACY：注册期探不到的 feature（Step/metrics）一律 unknown，
+//     绝不因 unknown 触发任何 legacy 入口；只有显式证明契约缺失才允许 legacy；
 //   · Modern 宿主（0.1.7-rc.1 / rc.2 / 0.2.0-rc.2）：官方是唯一 Fold owner，
 //     legacy 引擎激活数恒为 0，且现代渲染器照常注册；
 //   · Hybrid 宿主（0.1.2 ~ 0.1.6）：Turn modern（官方 owner state）+ Step legacy
-//     （官方没有 Process Group 契约）——不注册任何影子渲染器，也不假装 Step 可用；
-//   · Legacy 宿主（0.1.1-rc.2）：识别为 legacy、不注册现代渲染器、插件不崩。
+//     （渲染期证明无 Process Group 契约）+ metrics fallback（无 turnDataSource）——
+//     三者互相独立，metrics fallback 绝不触发 legacy fold engine；
+//   · Legacy 宿主（0.1.1-rc.2）：Turn 在注册期定论 legacy（slot 表可探）；Step 在
+//     注册期同样 unknown（要等渲染期快照证据），注册期不记账；
+//   · 诊断两行制：注册期 probing 事实行 + 运行时定论行，每个有效变化最多一次。
 // 版本号只出现在 fixtures / 断言的可读标签里，生产判定全部走能力探针。
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -44,13 +49,14 @@ function applyPlugin(slots) {
   T.exports.apply(ctx)
 }
 
-describe('兼容架构 A：能力探测与模式', () => {
+describe('兼容架构 A：能力探测与模式（三态语义）', () => {
   for (const fixture of HOST_VERSION_FIXTURES) {
     it(fixture.version + ' → ' + fixture.expect.mode + '（' + fixture.note + '）', () => {
       const caps = T.hostCapabilitiesOf(capabilitiesFromFixture(fixture))
       assert.equal(caps.turnFold, fixture.expect.turnFold, 'turn 模式')
       assert.equal(caps.stepFold, fixture.expect.stepFold, 'step 模式')
-      assert.equal(caps.metrics, fixture.expect.metrics, 'metrics 模式')
+      assert.equal(caps.metrics, fixture.expect.metrics, 'metrics 模式（reactive/fallback/unknown 三态）')
+      assert.equal(caps.sessionScope, fixture.expect.sessionScope, '会话作用域（official/tree-only/none/unknown 四态）')
       const mode = caps.turnFold === 'modern' && caps.stepFold === 'modern' ? 'modern'
         : (caps.turnFold === 'legacy' && caps.stepFold === 'legacy' ? 'legacy' : 'mixed')
       assert.equal(mode, fixture.expect.mode, '总模式')
@@ -60,18 +66,41 @@ describe('兼容架构 A：能力探测与模式', () => {
     for (const fixture of HOST_VERSION_FIXTURES) {
       const slots = makeSlots(fixture.probe)
       const caps = T.detectHostCapabilitiesAtRegistration(slots)
-      assert.equal(caps.turnFold, fixture.expect.turnFold, fixture.version + ' turn')
+      assert.equal(caps.turnFold, fixture.expect.turnFold, fixture.version + ' turn（注册期 slot 表可探、定论）')
       // Process Group 契约在注册期不可探（没有独立 slot/服务）→ 一律 unknown，渲染期定论
       assert.equal(caps.stepFold, 'unknown', fixture.version + ' step 注册期未知')
+      // turnDataSource / 会话锚点注册期同样探不到 → metrics 未知、作用域未知
+      //（绝不从 nativeTurnFold 推导出 reactiveTurnData —— 0.1.2~0.1.6 审计证伪了该假设）
+      assert.equal(caps.metrics, 'unknown', fixture.version + ' metrics 注册期未知')
+      assert.equal(caps.sessionScope, 'unknown', fixture.version + ' sessionScope 注册期未知')
+      assert.equal(caps.turnDataSource, undefined, fixture.version + ' turnDataSource 未定论')
       const runtime = T.hostCapabilitiesOf(capabilitiesFromFixture(fixture))
       assert.equal(runtime.stepFold, fixture.expect.stepFold, fixture.version + ' step（渲染期探针）')
+      assert.equal(runtime.metrics, fixture.expect.metrics, fixture.version + ' metrics（渲染期探针）')
     }
+  })
+  it('Turn fold 能力 ≠ metrics 能力：nativeTurnFold=true + turnDataSource=false → turn modern + metrics fallback', () => {
+    const caps = T.hostCapabilitiesOf({ nativeTurnFold: true, turnDataSource: false, nativeStepGroups: true })
+    assert.equal(caps.turnFold, 'modern')
+    assert.equal(caps.stepFold, 'modern')
+    assert.equal(caps.metrics, 'fallback', 'metrics 与 turn fold 解耦：无 turnDataSource = fallback，不是 legacy fold engine')
+    assert.notEqual(caps.metrics, 'reactive')
+  })
+  it('sessionScope 四态：official / tree-only / none / unknown 由独立探针决定', () => {
+    assert.equal(T.hostCapabilitiesOf({ sessionDomScope: true }).sessionScope, 'official')
+    assert.equal(T.hostCapabilitiesOf({ sessionDomScope: false, conversationContentAnchor: true }).sessionScope, 'tree-only')
+    assert.equal(T.hostCapabilitiesOf({ sessionDomScope: false, conversationContentAnchor: false }).sessionScope, 'none')
+    assert.equal(T.hostCapabilitiesOf({}).sessionScope, 'unknown', '探不到 → unknown（不猜）')
   })
 })
 
-describe('兼容架构 B：注册门控（Modern 宿主 legacy 恒为 0）', () => {
+describe('兼容架构 B：注册门控（unknown 绝不启动 legacy）', () => {
   for (const fixture of HOST_VERSION_FIXTURES) {
     it(fixture.version + ' 的注册结果符合模式（' + fixture.expect.mode + '）', () => {
+      // 每个用例从干净 capability 状态出发（前一用例可能已定论；定论不翻转）
+      T.hostCapabilityState.turnFold = 'unknown'
+      T.hostCapabilityState.stepFold = 'unknown'
+      T.hostCapabilityState.metrics = 'unknown'
       const before = T.getLegacyEngineActivations()
       const slots = makeSlots(fixture.probe)
       applyPlugin(slots)
@@ -83,10 +112,12 @@ describe('兼容架构 B：注册门控（Modern 宿主 legacy 恒为 0）', () 
         assert.deepEqual(delta, { turn: 0, step: 0 }, '现代宿主 legacy 引擎激活数必须为 0')
       } else if (fixture.expect.mode === 'mixed') {
         assert.ok(modernRegistered, 'hybrid 宿主仍注册现代 Turn 渲染器')
-        assert.deepEqual(delta, { turn: 0, step: 0 }, 'hybrid：Step 模式由渲染期定论（注册期不记账）')
+        assert.deepEqual(delta, { turn: 0, step: 0 }, 'hybrid：注册期 Step 是 unknown（渲染期定论），不记账')
       } else {
         assert.ok(!modernRegistered, 'legacy 宿主不得注册现代渲染器')
-        assert.deepEqual(delta, { turn: 1, step: 1 }, 'legacy：Turn/Step 各记一次')
+        // Turn legacy 在注册期定论（slot 表证明）；Step 注册期仍 unknown —— 必须等渲染期
+        // 快照证据，注册期绝不记账（UNKNOWN ≠ LEGACY）
+        assert.deepEqual(delta, { turn: 1, step: 0 }, 'legacy：只记 Turn 一次；Step 等 runtime 定论')
       }
       // 任何模式下都不得注册影子渲染器（本轮不注册 legacy shadow）
       for (const r of slots.registered) {
@@ -101,55 +132,325 @@ describe('兼容架构 B：注册门控（Modern 宿主 legacy 恒为 0）', () 
     for (let i = 0; i < 5; i += 1) applyPlugin(makeSlots(modern.probe))
     assert.deepEqual(T.getLegacyEngineActivations(), before, '重复 apply 不得激活 legacy')
   })
+  it('legacy activation 计数只能经由显式 legacy 入口产生（unknown 路径恒 0）', () => {
+    const before = T.getLegacyEngineActivations()
+    // 模拟"注册期什么都探不到"的宿主（slots 服务异常 → turn 也 unknown 边界：
+    // 生产里 slotHasEntry 异常按无能力处理 → turn=legacy 定论，这里只锁 unknown Step）
+    T.activateLegacyTurnEngine()
+    T.activateLegacyStepEngine()
+    const after = T.getLegacyEngineActivations()
+    assert.equal(after.turn - before.turn, 1, '显式 Turn legacy 入口记账 1')
+    assert.equal(after.step - before.step, 1, '显式 Step legacy 入口记账 1（仅此一条路径）')
+  })
 })
 
-describe('兼容架构 C：会话作用域跨版本', () => {
+describe('兼容架构 C：会话作用域 selector（完整 host 逐支生成）', () => {
   const RULES_MAP = { '["process","same",null]': { count: 3, closed: true } }
-  it('0.1.7-rc.2+（有官方属性）→ 规则带会话作用域，且回退分支不会命中带属性的树', () => {
+  /** 把一条规则的 selector（{ 之前的部分）按分支拆开：逗号只允许出现在
+   *  "[data-conversation-…]" / "[data-step-process]" 这类分支起点之前
+   *  （groupKey JSON 内部的逗号在引号里，后随字符永远不是 "[data-"）。 */
+  function branchesOf(ruleSelector) {
+    return ruleSelector.split(/,(?=\[data-(?:conversation-content|conversation-session|step-process)\])/)
+  }
+  it('每条规则的每个分支都是完整 selector：都携带组条件，绝无裸会话分支', () => {
     T.completedStepTopBags.set('sess-A', { remaining: ['spade'], previous: undefined, pool: T.pokerFacePool().join(',') })
     const css = T.buildStepCardRulesCss(RULES_MAP, 'sess-A')
-    // 作用域是选择器列表前缀：[官方会话属性] 与 [rc.1 回退] 两条并列，各自接同一个组选择器
-    assert.ok(css.includes('[data-conversation-session="sess-A"], '), '官方作用域分支')
-    assert.ok(css.includes('[data-conversation-content]:not([data-conversation-session]) [data-step-process]'), 'rc.1 回退分支（带属性宿主上永不命中）')
-    assert.ok(css.includes('[data-step-process][data-chat-group-key='), '两条分支都指向同一条组规则')
+    const lines = css.split('\n').filter(Boolean)
+    assert.equal(lines.length, 2, '收起 + 扇形两条规则')
+    for (const line of lines) {
+      const selector = line.slice(0, line.indexOf('{'))
+      const branches = branchesOf(selector)
+      assert.equal(branches.length, 2, 'selector list 恰好两支：' + selector.slice(0, 100))
+      for (const branch of branches) {
+        assert.ok(branch.includes('[data-step-process][data-chat-group-key='), '每个分支都必须携带完整组条件：' + branch)
+        assert.ok(!/^\[data-conversation-session="[^"]+"\]$/.test(branch.trim()), '禁止裸会话选择器分支：' + branch)
+      }
+      assert.ok(branches[0].startsWith('[data-conversation-session="sess-A"] '), '支 1 = 官方会话锚点 + 组')
+      assert.ok(branches[1].startsWith('[data-conversation-content]:not([data-conversation-session]) '), '支 2 = rc.1 回退 + 组')
+    }
   })
-  it('回退分支在新版 DOM 上确实不命中（属性存在 → :not() 失败）', () => {
-    const host = sharedDocument.createElement('div')
-    host.setAttribute('data-conversation-content', '')
-    host.setAttribute('data-conversation-session', 'sess-B')   // 新版：有属性
-    const group = sharedDocument.createElement('div')
-    group.setAttribute('data-step-process', '')
-    group.setAttribute('data-chat-group-key', '["process","same",null]')
-    host.appendChild(group)
-    sharedDocument.body.appendChild(host)
+  it('sessionId / groupKey 都走 cssAttrValue 转义（引号、反斜杠），且两支独立转义', () => {
+    const weirdSession = 'sess-"A"\\x'
+    const weirdKey = '["process","q\\"uote",null]'
+    T.completedStepTopBags.set(weirdSession, { remaining: ['spade'], previous: undefined, pool: T.pokerFacePool().join(',') })
+    const css = T.buildStepCardRulesCss({ [weirdKey]: { count: 3, closed: true } }, weirdSession)
+    assert.ok(css.includes('[data-conversation-session="' + T.cssAttrValue(weirdSession) + '"]'), 'sessionId 必须转义')
+    assert.equal((css.match(new RegExp('data-chat-group-key="' + T.cssAttrValue(weirdKey).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 4, 'groupKey 必须转义：收起/扇形两规则 × 两支各一次')
+    assert.ok(!css.includes('sess-"A"'), '不得残留未转义引号')
+  })
+  it('没有 sessionId（旧宿主）→ 不加前缀（回落历史选择器），且输出层不与其他会话并存', () => {
+    const css = T.buildStepCardRulesCss({ [RULES_MAP && Object.keys(RULES_MAP)[0]]: { count: 3, closed: true } }, undefined)
+    assert.ok(css.includes('[data-step-process][data-chat-group-key="'), '无 sessionId → 历史选择器')
+    assert.ok(!css.includes('data-conversation-session'), '无 sessionId 不得凭空加作用域')
+  })
+  it('DOM 行为：official selector 只命中带属性的 official 树；fallback selector 只命中无属性树', () => {
+    T.completedStepTopBags.set('sess-A', { remaining: ['spade'], previous: undefined, pool: T.pokerFacePool().join(',') })
+    const css = T.buildStepCardRulesCss(RULES_MAP, 'sess-A')
+    const selectorOf = (line) => line.slice(0, line.indexOf('{'))
+    const lines = css.split('\n').filter(Boolean)
+    const officialSel = selectorOf(lines[0])
+    /** 规则挂在 [data-step-process-icon] 上（::before 不可用于 matches）：剥掉伪元素后
+     *  按"规则实际挂的元素"匹配（收起态规则 = 组根下图标位）。 */
+    const stripPseudo = (sel) => sel.split('::before').join('')
+    const buildHost = (parent, withSession) => {
+      const group = sharedDocument.createElement('div')
+      group.setAttribute('data-step-process', '')
+      group.setAttribute('data-chat-group-key', '["process","same",null]')
+      const icon = sharedDocument.createElement('span')
+      icon.setAttribute('data-step-process-icon', '')
+      group.appendChild(icon)
+      parent.appendChild(group)
+      return icon
+    }
+    // official 树（rc.2+ 形状：内容根带 data-conversation-session）
+    const officialTree = sharedDocument.createElement('div')
+    officialTree.setAttribute('data-conversation-content', '')
+    officialTree.setAttribute('data-conversation-session', 'sess-A')
+    const officialIcon = buildHost(officialTree, true)
+    // rc.1 树（只有 data-conversation-content）
+    const rc1Tree = sharedDocument.createElement('div')
+    rc1Tree.setAttribute('data-conversation-content', '')
+    const rc1Icon = buildHost(rc1Tree, false)
+    // 别的会话树
+    const otherTree = sharedDocument.createElement('div')
+    otherTree.setAttribute('data-conversation-session', 'sess-B')
+    const otherIcon = buildHost(otherTree, true)
+    sharedDocument.body.appendChild(officialTree)
+    sharedDocument.body.appendChild(rc1Tree)
+    sharedDocument.body.appendChild(otherTree)
     try {
-      assert.equal(group.matches('[data-conversation-content]:not([data-conversation-session]) [data-step-process]'), false, '新版宿主不得命中回退分支')
-      assert.equal(group.matches('[data-conversation-session="sess-B"] [data-step-process]'), true, '应命中自己的会话作用域')
-      assert.equal(group.matches('[data-conversation-session="sess-A"] [data-step-process]'), false, '不得命中别的会话')
-      host.removeAttribute('data-conversation-session')       // rc.1：没有属性
-      assert.equal(group.matches('[data-conversation-content]:not([data-conversation-session]) [data-step-process]'), true, 'rc.1 应命中回退分支（该代无法在 CSS 层区分会话）')
-    } finally { host.remove() }
+      // 整条 selector list（两支）：official 与 rc.1 的图标位都命中（各自经不同支）
+      assert.ok(officialIcon.matches(stripPseudo(officialSel)), 'official 图标命中 selector list（支 1）')
+      assert.ok(rc1Icon.matches(stripPseudo(officialSel)), 'rc.1 图标命中 selector list（支 2）')
+      assert.ok(!otherIcon.matches(stripPseudo(officialSel)), '别的会话树绝不命中（两支都不命中 sess-B）')
+      // 支 1 单独：只命中 official 树
+      const branch1 = stripPseudo(branchesOf(officialSel)[0])
+      assert.ok(officialIcon.matches(branch1), '支 1 命中 official 树的图标位')
+      assert.ok(!rc1Icon.matches(branch1), '支 1 不命中 rc.1 树')
+      assert.ok(!otherIcon.matches(branch1), '支 1 不命中别的会话树')
+      // 支 2 单独：只命中无属性树（rc.1 / 无会话锚点）
+      const branch2 = stripPseudo(branchesOf(officialSel)[1])
+      assert.ok(rc1Icon.matches(branch2), '支 2 命中 rc.1 树的图标位')
+      assert.ok(!officialIcon.matches(branch2), '支 2 在带属性宿主上永不命中（:not 失败）')
+      assert.ok(!otherIcon.matches(branch2), '支 2 不命中带属性的别的会话树')
+      // 两支都携带完整后缀（shimmer 排除 + 卡牌位 + ::before）——不存在"只拼到第二支"的裸分支
+      assert.ok(branchesOf(officialSel)[0].includes(':not(:has([data-shimmer="true"]))') && branchesOf(officialSel)[0].endsWith('[data-step-process-icon]::before'), '支 1 携带完整 shimmer 排除 + 卡牌位')
+      assert.ok(branchesOf(officialSel)[1].includes(':not(:has([data-shimmer="true"]))') && branchesOf(officialSel)[1].endsWith('[data-step-process-icon]::before'), '支 2 携带完整 shimmer 排除 + 卡牌位')
+      assert.ok(sharedDocument.querySelector('[data-conversation-session="sess-A"] [data-step-process]'), '支 1 不是裸会话选择器：它能精确命中组')
+    } finally {
+      officialTree.remove(); rc1Tree.remove(); otherTree.remove()
+    }
   })
 })
 
-describe('兼容架构 D：hybrid 宿主的 Step legacy 由渲染期定论', () => {
-  it('会话快照没有 grouped view（0.1.2 ~ 0.1.6）→ 记一次 Step legacy，且不写任何规则', () => {
-    const before = T.getLegacyEngineActivations()
-    const snapshot = { views: { grouped: undefined } }   // 官方 Process Group 契约缺失
-    const useConversation = (selector) => react.useSyncExternalStore(() => () => {}, () => selector(snapshot))
+describe('兼容架构 D：运行时 resolution（unknown → modern / legacy / 保持 unknown）', () => {
+  const SNAPSHOT_KEY = '["process","same",null]'
+  const GROUP_VALUE = { key: SNAPSHOT_KEY, members: [], data: { turn: 1, closed: true, summary: { counts: [{ kind: 'read', count: 2 }] } } }
+  function makeConv(snapshot) {
+    return (selector) => react.useSyncExternalStore(() => () => {}, () => selector(snapshot))
+  }
+  function renderBridge(useConversation, sessionId) {
     const container = sharedDocument.createElement('div')
     sharedDocument.body.appendChild(container)
     const root = createRoot(container)
+    act(() => { root.render(react.createElement(T.StepCardRulesBridge, { useConversation, sessionId })) })
+    return { root, container }
+  }
+  function teardown(h) { act(() => { h.root.unmount() }); h.container.remove() }
+
+  it('D1 快照未就绪（undefined）→ step 保持 unknown，legacy 激活为 0', () => {
+    T.hostCapabilityState.stepFold = 'unknown'
+    const before = T.getLegacyEngineActivations()
+    const h = renderBridge(makeConv(undefined), 'd1-sess')
     try {
-      act(() => { root.render(react.createElement(T.StepCardRulesBridge, { useConversation, sessionId: 'hybrid-sess' })) })
+      assert.equal(T.hostCapabilityState.stepFold, 'unknown', '未就绪 ≠ legacy：保持 unknown')
+      assert.deepEqual(T.getLegacyEngineActivations(), before, '未就绪绝不激活 legacy')
+    } finally { teardown(h) }
+  })
+  it('D2 契约缺失（快照就绪、views.grouped 不是函数）→ step=legacy，记一次激活', () => {
+    T.hostCapabilityState.stepFold = 'unknown'
+    const before = T.getLegacyEngineActivations()
+    const h = renderBridge(makeConv({ views: {} }), 'd2-sess')
+    try {
+      assert.equal(T.hostCapabilityState.stepFold, 'legacy', '快照就绪 + 契约缺失 → 显式 legacy')
       const after = T.getLegacyEngineActivations()
-      assert.equal(after.step - before.step, 1, 'hybrid：Step legacy 记一次')
-      assert.equal(after.turn - before.turn, 0, 'hybrid：Turn 仍由官方 owner state 拥有')
-      const rules = (sharedDocument.querySelector('style[data-plugin-css="' + T.STEP_CARD_CSS_ID + '"]') || { textContent: '' }).textContent
-      assert.equal(rules, '', '拿不到官方分组就不写任何视觉规则（不猜、不假装）')
+      assert.equal(after.step - before.step, 1, 'Legacy Step 激活记账 1')
+      assert.equal(after.turn - before.turn, 0, 'Turn 与该定论无关')
+    } finally { teardown(h) }
+  })
+  it('D3 契约在（views.grouped 是函数）→ step=modern，legacy 激活恒 0（grouped 读端暂无数据不算缺失）', () => {
+    T.hostCapabilityState.stepFold = 'unknown'
+    const before = T.getLegacyEngineActivations()
+    // 契约在但读端 undefined（无活动 Group Definition）→ 是"暂无数据"，不是"没有能力"
+    const snapshot = { views: { grouped: () => undefined } }
+    const h = renderBridge(makeConv(snapshot), 'd3-sess')
+    try {
+      assert.equal(T.hostCapabilityState.stepFold, 'modern', '契约在 → modern（读端数据可以后到）')
+      assert.deepEqual(T.getLegacyEngineActivations(), before, 'modern 宿主 legacy 激活恒 0')
+    } finally { teardown(h) }
+  })
+  it('D4 现代宿主全链路：contract true → step=modern；不写 legacy；幂等（重渲染不重复定论/翻转）', () => {
+    T.hostCapabilityState.turnFold = 'modern'
+    T.hostCapabilityState.stepFold = 'unknown'
+    T.hostCapabilityState.metrics = 'unknown'
+    const before = T.getLegacyEngineActivations()
+    const grouped = { entries: [{ kind: 'group', key: SNAPSHOT_KEY }], groupSource: () => ({ getSnapshot: () => GROUP_VALUE, subscribe: () => () => {} }) }
+    const h = renderBridge(makeConv({ views: { grouped: () => grouped } }), 'd4-sess')
+    const h2 = renderBridge(makeConv({ views: { grouped: () => grouped } }), 'd4-sess')
+    try {
+      assert.equal(T.hostCapabilityState.stepFold, 'modern', '契约在 → modern')
     } finally {
-      act(() => { root.unmount() })
-      container.remove()
+      teardown(h)
+      teardown(h2)
     }
+    assert.equal(T.hostCapabilityState.stepFold, 'modern', '重渲染/卸载不翻转')
+    assert.deepEqual(T.getLegacyEngineActivations(), before, '全程 0 激活')
+    assert.equal(T.getStepCardBridgeSessionCount(), 0, '卸载后 registry 清空')
+  })
+  it('D5 已定论的 feature 不翻转（resolveHostFeature 单向迁移）', () => {
+    T.hostCapabilityState.stepFold = 'modern'
+    assert.equal(T.resolveHostFeature('stepFold', 'legacy'), false, 'modern 不得翻转为 legacy')
+    assert.equal(T.hostCapabilityState.stepFold, 'modern')
+    T.hostCapabilityState.stepFold = 'legacy'
+    assert.equal(T.resolveHostFeature('stepFold', 'modern'), false, 'legacy 不得翻转为 modern')
+    assert.equal(T.hostCapabilityState.stepFold, 'legacy')
+    assert.equal(T.resolveHostFeature('stepFold', undefined), false, '非定论值不写入')
+    assert.equal(T.hostCapabilityState.stepFold, 'legacy')
+    T.hostCapabilityState.stepFold = 'unknown'
+    assert.equal(T.resolveHostFeature('stepFold', 'modern'), true, 'unknown → 定论是合法迁移')
+    T.hostCapabilityState.stepFold = 'unknown'
+  })
+})
+
+describe('兼容架构 E：metrics 与 Turn fold 解耦（渲染期真实探测）', () => {
+  function renderTurnBar(props) {
+    const container = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(container)
+    const root = createRoot(container)
+    act(() => { root.render(react.createElement(T.EnhancedTurnProcessView, props)) })
+    return { root, container, cleanup: () => { act(() => { root.unmount() }); container.remove() } }
+  }
+  it('E1 nodes.turnDataSource 在 → metrics=reactive（0.1.7+ 形状）', () => {
+    T.hostCapabilityState.metrics = 'unknown'
+    const useChat = (selector) => selector({ nodes: { turnDataSource: () => ({ getSnapshot: () => [], subscribe: () => () => {} }) } })
+    const v = renderTurnBar({
+      node: { data: { turn: 1, status: 'open', startTime: 1000, endTime: null } },
+      useChat,
+    })
+    try {
+      assert.equal(T.hostCapabilityState.metrics, 'reactive')
+    } finally { v.cleanup() }
+  })
+  it('E2 nodes 在但 turnDataSource 缺失 → metrics=fallback（0.1.2~0.1.6 形状），Turn fold 不受影响', () => {
+    T.hostCapabilityState.metrics = 'unknown'
+    T.hostCapabilityState.turnFold = 'modern'
+    const before = T.getLegacyEngineActivations()
+    const useChat = (selector) => selector({ nodes: {} })
+    const v = renderTurnBar({
+      node: { data: { turn: 1, status: 'open', startTime: 1000, endTime: null } },
+      useChat,
+    })
+    try {
+      assert.equal(T.hostCapabilityState.metrics, 'fallback', '无 turnDataSource = fallback 数据面')
+      assert.equal(T.hostCapabilityState.turnFold, 'modern', 'Turn fold 能力不被 metrics 改写')
+      assert.equal(T.getLegacyEngineActivations().turn - before.turn, 0, 'metrics fallback 绝不触发 legacy fold engine')
+      assert.equal(T.getLegacyEngineActivations().step - before.step, 0, 'metrics fallback 也不触碰 Step legacy 计数')
+    } finally { v.cleanup() }
+  })
+  it('E3 快照未就绪（nodes 缺失）→ metrics 保持 unknown（不定论、不猜）', () => {
+    T.hostCapabilityState.metrics = 'unknown'
+    const useChat = (selector) => selector(undefined)
+    const v = renderTurnBar({
+      node: { data: { turn: 1, status: 'open', startTime: 1000, endTime: null } },
+      useChat,
+    })
+    try {
+      assert.equal(T.hostCapabilityState.metrics, 'unknown', '未就绪 ≠ fallback')
+    } finally { v.cleanup() }
+  })
+  it('E4 已定论不翻转：reactive 之后即使快照短暂未就绪也不回退', () => {
+    T.hostCapabilityState.metrics = 'reactive'
+    const useChat = (selector) => selector(undefined)
+    const v = renderTurnBar({
+      node: { data: { turn: 1, status: 'open', startTime: 1000, endTime: null } },
+      useChat,
+    })
+    try {
+      assert.equal(T.hostCapabilityState.metrics, 'reactive')
+    } finally { v.cleanup() }
+    T.hostCapabilityState.metrics = 'unknown'
+  })
+})
+
+describe('兼容架构 F：诊断两行制（probing → resolved，每有效变化最多一次）', () => {
+  const originalInfo = console.info
+  let lines = []
+  function capture() {
+    lines = []
+    console.info = (...args) => { lines.push(args.join(' ')) }
+  }
+  function release() { console.info = originalInfo }
+  it('F1 注册期输出 probing 事实行，绝不下 mixed/modern 结论', () => {
+    capture()
+    try {
+      T.resetHostCapabilityDiagnostics()
+      T.hostCapabilityState.turnFold = 'unknown'
+      T.hostCapabilityState.stepFold = 'unknown'
+      T.hostCapabilityState.metrics = 'unknown'
+      const caps = T.hostCapabilitiesOf({ nativeTurnFold: true })
+      T.adoptRegistrationCapabilities(caps)
+      assert.equal(lines.length, 1, '注册期恰好一行')
+      assert.ok(lines[0].includes('host capabilities: turn=modern, step=probing, metrics=probing'), 'probing 行：' + lines[0])
+      assert.ok(!lines[0].includes('host mode'), '注册期不得输出 host mode 行')
+      // 重复 adopt（同一签名）→ 不重复输出
+      T.adoptRegistrationCapabilities(caps)
+      assert.equal(lines.length, 1, '签名不变不刷屏')
+    } finally { release() }
+  })
+  it('F2 运行时全部定论 → 输出最终 host mode 行（modern），恰一行', () => {
+    capture()
+    try {
+      T.resetHostCapabilityDiagnostics()
+      T.hostCapabilityState.turnFold = 'modern'
+      T.hostCapabilityState.stepFold = 'unknown'
+      T.hostCapabilityState.metrics = 'unknown'
+      T.resolveHostFeature('stepFold', 'modern')
+      assert.equal(lines.length, 0, 'metrics 未定论 → 还不输出 mode 行（modern+unknown 不是 mixed）')
+      T.resolveHostFeature('metrics', 'reactive')
+      assert.equal(lines.length, 1, '全部定论 → 恰一行')
+      assert.ok(lines[0].includes('host mode: modern (turn: modern, step: modern, metrics: reactive)'), '最终行：' + lines[0])
+      T.resolveHostFeature('metrics', 'fallback')
+      T.resolveHostFeature('stepFold', 'legacy')
+      assert.equal(lines.length, 1, '已定论 feature 不翻转、不重复输出')
+    } finally { release() }
+  })
+  it('F3 hybrid 宿主 → host mode: mixed (turn: modern, step: legacy, metrics: fallback)', () => {
+    capture()
+    try {
+      T.resetHostCapabilityDiagnostics()
+      T.hostCapabilityState.turnFold = 'modern'
+      T.hostCapabilityState.stepFold = 'unknown'
+      T.hostCapabilityState.metrics = 'unknown'
+      T.resolveHostFeature('stepFold', 'legacy')
+      T.resolveHostFeature('metrics', 'fallback')
+      const modeLines = lines.filter((l) => l.includes('host mode:'))
+      assert.equal(modeLines.length, 1)
+      assert.ok(modeLines[0].includes('host mode: mixed (turn: modern, step: legacy, metrics: fallback)'), modeLines[0])
+    } finally { release() }
+  })
+  it('F4 legacy 宿主：turn=legacy 单独定论 mode（step/metrics 如实显示 unknown）', () => {
+    capture()
+    try {
+      T.resetHostCapabilityDiagnostics()
+      T.hostCapabilityState.turnFold = 'unknown'
+      T.hostCapabilityState.stepFold = 'unknown'
+      T.hostCapabilityState.metrics = 'unknown'
+      const caps = T.hostCapabilitiesOf({ nativeTurnFold: false })
+      T.adoptRegistrationCapabilities(caps)
+      const modeLines = lines.filter((l) => l.includes('host mode:'))
+      assert.ok(lines.some((l) => l.includes('host capabilities: turn=legacy, step=probing, metrics=probing')), 'probing 行')
+      assert.equal(modeLines.length, 1, 'legacy 宿主现代渲染器不注册 → mode 由 turn 定论')
+      assert.ok(modeLines[0].includes('host mode: legacy (turn: legacy, step: unknown, metrics: unknown)'), modeLines[0])
+    } finally { release() }
   })
 })

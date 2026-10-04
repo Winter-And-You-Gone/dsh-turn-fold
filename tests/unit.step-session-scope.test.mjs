@@ -36,6 +36,8 @@ beforeEach(() => {
   T.writeStepCardRules(null)
   T.completedStepTopFaces.clear()
   T.completedStepTopBags.clear()
+  T.resetOfficialSessionScopeProbe()
+  T.hostCapabilityState.sessionScope = 'unknown'
 })
 afterEach(() => {
   act(() => { root.unmount() })
@@ -43,6 +45,7 @@ afterEach(() => {
   container = null
   root = null
   T.writeStepCardRules(null)
+  T.resetOfficialSessionScopeProbe()
 })
 
 const cardRulesCss = () => (sharedDocument.querySelector('style[data-plugin-css="' + T.STEP_CARD_CSS_ID + '"]') || { textContent: '' }).textContent
@@ -93,16 +96,36 @@ function buildTree(sessionId, groupKey) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// A. 规则带会话作用域前缀（含转义）
+// A. 规则带会话作用域前缀（含转义；selector 以完整 host 逐支生成）
 // ══════════════════════════════════════════════════════════════════════
+/** 把一条规则的 selector（{ 之前）按分支拆开（逗号只在分支起点前，
+ *  groupKey JSON 内部逗号在引号里、后随字符不是 "[data-"）。 */
+const splitBranches = (ruleSelector) =>
+  ruleSelector.split(/,(?=\[data-(?:conversation-content|conversation-session|step-process)\])/)
+
 describe('Session 作用域 A：选择器前缀', () => {
-  it('buildStepCardRulesCss：有 sessionId → 每条规则都带 [data-conversation-session] 前缀', () => {
+  it('buildStepCardRulesCss：有 sessionId → 每条规则两支完整 selector，各自带会话前缀 + 组条件', () => {
     seedBag('sess-A', ['spade'])
     const css = T.buildStepCardRulesCss({ [SAME_KEY]: { count: 3, closed: true } }, 'sess-A')
     const lines = css.split('\n').filter(Boolean)
     assert.equal(lines.length, 2)
     for (const line of lines) {
-      assert.ok(line.startsWith('[data-conversation-session="sess-A"], [data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="'), '必须带会话作用域前缀：' + line.slice(0, 90))
+      const selector = line.slice(0, line.indexOf('{'))
+      const branches = splitBranches(selector)
+      assert.equal(branches.length, 2, '两支：官方锚点 + rc.1 回退：' + selector.slice(0, 90))
+      assert.ok(branches[0].startsWith('[data-conversation-session="sess-A"] [data-step-process][data-chat-group-key="'), '支 1 = 会话作用域 + 完整组条件：' + branches[0])
+      assert.ok(branches[1].startsWith('[data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="'), '支 2 = rc.1 回退 + 完整组条件：' + branches[1])
+    }
+  })
+  it('回归锁定：绝不允许"scope = A, B 再统一追加 suffix"的拼接（裸会话分支）', () => {
+    seedBag('sess-A', ['spade'])
+    const css = T.buildStepCardRulesCss({ [SAME_KEY]: { count: 3, closed: true } }, 'sess-A')
+    for (const line of css.split('\n').filter(Boolean)) {
+      for (const branch of splitBranches(line.slice(0, line.indexOf('{')))) {
+        // 旧 bug 的第一支是裸 [data-conversation-session="sess-A"]（组条件只拼到第二支）
+        assert.ok(branch.includes('[data-chat-group-key='), '每个分支都必须携带组条件：' + branch)
+        assert.ok(!/^\[data-conversation-session="[^"]+"\]$/.test(branch.trim()), '禁止裸会话分支：' + branch)
+      }
     }
   })
   it('sessionId / groupKey 都走 cssAttrValue 转义（引号、反斜杠）', () => {
@@ -118,15 +141,6 @@ describe('Session 作用域 A：选择器前缀', () => {
     const css = T.buildStepCardRulesCss({ [SAME_KEY]: { count: 3, closed: true } }, undefined)
     assert.ok(css.includes('[data-step-process][data-chat-group-key="'), '无 sessionId → 历史选择器')
     assert.ok(!css.includes('data-conversation-session'), '无 sessionId 不得凭空加作用域')
-  })
-  it('无作用域块 + 有作用域块共存 → 只输出带作用域的块（不输出无作用域的裸规则）', () => {
-    seedBag('', ['club'])
-    T.stepCardRulesBySession.set('', 'PLAIN-CHUNK')
-    T.stepCardRulesBySession.set('sess-A', 'SCOPED-CHUNK')
-    T.writeStepCardRulesMerged()
-    assert.equal(cardRulesCss(), 'SCOPED-CHUNK', '有多会话候选时不输出裸规则')
-    assert.ok(!cardRulesCss().includes('PLAIN-CHUNK'))
-    T.stepCardRulesBySession.clear()
   })
 })
 
@@ -174,23 +188,31 @@ describe('Session 作用域 B/C：same groupKey 双树隔离', () => {
   it('C/D/E：A 卸载后 B 仍在场、仍是自己的 set；A 的块被撤下', async () => {
     seedBag('sess-A', ['spade'])
     seedBag('sess-B', ['heart'])
+    // rc.2+ 形状：official 会话锚点在场 → 双作用域块全部输出（tree-only 降级由 K 组专测）
+    const treeA = buildTree('sess-A', SAME_KEY)
+    const treeB = buildTree('sess-B', SAME_KEY)
     const a = makeSession([SAME_KEY])
     const b = makeSession([SAME_KEY])
-    renderSubtree(react.createElement(react.Fragment, null, [
-      bridgeNode(a, 'sess-A', 'A'), bridgeNode(b, 'sess-B', 'B'),
-    ]))
-    const setA = T.completedFaceSetFor(3, 'spade')
-    const setB = T.completedFaceSetFor(3, 'heart')
-    assert.ok(cardRulesCss().includes('--tf-face-' + setA.id + '-stack') && cardRulesCss().includes('--tf-face-' + setB.id + '-stack'))
-    renderSubtree(bridgeNode(b, 'sess-B', 'B'))
-    await flushMicrotasks()
-    assert.equal(T.getCompletedStepFaceCount('sess-A'), 0, 'A 的分配已清')
-    assert.equal(T.hasCompletedStepBag('sess-A'), false, 'A 的 bag 已清')
-    assert.equal(T.completedStepTopFace('sess-B', SAME_KEY), 'heart', 'B 保持自己的牌面')
-    const css = cardRulesCss()
-    assert.ok(!css.includes('data-conversation-session="sess-A"'), 'A 的块已撤下')
-    assert.ok(css.includes('data-conversation-session="sess-B"'), 'B 的块仍在')
-    assert.ok(css.includes('--tf-face-' + setB.id + '-stack') && !css.includes('--tf-face-' + setA.id + '-stack'), '只留 B 的 set')
+    try {
+      renderSubtree(react.createElement(react.Fragment, null, [
+        bridgeNode(a, 'sess-A', 'A'), bridgeNode(b, 'sess-B', 'B'),
+      ]))
+      const setA = T.completedFaceSetFor(3, 'spade')
+      const setB = T.completedFaceSetFor(3, 'heart')
+      assert.ok(cardRulesCss().includes('--tf-face-' + setA.id + '-stack') && cardRulesCss().includes('--tf-face-' + setB.id + '-stack'))
+      renderSubtree(bridgeNode(b, 'sess-B', 'B'))
+      await flushMicrotasks()
+      assert.equal(T.getCompletedStepFaceCount('sess-A'), 0, 'A 的分配已清')
+      assert.equal(T.hasCompletedStepBag('sess-A'), false, 'A 的 bag 已清')
+      assert.equal(T.completedStepTopFace('sess-B', SAME_KEY), 'heart', 'B 保持自己的牌面')
+      const css = cardRulesCss()
+      assert.ok(!css.includes('data-conversation-session="sess-A"'), 'A 的块已撤下')
+      assert.ok(css.includes('data-conversation-session="sess-B"'), 'B 的块仍在')
+      assert.ok(css.includes('--tf-face-' + setB.id + '-stack') && !css.includes('--tf-face-' + setA.id + '-stack'), '只留 B 的 set')
+    } finally {
+      treeA.body.remove()
+      treeB.body.remove()
+    }
   })
 })
 
@@ -235,19 +257,27 @@ describe('Session 作用域 F/G/H：零回归', () => {
   it('I：StrictMode 下同名 key 双 session 的作用域规则与 leader 都正常', () => {
     seedBag('sess-A', ['spade'])
     seedBag('sess-B', ['heart'])
+    // official 锚点在场（rc.2+）→ 双作用域块正常输出
+    const treeA = buildTree('sess-A', SAME_KEY)
+    const treeB = buildTree('sess-B', SAME_KEY)
     const a = makeSession([SAME_KEY])
     const b = makeSession([SAME_KEY])
-    renderSubtree(react.createElement(react.StrictMode, null, react.createElement(react.Fragment, null, [
-      bridgeNode(a, 'sess-A', 'A'), bridgeNode(b, 'sess-B', 'B'),
-    ])))
-    assert.equal(T.getStepCardBridgeInstanceCount('sess-A'), 1, 'StrictMode 无重复注册')
-    assert.equal(T.getStepCardBridgeInstanceCount('sess-B'), 1)
-    assert.equal(T.getStepCardBridgeLeaderCount('sess-A'), 1)
-    assert.equal(T.getStepCardBridgeLeaderCount('sess-B'), 1)
-    const css = cardRulesCss()
-    assert.ok(css.includes('data-conversation-session="sess-A"') && css.includes('data-conversation-session="sess-B"'), '两个作用域都在')
-    assert.ok(css.includes('--tf-face-' + T.completedFaceSetFor(3, 'spade').id + '-stack'))
-    assert.ok(css.includes('--tf-face-' + T.completedFaceSetFor(3, 'heart').id + '-stack'))
+    try {
+      renderSubtree(react.createElement(react.StrictMode, null, react.createElement(react.Fragment, null, [
+        bridgeNode(a, 'sess-A', 'A'), bridgeNode(b, 'sess-B', 'B'),
+      ])))
+      assert.equal(T.getStepCardBridgeInstanceCount('sess-A'), 1, 'StrictMode 无重复注册')
+      assert.equal(T.getStepCardBridgeInstanceCount('sess-B'), 1)
+      assert.equal(T.getStepCardBridgeLeaderCount('sess-A'), 1)
+      assert.equal(T.getStepCardBridgeLeaderCount('sess-B'), 1)
+      const css = cardRulesCss()
+      assert.ok(css.includes('data-conversation-session="sess-A"') && css.includes('data-conversation-session="sess-B"'), '两个作用域都在')
+      assert.ok(css.includes('--tf-face-' + T.completedFaceSetFor(3, 'spade').id + '-stack'))
+      assert.ok(css.includes('--tf-face-' + T.completedFaceSetFor(3, 'heart').id + '-stack'))
+    } finally {
+      treeA.body.remove()
+      treeB.body.remove()
+    }
   })
   it('J：running 组零回归（同名 key、双 session 场景下也不分配/不写规则）', () => {
     const key = SAME_KEY
@@ -259,5 +289,130 @@ describe('Session 作用域 F/G/H：零回归', () => {
     assert.equal(T.getCompletedStepFaceCount('sess-A'), 0, 'running 不分配')
     assert.equal(T.hasCompletedStepBag('sess-A'), false, 'running 不建袋')
     assert.equal(cardRulesCss(), '', 'running 不写规则')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// K. 会话作用域输出策略（0.1.7-rc.1 tree-only 安全降级；§41/§42/§43）
+//    official 锚点在场 → 作用域块全部输出（0.1.7-rc.2+ 双树完全隔离）；
+//    无 official 锚点 → 单会话可输出，多会话撤下 session-specific 覆盖，
+//    回落基础 Step Poker（running 五牌面轮换在皮肤表，不受影响）。
+// ══════════════════════════════════════════════════════════════════════
+describe('Session 作用域 K：tree-only 多会话安全降级', () => {
+  it('K0 合并策略单元语义：无 official 锚点 + 双候选块 → 一律不输出（含 plain 块）', () => {
+    seedBag('', ['club'])
+    T.stepCardRulesBySession.set('', 'PLAIN-CHUNK')
+    T.stepCardRulesBySession.set('sess-A', 'SCOPED-CHUNK')
+    T.writeStepCardRulesMerged()
+    assert.equal(cardRulesCss(), '', 'tree-only 多会话：所有 session-specific 覆盖撤下（少个性 > 串样式）')
+    T.stepCardRulesBySession.clear()
+    T.writeStepCardRulesMerged()
+    // 单候选块仍可输出（它只可能命中自己那棵树）
+    T.stepCardRulesBySession.set('sess-A', 'SCOPED-CHUNK')
+    T.writeStepCardRulesMerged()
+    assert.equal(cardRulesCss(), 'SCOPED-CHUNK', '单会话照常输出')
+    T.stepCardRulesBySession.clear()
+    T.writeStepCardRulesMerged()
+  })
+  it('K1 official 锚点在场（rc.2+）→ 双 session 同名 groupKey 全部输出、互不影响', () => {
+    seedBag('sess-A', ['spade'])
+    seedBag('sess-B', ['heart'])
+    const treeA = buildTree('sess-A', SAME_KEY)   // 带 data-conversation-session
+    const treeB = buildTree('sess-B', SAME_KEY)
+    try {
+      const a = makeSession([SAME_KEY])
+      const b = makeSession([SAME_KEY])
+      renderSubtree(react.createElement(react.Fragment, null, [
+        bridgeNode(a, 'sess-A', 'A'), bridgeNode(b, 'sess-B', 'B'),
+      ]))
+      assert.equal(T.probeOfficialSessionScope(), true, '官方锚点在场 → official 定论')
+      assert.equal(T.hostCapabilityState.sessionScope, 'official', 'sessionScope 运行时定论')
+      const css = cardRulesCss()
+      assert.ok(css.includes('data-conversation-session="sess-A"') && css.includes('data-conversation-session="sess-B"'), '双作用域块同时在场')
+      assert.ok(css.includes('--tf-face-' + T.completedFaceSetFor(3, 'spade').id + '-stack'), 'A 的 set 在场')
+      assert.ok(css.includes('--tf-face-' + T.completedFaceSetFor(3, 'heart').id + '-stack'), 'B 的 set 也在场')
+    } finally {
+      treeA.body.remove()
+      treeB.body.remove()
+    }
+  })
+  it('K2 tree-only（无 official 锚点）：单 session 输出 group-specific 覆盖', async () => {
+    seedBag('solo', ['spade'])
+    const a = makeSession([SAME_KEY])
+    renderSubtree(bridgeNode(a, 'solo', 'A'))
+    // 无任何 official 树在 DOM → tree-only / 未定论；单候选 → 照常输出
+    const css = cardRulesCss()
+    assert.ok(css.includes('data-chat-group-key='), '单会话 tree-only 允许 group override')
+    assert.ok(css.includes('--tf-face-' + T.completedFaceSetFor(3, 'spade').id + '-stack'))
+  })
+  it('K3 tree-only：第二 session mount → 覆盖撤下；unmount → 恢复，无需刷新', async () => {
+    seedBag('solo-A', ['spade'])
+    seedBag('solo-B', ['heart'])
+    const setA = T.completedFaceSetFor(3, 'spade')
+    const a = makeSession([SAME_KEY])
+    renderSubtree(bridgeNode(a, 'solo-A', 'A'))
+    assert.ok(cardRulesCss().includes('--tf-face-' + setA.id + '-stack'), '单会话：A 的覆盖在场')
+    // 第二 session mount（带自己的 completed 组）→ 全部撤下
+    const b = makeSession([SAME_KEY])
+    renderSubtree(react.createElement(react.Fragment, null, [
+      bridgeNode(a, 'solo-A', 'A'), bridgeNode(b, 'solo-B', 'B'),
+    ]))
+    assert.equal(T.getStepCardBridgeSessionCount(), 2)
+    assert.equal(cardRulesCss(), '', '双会话 tree-only：session-specific 覆盖全部撤下（不串牌）')
+    // unmount 一个 → 回到单会话 → 剩余会话恢复输出（不需要刷新）
+    renderSubtree(bridgeNode(a, 'solo-A', 'A'))
+    await flushMicrotasks()
+    assert.equal(T.getStepCardBridgeSessionCount(), 1)
+    const css = cardRulesCss()
+    assert.ok(css.includes('data-chat-group-key='), '恢复单会话后重新输出')
+    assert.ok(css.includes('--tf-face-' + T.completedFaceSetFor(3, 'spade').id + '-stack'), 'A 保持自己的牌面分配')
+    assert.ok(!css.includes('--tf-face-' + T.completedFaceSetFor(3, 'heart').id + '-stack'), 'B 的块已撤下')
+  })
+  it('K4 降级只撤输出：completedFaceSets / 变体资产 / 分配全部保留（不清理）', async () => {
+    seedBag('solo-A', ['spade'])
+    seedBag('solo-B', ['heart'])
+    const a = makeSession([SAME_KEY])
+    const b = makeSession([SAME_KEY])
+    renderSubtree(react.createElement(react.Fragment, null, [
+      bridgeNode(a, 'solo-A', 'A'), bridgeNode(b, 'solo-B', 'B'),
+    ]))
+    const setA = T.completedFaceSetFor(3, 'spade')
+    assert.equal(cardRulesCss(), '', '降级在场')
+    assert.equal(T.getCompletedStepFaceCount('solo-A'), 1, '分配保留')
+    assert.ok(T.completedFaceSets.has('3:spade'), 'completedFaceSets 保留')
+    const assetEl = sharedDocument.querySelector('style[data-plugin-css="' + T.STEP_FACE_CSS_ID + '-' + setA.id + '"]')
+    assert.ok(assetEl, '变体样式元素保留（不重复注入、不清除）')
+  })
+  it('K5 降级时 running 五牌面轮换不受影响（基础皮肤表原样）', async () => {
+    seedBag('solo-A', ['spade'])
+    seedBag('solo-B', ['heart'])
+    const a = makeSession([SAME_KEY])
+    const b = makeSession([SAME_KEY])
+    renderSubtree(react.createElement(react.Fragment, null, [
+      bridgeNode(a, 'solo-A', 'A'), bridgeNode(b, 'solo-B', 'B'),
+    ]))
+    assert.equal(cardRulesCss(), '', 'completed 覆盖撤下')
+    const skin = sharedDocument.querySelector('style[data-plugin-css="' + T.SKIN_CSS_ID + '"]').textContent
+    assert.ok(skin.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before'), 'running 轮换规则仍在皮肤表')
+    assert.ok(skin.includes(':has([data-text-shimmer="true"]) [data-step-process-icon]::before'), '双契约 running 规则仍在')
+    assert.ok(skin.includes('@keyframes tf-step-open'), 'completed 通用双态（默认 5 张）仍在')
+  })
+  it('K6 会话作用域运行时定论：内容锚点在场但无 session 锚点 → tree-only（粘性否定）', () => {
+    const rc1Tree = sharedDocument.createElement('div')
+    rc1Tree.setAttribute('data-conversation-content', '')
+    sharedDocument.body.appendChild(rc1Tree)
+    try {
+      T.resetOfficialSessionScopeProbe()
+      assert.equal(T.probeOfficialSessionScope(), false, '无 session 锚点 → 非 official')
+      assert.equal(T.probeOfficialSessionScope(), false, '重复读取结论一致（粘性否定：rc.2+ 上两属性同 commit 渲染，"有 content 无 session"即定论）')
+      assert.equal(T.hostCapabilityState.sessionScope, 'unknown', 'tree-only 是审计层结论；运行时 DOM 只定论 official')
+      // 换一棵 official 树（新探针）→ 定论 official
+      T.resetOfficialSessionScopeProbe()
+      const rc2Tree = buildTree('rc2-sess', SAME_KEY)
+      try {
+        assert.equal(T.probeOfficialSessionScope(), true, '官方锚点在场 → official')
+        assert.equal(T.hostCapabilityState.sessionScope, 'official', 'sessionScope 运行时定论')
+      } finally { rc2Tree.body.remove() }
+    } finally { rc1Tree.remove() }
   })
 })

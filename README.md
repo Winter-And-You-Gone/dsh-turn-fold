@@ -231,8 +231,10 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   逐组牌面规则额外消费官方会话锚点 `data-conversation-session`（0.1.7-rc.2+；
   **官方自己的 `stop-shortcut` 就是用 `closest('[data-conversation-session]')` 解析会话**，
   属官方既有契约）：该属性缺失的宿主（0.1.7-rc.1）由 CSS 回退分支
-  `[data-conversation-content]:not([data-conversation-session])` 兜住，规则不会漏到别的会话树；
-  插件不写官方 DOM、不加任何官方属性。
+  `[data-conversation-content]:not([data-conversation-session])` 兜住；0.1.7-rc.1 没有
+  官方会话锚点、CSS 无法区分两棵会话树，多会话并存时插件**自动撤下 session-specific
+  的 completed 牌面覆盖**（回落基础 Step Poker 通用视觉），绝不让 Session A/B 串样式
+  （详见下方「会话作用域四态」）；插件不写官方 DOM、不加任何官方属性。
 
 ## Compatibility Architecture
 
@@ -245,34 +247,121 @@ Process Group disclosure）；插件只做 UI（Turn 栏 / Poker / 指标 / toke
                                  │
         ┌────────────────────────┴────────────────────────┐
    Modern Adapter                                  Legacy Adapter
-   （官方契约齐全）                                 （官方契约缺失时才启用）
+   （官方契约齐全）                                 （官方契约缺失且被显式证明时才启用）
         └────────────────────────┬────────────────────────┘
                                  │
                      Shared UI（Turn 栏 / Poker / 指标 / token 动画 / 设置）
 ```
 
-**Legacy adapter 在官方等价契约存在时永不运行**：判据全部是能力探针
-（官方 `conversation.chat.node` 里有没有 `turn-process` 条目、会话快照有没有
-`views.grouped('chat')`、props 里有没有 `setOpen`/`useChat`），版本号只出现在测试
-fixtures、README 与 `engines.dsh` 里。现代宿主上 legacy 引擎激活计数恒为 0
-（`getLegacyEngineActivations()` 可断言，测试矩阵逐版本锁死）。
+### 三态语义：UNKNOWN ≠ LEGACY
 
-能力矩阵（来自官方 release tag 的逐版本源码审计，见 `tests/version-fixtures/host-matrix.mjs`）：
+每个 feature 的 capability 都是三态（sessionScope 为四态），语义严格定义：
+
+- **`modern` / `reactive` / `official`** = 已确认官方拥有该能力；
+- **`legacy` / `fallback` / `tree-only` / `none`** = 已确认官方**没有**该能力（只能由
+  显式证据定论：注册期官方 slot 表、或渲染期真实会话快照证明契约缺失）；
+- **`unknown`** = 当前阶段尚无法判断。
+
+**UNKNOWN 不是 LEGACY。** 一个 feature 只有在宿主被显式证明缺少官方契约之后才允许
+进入 Legacy 模式；注册期探不到的一律 `unknown`，等渲染期 runtime probe 定论，
+**绝不因 unknown 启动任何 Legacy 引擎**。运行时 capability 状态一经定论不再翻转
+（modern ↔ legacy 需要显式重新初始化）。
+
+注册期唯一可探面是官方 `conversation.chat.node` slot 表（有无 `turn-process` 条目）
+→ 只有 `turnFold` 在注册期定论；`stepFold` / `metrics` / `sessionScope` 注册期一律
+`unknown`，渲染期定论：
+
+- **Step（stepFold）**：会话快照就绪后探测 `views.grouped` 契约——快照未就绪
+  （`undefined`）保持 unknown（"宿主 API 存在但数据未初始化"与"宿主没有 grouped view
+  contract"是两回事）；快照就绪且 `views.grouped` 不是函数 → 显式 `legacy`；
+  契约在（函数存在）→ `modern`（此时 grouped 读端可能因"无活动 Group Definition"
+  返回 undefined——那是"暂无数据"，不是"没有能力"）。
+- **Metrics（metrics）**：渲染期探测官方 `ChatNodeStore.turnDataSource` 是否存在
+  （`useChat` 具名形状探针，Hook 全部无条件调用，capability 只决定数据源选择）：
+  存在 → `reactive`；不存在 → `fallback`（逐 step 直读）；未就绪 → `unknown`。
+  **Turn fold 能力 ≠ metrics 能力**：0.1.2~0.1.6 有 turn-process（官方 owner state）
+  但没有 turnDataSource——它们是 `turnFold=modern + metrics=fallback`，而不是
+  "metrics = modern"也不是"metrics = legacy fold engine"。metrics fallback 绝不触发
+  Legacy Fold Engine。一个 hybrid 宿主的最终形态可以是
+  `{ turnFold: modern, stepFold: legacy, metrics: fallback }` —— 这正是 0.1.2~0.1.6。
+- **会话作用域（sessionScope）**：`official`（官方 `data-conversation-session` 锚点，
+  0.1.7-rc.2+）| `tree-only`（只有 `data-conversation-content`，0.1.6-alpha.2 / 0.1.7-rc.1）
+  | `none`（两个锚点都没有，≤0.1.5）| `unknown`（尚未判定）。运行时在规则合并时做
+  **一次性、粘性的官方 DOM 契约读取**（不是轮询：无观察器/定时器/逐帧回调）——
+  看到 session 锚点即定论 `official`；两属性在 rc.2+ 同一次 commit 渲染，"有 content
+  无 session"即定论非 official。
+
+**Legacy 入口已按 feature 拆分**：`activateLegacyTurnEngine()` 只在
+`turnFold === "legacy"` 时调用（注册期 slot 表证明）；`activateLegacyStepEngine()`
+只在 `stepFold === "legacy"` 时调用（当前唯一现实路径是渲染期快照证明 Process Group
+契约缺失）。两者各自有激活计数（`getLegacyEngineActivations()` →
+`{ turn, step }`），Modern 宿主必须恒为 0（测试矩阵逐版本锁死）。
+
+**Legacy adapter 在官方等价契约存在时永不运行**：判据全部是能力探针，版本号只出现在
+测试 fixtures、README 与 `engines.dsh` 里。
+
+### 能力矩阵（官方 release tag 逐版本源码审计）
+
+来源见 `tests/version-fixtures/host-matrix.mjs`（每个探针字段独立审计、绝不互相推导）：
 
 | DSH 版本 | Turn backend | Step backend | Metrics backend | 会话作用域 |
 | --- | --- | --- | --- | --- |
-| 0.1.1-rc.2 | legacy（无 turn-process 节点、无 useChat/useConversation） | legacy（无官方 Process Group） | legacy | 无锚点 |
-| 0.1.2-rc.1 | **modern**（official owner state） | legacy（无分组契约） | modern | 无锚点 |
-| 0.1.5-rc.3 | modern | legacy | modern | 无锚点 |
-| 0.1.6-alpha.2 | modern | legacy | modern | 无锚点 |
-| 0.1.7-rc.1 | modern | modern | modern | CSS 回退（有 `data-conversation-content`、无 `data-conversation-session`） |
-| 0.1.7-rc.2 | modern | modern | modern | 官方 `data-conversation-session` |
-| 0.2.0-rc.2 | modern | modern | modern | 官方 `data-conversation-session` |
+| 0.1.1-rc.2 | legacy（无 turn-process 节点、无 useChat/useConversation） | legacy（无官方 Process Group） | fallback（无 turnDataSource） | none（无任何锚点） |
+| 0.1.2-rc.1 | **modern**（official owner state） | legacy（无分组契约） | **fallback**（无 turnDataSource，指标走逐 step 直读） | none |
+| 0.1.5-rc.3 | modern | legacy | fallback | none |
+| 0.1.6-alpha.2 | modern | legacy | fallback | tree-only（首次出现 `data-conversation-content`） |
+| 0.1.7-rc.1 | modern | modern | **reactive**（turnDataSource 首次出现） | tree-only（有 content、无 session 锚点） |
+| 0.1.7-rc.2 | modern | modern | reactive | official（`data-conversation-session`，commit b7ac0ade10） |
+| 0.2.0-rc.2 | modern | modern | reactive | official |
+
+### 诊断输出：probing → resolved 两行制
+
+注册期**不下最终结论**（modern + unknown 不是 mixed）：
+
+```
+[dsh-turn-fold] host capabilities: turn=modern, step=probing, metrics=probing
+```
+
+运行时 resolution 完成后输出一次最终 mode（每个有效变化最多输出一次，不逐 Turn 刷）：
+
+```
+[dsh-turn-fold] host mode: modern (turn: modern, step: modern, metrics: reactive)
+[dsh-turn-fold] host mode: mixed  (turn: modern, step: legacy,  metrics: fallback)
+[dsh-turn-fold] host mode: legacy (turn: legacy, step: unknown, metrics: unknown)
+```
+
+`turn=legacy` 的宿主现代渲染器不注册、runtime probe 不会跑，mode 由 turnFold 单独
+定论（step/metrics 如实显示 unknown）。
+
+### 会话作用域四态与 0.1.7-rc.1 安全降级
+
+- **official（0.1.7-rc.2+）**：规则前缀 `[data-conversation-session="<id>"]` + 完整组
+  条件，多棵会话树并存（主会话 + 子代理侧栏）时每块只命中自己的树，同名 groupKey
+  完全隔离。
+- **tree-only（0.1.7-rc.1）**：CSS 层无法区分两棵会话树——单会话时允许输出
+  group-specific completed 牌面覆盖；**多会话并存时自动撤下全部 session-specific
+  completed 牌面覆盖**（回落基础 Step Poker 的通用 5 张双态与运行态五牌面轮换）。
+  判断依据是插件自己的 per-session bridge registry（`stepCardBridgeSessions` 的活跃
+  会话数），**不做任何 DOM 轮询**。"少一点视觉个性"优于"Session A/B 串样式"；
+  降级只控制规则输出——牌面分配（bag）、`completedFaceSets`、变体样式资产全部保留，
+  会话数回落到 1 时立即恢复该会话的规则，无需刷新。**不声称 rc.1 多会话可完全隔离。**
+- **none（≤0.1.5）**：没有会话内容锚点，无 sessionId 的规则块只在唯一会话时输出。
+
+规则 selector 以"完整 host"为单位逐支生成（0.2.0-rc.2 真机验证）：
+
+```css
+[data-conversation-session="A"] [data-step-process][data-chat-group-key="X"]:not(:has([data-shimmer="true"])) … [data-step-process-icon]::before { … },
+[data-conversation-content]:not([data-conversation-session]) [data-step-process][data-chat-group-key="X"]:not(:has([data-shimmer="true"])) … [data-step-process-icon]::before { … }
+```
+
+两支都是完整 selector：official 支在 rc.2+ 命中，回退支因 `:not()` 恒失败永不命中；
+rc.1 上只有回退支命中。插件不写官方 DOM、不加任何官方属性。
 
 当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.0-rc.2"`：上表里 0.1.1-rc.2 ~ 0.1.6 需要
 Legacy adapter（Turn/Step fold 由插件补），**该引擎尚未移植**——插件在这些宿主上
-只做能力判定与一次性诊断（`[dsh-turn-fold] host mode: legacy|mixed (...)`），
-不注册任何影子渲染器、不参与折叠语义。等旧宿主真机矩阵跑通后才会放开 `engines.dsh`。
+只做能力判定与两行制诊断，不注册任何影子渲染器、不参与折叠语义。等旧宿主真机矩阵
+跑通后才会放开 `engines.dsh`。0.1.7-rc.1 为 source-audited / harness-verified（真实
+DOM 形状夹具 + 官方 tag 契约），not live-host-verified（本机无该版本 runtime）。
 
 ## 安装
 
@@ -346,6 +435,8 @@ npm run check      # 语法检查 client.js / index.js
 | `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫） |
 | `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零**；官方四档 transcript 模式渲染兼容 |
 | `regression.test.mjs` | 历史回归：直播时钟空转定时器、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
+| `unit.host-compat.test.mjs` | 跨版本能力矩阵（三态语义、UNKNOWN ≠ LEGACY）、注册门控（Modern 宿主 legacy 激活恒 0；legacy 宿主注册期只记 Turn）、selector 完整 host 逐支生成 + jsdom 双树命中、运行时 resolution（未就绪保持 unknown / 契约缺失才 legacy / 已定论不翻转）、metrics 与 Turn fold 解耦（reactive/fallback/unknown）、诊断两行制（probing → resolved） |
+| `unit.step-session-scope.test.mjs` | 会话作用域：selector 前缀与转义、裸会话分支回归锁定、same groupKey 双树隔离、tree-only 多会话安全降级（撤下 session-specific 覆盖、恢复无需刷新、completedFaceSets 保留、running 轮换不受影响） |
 
 > 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
 > `npm test` 中内置）；普通 Linux/macOS CI 同样可用该参数（Node ≥ 22.9）。

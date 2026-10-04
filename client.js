@@ -986,33 +986,32 @@ window.__ModuleLoader__.load({
 			return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 		}
 		/** groupKey → 逐组牌面覆盖规则（3 张与 5 张都走这里），**按会话作用域**。
-		 *  最终 selector = `[data-conversation-session="<sessionId>"] [data-step-process]
-		 *  [data-chat-group-key="<groupKey>"] `：
+		 *  selector 以"完整 host"为单位逐支生成——逗号两边都是完整 selector：
+		 *   支 1（0.1.7-rc.2+）:  [data-conversation-session="<id>"] <groupHost>
+		 *   支 2（rc.1 回退）  :  [data-conversation-content]:not([data-conversation-session]) <groupHost>
+		 *  绝不允许"scope = 'A, B ' 再统一追加 suffix"的拼接——那会让组条件只落在
+		 *  第二支上，第一支退化成裸会话选择器（命中整棵树、且被任意一个 running 组
+		 *  压掉；2026-10-05 修复的 selector-list bug）。
+		 *  会话作用域的依据：
 		 *   · 官方 GroupKey 是"one Session 内的 identity"（跨会话会重复），只按 groupKey
 		 *     匹配会让同名组在另一棵会话树里串样式；
 		 *   · 官方 DOM 提供会话级锚点——ui-conversation 的 ConversationContent 在会话内容根上
-		 *     渲染 `data-conversation-session={sessionId}`，官方自己的 stop-shortcut 就是
-		 *     `target.closest('[data-conversation-session]')` 解析会话；该元素包含
-		 *     conversation.session → conversation.view → 全部 chat 节点，因此它正是每棵
-		 *     会话树的稳定祖先（不写官方 DOM、不加属性，纯消费官方契约）。
+		 *     渲染 `data-conversation-session={sessionId}`（0.1.7-rc.2+），官方自己的
+		 *     stop-shortcut 就是 `target.closest('[data-conversation-session]')` 解析会话；
+		 *     该元素包含 conversation.session → conversation.view → 全部 chat 节点，因此它正是
+		 *     每棵会话树的稳定祖先（不写官方 DOM、不加属性，纯消费官方契约）。
+		 *   · rc.1 的会话内容根已有 data-conversation-content 但还没有 data-conversation-session
+		 *     → 走支 2；新版宿主上该属性恒存在 → :not() 恒失败、支 2 永不命中，不泄漏。
 		 *  两条规则都必须：(a) 特异性压过静态端点/回落规则，(b) 带 shimmer 排除子句——
 		 *  否则会把运行中的五牌面轮换 mask 压掉（软依赖：官方 shimmer 钩子改名 → 排除失效
 		 *  → 最坏退化为静态牌堆/扇形，轮换不再显示）。
-		 *  sessionId 缺失（旧宿主/降级）→ 不加作用域前缀（回落为历史行为，且输出层只输出
-		 *  单块，见 writeStepCardRulesMerged）。 */
+		 *  sessionId 缺失（旧宿主/降级）→ 不加任何作用域前缀（回落为历史行为，且输出层只在
+		 *  唯一会话时输出，见 writeStepCardRulesMerged）。 */
 		function buildStepCardRulesCss(map, sessionId) {
 			var rules = [];
-			var scope = "";
-			if (sessionId !== undefined && sessionId !== null && String(sessionId) !== "") {
-				// 会话作用域（0.1.7-rc.2+ 的官方属性）＋ 该属性出现之前的宿主回退：
-				// 0.1.7-rc.1 的会话内容根已有 data-conversation-content，但还没有
-				// data-conversation-session —— 那时只能退化为不带会话作用域的选择器
-				// （该代宿主无法在 CSS 层区分两棵树，属已知软限制，见 README）。
-				// 新版宿主上 [data-conversation-content] 恒有 session 属性 → 回退分支
-				// 永不命中，不会把规则泄漏到别的会话树。
-				scope = '[data-conversation-session="' + cssAttrValue(sessionId) + '"], ' +
-					'[data-conversation-content]:not([data-conversation-session]) ';
-			}
+			var hasSession = sessionId !== undefined && sessionId !== null && String(sessionId) !== "";
+			var officialScope = hasSession ? '[data-conversation-session="' + cssAttrValue(sessionId) + '"] ' : "";
+			var fallbackScope = hasSession ? '[data-conversation-content]:not([data-conversation-session]) ' : "";
 			if (map) {
 				for (var key in map) {
 					if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
@@ -1023,15 +1022,23 @@ window.__ModuleLoader__.load({
 					if (!state || state.closed !== true) continue;
 					var set = completedFaceSetFor(count, completedStepTopFace(sessionId, key));
 					ensureCompletedFaceSetCss(set);
-					var host = scope + '[data-step-process][data-chat-group-key="' + cssAttrValue(key) + '"]';
+					var groupHost = '[data-step-process][data-chat-group-key="' + cssAttrValue(key) + '"]';
 					var idle = ':not(:has([data-shimmer="true"])):not(:has([data-text-shimmer="true"]))';
-					rules.push(host + idle + ' [data-step-process-icon]::before' +
-						'{-webkit-mask-image:var(--tf-face-' + set.id + '-stack);mask-image:var(--tf-face-' + set.id +
-						'-stack);animation-name:tf-face-close-' + set.id + '}');
-					rules.push(host + ' [data-process-activity][aria-expanded="true"]' + idle +
-						' [data-step-process-icon]::before' +
-						'{-webkit-mask-image:var(--tf-face-' + set.id + '-fan);mask-image:var(--tf-face-' + set.id +
-						'-fan);animation-name:tf-face-open-' + set.id + '}');
+					// 两支 = 各自完整的 selector（作用域前缀 + 组条件 + shimmer 排除 + 卡牌位逐支补全），
+					// 声明块只有行尾一份——逗号两边都必须是完整 selector，绝不共享/截断尾部。
+					var stackPre = idle + ' [data-step-process-icon]::before';
+					var stackDecl = '{-webkit-mask-image:var(--tf-face-' + set.id + '-stack);mask-image:var(--tf-face-' + set.id +
+						'-stack);animation-name:tf-face-close-' + set.id + '}';
+					var fanPre = ' [data-process-activity][aria-expanded="true"]' + idle + ' [data-step-process-icon]::before';
+					var fanDecl = '{-webkit-mask-image:var(--tf-face-' + set.id + '-fan);mask-image:var(--tf-face-' + set.id +
+						'-fan);animation-name:tf-face-open-' + set.id + '}';
+					if (hasSession) {
+						rules.push(officialScope + groupHost + stackPre + ',' + fallbackScope + groupHost + stackPre + stackDecl);
+						rules.push(officialScope + groupHost + fanPre + ',' + fallbackScope + groupHost + fanPre + fanDecl);
+					} else {
+						rules.push(groupHost + stackPre + stackDecl);
+						rules.push(groupHost + fanPre + fanDecl);
+					}
 				}
 			}
 			return rules.join("\n");
@@ -1050,11 +1057,16 @@ window.__ModuleLoader__.load({
 			} catch (e) { /* 视觉增强可以坏，官方折叠不受影响 */ }
 		}
 		/** 输出规则到样式元素（内容不变不写）。
-		 *  · 带会话作用域的块（sessionKey 非空 = 有 sessionId）**全部输出**：每条规则都限定在
-		 *    自己那棵会话树里（[data-conversation-session]），同名 groupKey 也不会互相影响，
+		 *  会话作用域输出策略（rc.1 安全降级，详见 README「会话作用域」）：
+		 *  · 官方会话锚点可用（data-conversation-session 在场，0.1.7-rc.2+）→ 带作用域的块
+		 *    **全部输出**：每条规则都限定在自己那棵会话树里，同名 groupKey 也不会互相影响，
 		 *    所以主会话与子代理侧栏会话可以同时保持各自的牌面；
-		 *  · 无作用域的块（旧宿主没给 sessionId，sessionKey === ""）只有在该 session 是唯一
-		 *    输出时才写——多棵树共存时绝不输出无作用域规则，避免串样式。 */
+		 *  · 无官方锚点（tree-only / 尚未证实）：CSS 层无法区分两棵树——**多个候选会话块并存
+		 *    时一律不输出**（session-specific completed 牌面覆盖全部撤下，回落基础 Step Poker
+		 *    的通用视觉；"少一点视觉个性"优于"A/B 串样式"）；单会话仍可输出（它只可能命中
+		 *    自己那一棵树）；
+		 *  · 无作用域的 plain 块（旧宿主没给 sessionId）只在唯一时输出（历史行为不变）。
+		 *  降级只控制"输出哪些块"：completedFaceSets、变体样式资产、牌面分配照旧（见 §清理）。 */
 		function writeStepCardRulesMerged() {
 			try {
 				if (!stepCardStyleEl) return;
@@ -1065,13 +1077,55 @@ window.__ModuleLoader__.load({
 					if (sessionKey === "") plain.push(chunk);
 					else scoped.push(chunk);
 				});
-				var out = scoped.length > 0
-					? scoped.join("\n")
-					: (plain.length === 1 ? plain[0] : "");
+				var out;
+				if (probeOfficialSessionScope()) {
+					out = scoped.length > 0 ? scoped.join("\n") : (plain.length === 1 ? plain[0] : "");
+				} else {
+					// tree-only / 未证实：候选块 > 1 → 全部撤下（防同名 groupKey 跨树串样式）
+					var candidates = scoped.length + plain.length;
+					out = candidates === 1 ? (scoped.length > 0 ? scoped[0] : plain[0]) : "";
+				}
 				if (out === stepCardRulesCache) return;
 				stepCardRulesCache = out;
 				stepCardStyleEl.textContent = out;
 			} catch (e) { /* 同上 */ }
+		}
+		// ---- 官方会话作用域一次性契约读取（粘性；不是轮询） ----
+		// 目的：输出策略需要区分"官方会话锚点可用"（rc.2+，data-conversation-session）与
+		// "tree-only"（rc.1，只有 data-conversation-content）。会话快照/props 里没有这一
+		// 信息（rc.1 的 SessionStandardProps 同样给 sessionId），只能从官方 DOM 契约得知。
+		// 实现是**一次性能力读取**：无观察器、无定时器、无逐帧回调——只在规则合并时同步
+		// 查一次官方属性，且两个结论都粘性缓存：
+		//   · 看到 data-conversation-session → official（宿主 DOM 契约不会中途消失）；
+		//   · 看到 data-conversation-content 却无 session 属性 → tree-only 定论（rc.2+ 上
+		//     两个属性在同一元素同一次 commit 渲染，不可能只出现前者）；
+		//   · 两者都没看到（DOM 尚未渲染会话树）→ 保持未定论，下次合并再读。
+		var officialSessionScopeSeen = false;
+		var officialSessionScopeDenied = false;
+		function probeOfficialSessionScope() {
+			if (officialSessionScopeSeen) {
+				resolveHostFeature("sessionScope", "official");
+				return true;
+			}
+			if (officialSessionScopeDenied) return false;
+			try {
+				if (typeof document !== "undefined" && document) {
+					if (document.querySelector('[data-conversation-session]')) {
+						officialSessionScopeSeen = true;
+						resolveHostFeature("sessionScope", "official");
+						return true;
+					}
+					if (document.querySelector('[data-conversation-content]')) {
+						officialSessionScopeDenied = true;   // 有内容锚点、无会话锚点 → tree-only 定论
+					}
+				}
+			} catch (e) { /* DOM 不可用 → 按 tree-only 处理（安全侧） */ }
+			return false;
+		}
+		/** 诊断/测试：重置一次性契约读取（生产调用方永不重置——宿主能力页内恒定）。 */
+		function resetOfficialSessionScopeProbe() {
+			officialSessionScopeSeen = false;
+			officialSessionScopeDenied = false;
 		}
 		/** 某个 session 完全卸载：只撤下它自己的规则块（其它 session 不受影响）。 */
 		function clearStepCardRulesForSession(sessionKey) {
@@ -1085,6 +1139,18 @@ window.__ModuleLoader__.load({
 				if (!snapshot || !snapshot.views || typeof snapshot.views.grouped !== "function") return undefined;
 				return snapshot.views.grouped("chat");
 			} catch (e) { return undefined; }
+		}
+		/** 会话快照 → Process Group 契约三态探针（具名 selector；判定**契约本身**，
+		 *  不判定数据）：
+		 *  undefined = 快照未就绪（宿主 API 存在但尚未初始化）→ 绝不定论 legacy；
+		 *  false     = 快照就绪但 views.grouped 不是函数 → 官方 Process Group 契约缺失
+		 *              （显式证据，才允许 step = legacy）；
+		 *  true      = 契约在（此时 grouped('chat') 读端可能因"无活动 Group Definition"
+		 *              返回 undefined——那是"暂无数据"，不是"没有能力"，官方契约注释明写
+		 *              "returns its grouped reader, when a Group Definition is active"）。 */
+		function selectConversationGroupContract(snapshot) {
+			if (!snapshot || typeof snapshot !== "object") return undefined;
+			return !!(snapshot.views && typeof snapshot.views.grouped === "function");
 		}
 		/** 官方根渲染序列（含 {kind:'group', key}）——entries 身份变化 = 分组结构变化。 */
 		function selectChatGroupedEntries(snapshot) {
@@ -1116,6 +1182,9 @@ window.__ModuleLoader__.load({
 			session.instances.set(instance.id, instance);
 			stepCardPendingCleanup.delete(sessionKey);        // 同 commit 内重挂载 → 取消待清理
 			promoteStepCardLeader(sessionKey);
+			// 活跃会话数是输出策略的输入（tree-only 多会话 → 撤下 session-specific 覆盖），
+			// 挂载/卸载都要重算一次合并输出（内容比较幂等，无变化不写）。
+			writeStepCardRulesMerged();
 		}
 		/** 选一个仍挂载的实例当 leader（幂等：已有合法 leader 时不动）。 */
 		function promoteStepCardLeader(sessionKey) {
@@ -1143,7 +1212,12 @@ window.__ModuleLoader__.load({
 			}
 			if (session.instances.size > 0) return;
 			stepCardBridgeSessions.delete(sessionKey);
+			// 会话数变化必须重算输出策略：有规则块的会话由 clearStepCardRulesForSession
+			// 内部触发；没有规则块（还没完成组）的会话也要补一次——否则"最后一个其它会话
+			// 退出"时不会把被降级撤下的规则恢复出来。
+			var hadChunk = stepCardRulesBySession.has(sessionKey);
 			clearStepCardRulesForSession(sessionKey);
+			if (!hadChunk) writeStepCardRulesMerged();
 			scheduleCompletedStepSessionCleanup(sessionKey);
 		}
 		/** 某个 session 已挂载的 bridge 实例数（诊断/测试）。 */
@@ -1201,9 +1275,19 @@ window.__ModuleLoader__.load({
 		 *  不渲染任何 DOM、不持有 Fold 状态、不接管 click/hidden/搜索展开。 */
 		function StepCardRuleWriter(props) {
 			var useConversation = props.useConversation;
+			// Step 能力三态定论（UNKNOWN ≠ LEGACY）：只有"快照就绪且官方 Process Group
+			// 契约缺失"（contract === false）才允许记 legacy；快照未就绪（undefined）保持
+			// unknown 等下一次快照发布——"宿主 API 存在但数据未初始化"与"宿主压根没有
+			// grouped view contract"是两回事，绝不能混为一谈。
+			var contract = useConversation(selectConversationGroupContract);
+			if (contract === false) {
+				resolveHostFeature("stepFold", "legacy");
+				noteLegacyStepEngine();
+			} else if (contract === true) {
+				resolveHostFeature("stepFold", "modern");
+			}
 			var entries = useConversation(selectChatGroupedEntries);
 			var grouped = useConversation(selectChatGroupedView);
-			if (grouped === undefined || grouped === null) noteLegacyStepEngine();   // 宿主无官方 Process Group 契约（hybrid/legacy 宿主）
 			var countsRef = react.useRef({});
 			var versionPair = react.useState(0);
 			var version = versionPair[0], setVersion = versionPair[1];
@@ -2796,6 +2880,14 @@ window.__ModuleLoader__.load({
 				stepsSource && typeof stepsSource.subscribe === "function" ? stepsSource.subscribe : subscribeNothing,
 				stepsSource && typeof stepsSource.getSnapshot === "function" ? stepsSource.getSnapshot : getUndefinedSnapshot
 			);
+			// metrics 数据面 runtime 定论（与 Turn fold 能力完全解耦）：只探测官方
+			// ChatNodeStore 的形状——nodes.turnDataSource 在 = reactive，不在 =
+			// fallback（逐 step 直读）。快照未就绪返回 undefined → 保持 unknown 不猜。
+			// Hook 调用与上面完全同形（useChat 是 prop、进程内恒定），capability 只决定
+			// 数据从哪来 + 诊断怎么报，绝不决定"是否调用 Hook"。
+			var chatShape = useChat ? useChat(selectChatNodeShape) : undefined;
+			if (chatShape === true) resolveHostFeature("metrics", "reactive");
+			else if (chatShape === false) resolveHostFeature("metrics", "fallback");
 			if (!stepDataList && clock) {
 				// 无 turnDataSource（极简宿主/测试）：回退逐 step 直读（node prop 驱动重算）
 				stepDataList = [];
@@ -2906,6 +2998,16 @@ window.__ModuleLoader__.load({
 				return null;
 			};
 		}
+		/** useChat 的形状探针（具名 selector）：官方 ChatNodeStore 是否暴露
+		 *  turnDataSource（reactive metrics 数据面）。
+		 *  undefined = 快照/nodes 未就绪（不定论）；true/false = 数据面有/无（定论）。
+		 *  只读 store 形状、不取任何 turn 数据 → identity-stable 原语，不引发额外重渲染。 */
+		function selectChatNodeShape(s) {
+			if (!s || typeof s !== "object") return undefined;
+			var nodes = s.nodes;
+			if (!nodes || typeof nodes !== "object") return undefined;
+			return typeof nodes.turnDataSource === "function";
+		}
 		/** useProjection 的 selector：只取本回合那一条 durable 记录（具名、最小切片）。
 		 *  projection 值形如 { turns: { "<turn>": { ttftMs?, decodeMs, decodeTokens } } }，
 		 *  单条记录只在它自己变化时换引用 → 本栏不会因别的回合更新而重渲染。 */
@@ -2934,15 +3036,30 @@ window.__ModuleLoader__.load({
 		// 依据官方 tag 源码逐版本审计（见 README「Compatibility Architecture」的矩阵）：
 		//   0.1.1-rc.2          无 turn-process 节点 / 无 useChat·useConversation / 无 Step 分组
 		//   0.1.2 ~ 0.1.6       有 turn-process + TurnProcessOwnerProps（官方 Turn Fold），
-		//                       但无 turnDataSource、无 Step 分组、无 hasContent
-		//   0.1.7-rc.1          Turn/Step 全现代；会话内容根有 data-conversation-content，
-		//                       但还没有 data-conversation-session（会话作用域走 CSS 回退）
+		//                       但无 turnDataSource、无 Process Group 契约（hybrid 宿主）
+		//   0.1.7-rc.1          Turn/Step 全现代（turnDataSource 从这代开始）；会话内容根有
+		//                       data-conversation-content，但还没有 data-conversation-session
 		//   0.1.7-rc.2 / 0.2.0  全现代（含 data-conversation-session）
+		// 三态语义（本节的核心不变量）：
+		//   "modern"/"reactive"/"official" = 已确认官方拥有该能力
+		//   "legacy"/"fallback"/"tree-only" 等 = 已确认官方没有该能力（只能由显式证据定论）
+		//   "unknown"                        = 当前阶段尚无法判断
+		//   UNKNOWN ≠ LEGACY：unknown 绝不允许触发任何 legacy 入口，只能等 runtime probe。
 		// 判定只看能力探针，不比较版本号字符串。
-		var hostCapabilityLog = null;            // 一次性诊断（不刷屏）
+		var hostCapabilityLog = null;            // 最近一次已输出的诊断签名（每个有效变化最多输出一次）
 		var legacyTurnEngineActivations = 0;     // Modern 宿主必须恒为 0
 		var legacyStepEngineActivations = 0;     // Modern 宿主必须恒为 0
 		var legacyStepEngineNoted = false;       // 渲染期 Step legacy 定论只记一次
+		/** 运行时 capability 状态（resolution model）：注册期只对 turnFold 下定论（官方
+		 *  slot 表是注册期唯一可探面）；stepFold / metrics / sessionScope 保持 unknown，
+		 *  由渲染期的真实 runtime probe 逐一定论。已定论的 feature 不再翻转（modern ↔
+		 *  legacy 需要显式重新初始化）。 */
+		var hostCapabilityState = {
+			turnFold: "unknown",
+			stepFold: "unknown",
+			metrics: "unknown",
+			sessionScope: "unknown",
+		};
 		/** 官方 slot 注册表里是否已有该 key 的条目（只读；不写官方 DOM、不轮询）。 */
 		function slotHasEntry(slotsSvc, slotName, match) {
 			try {
@@ -2954,83 +3071,131 @@ window.__ModuleLoader__.load({
 			} catch (e) { /* 旧宿主没有 entries() → 视为无该能力 */ }
 			return false;
 		}
-		/** 宿主能力矩阵（注册期与渲染期两处使用，形状一致）。
-		 *  nativeStepGroups 允许三态：true / false / undefined（未知）——官方 Process Group
-		 *  既没有独立的 slot 声明、也没有注册期可探的服务，只能在会话作用域内用
-		 *  `views.grouped('chat')` 的数据形状探测，所以注册期一律标 unknown。 */
+		/** 宿主能力矩阵（纯函数；probe → feature-level 三态）。
+		 *  probe 输入全部三态（true / false / undefined=未知），衍生结论绝不互相假设：
+		 *   nativeTurnFold          官方 conversation.chat.node 是否有 turn-process 条目（注册期可探、定论）
+		 *   turnDataSource          官方 ChatNodeStore.turnDataSource 是否存在（metrics 数据面；
+		 *                           审计确认 0.1.7-rc.1 起才有——绝不从 nativeTurnFold 推导）
+		 *   nativeStepGroups        官方 Process Group 契约（views.grouped 函数存在性；注册期探不到）
+		 *   sessionDomScope         官方 DOM 会话锚点 data-conversation-session（审计/运行时契约读取）
+		 *   conversationContentAnchor  旧代会话内容锚点 data-conversation-content（0.1.6-alpha.2 起）
+		 *   durableProjection       宿主半边是否注册 turnFoldMetrics projection（运行时探测） */
 		function hostCapabilitiesOf(probe) {
 			var p = probe || {};
 			var nativeTurnFold = p.nativeTurnFold === true;
-			var reactiveTurnData = p.reactiveTurnData === true;
+			var turnDataSource = p.turnDataSource === true ? true : (p.turnDataSource === false ? false : undefined);
 			var stepProbe = p.nativeStepGroups;
 			var nativeStepGroups = stepProbe === true ? true : (stepProbe === false ? false : undefined);
+			var sessionDomScope = p.sessionDomScope === true ? true : (p.sessionDomScope === false ? false : undefined);
+			var contentAnchor = p.conversationContentAnchor === true ? true : (p.conversationContentAnchor === false ? false : undefined);
+			var durable = p.durableProjection === true ? true : (p.durableProjection === false ? false : undefined);
+			var sessionScope;
+			if (sessionDomScope === true) sessionScope = "official";
+			else if (sessionDomScope === false) sessionScope = contentAnchor === true ? "tree-only" : "none";
+			else sessionScope = "unknown";
 			return {
+				// 原始探针（保留三态原样，供测试/诊断）
 				nativeTurnFold: nativeTurnFold,
-				reactiveTurnData: reactiveTurnData,
+				turnDataSource: turnDataSource,
 				nativeStepGroups: nativeStepGroups,
-				durableProjection: p.durableProjection === true,
-				// feature-level 模式（允许 hybrid：Turn modern + Step legacy）
+				sessionDomScope: sessionDomScope,
+				conversationContentAnchor: contentAnchor,
+				durableProjection: durable,
+				// feature-level 模式（允许 hybrid：Turn modern + Step legacy + metrics fallback）
 				turnFold: nativeTurnFold ? "modern" : "legacy",
 				stepFold: nativeStepGroups === true ? "modern" : (nativeStepGroups === false ? "legacy" : "unknown"),
-				metrics: nativeTurnFold && reactiveTurnData ? "modern" : "legacy",
-				// 会话作用域：0.1.7-rc.2+ 有官方属性；rc.1 由 CSS 的
-				// [data-conversation-content]:not([data-conversation-session]) 回退兜住
-				sessionScope: "official+css-fallback",
+				metrics: turnDataSource === true ? "reactive" : (turnDataSource === false ? "fallback" : "unknown"),
+				sessionScope: sessionScope,
 			};
 		}
 		/** 注册期探针：官方是否在 conversation.chat.node 里注册了 turn-process 渲染器
-		 *  （官方 0 位条目 = DSH 自己是 Turn Fold owner）。 */
+		 *  （官方 0 位条目 = DSH 自己是 Turn Fold owner）。这是注册期**唯一**可探面——
+		 *  turnDataSource / Process Group 契约 / DOM 会话锚点注册期一律探不到 → unknown，
+		 *  绝不从 nativeTurnFold 推导（0.1.2~0.1.6 的审计结论：有 turn-process 不代表有
+		 *  reactive metrics 数据面）。 */
 		function detectHostCapabilitiesAtRegistration(slotsSvc) {
 			var nativeTurnFold = slotHasEntry(slotsSvc, "conversation.chat.node", function (o) { return o.key === "turn-process"; });
-			return hostCapabilitiesOf({
-				nativeTurnFold: nativeTurnFold,
-				reactiveTurnData: nativeTurnFold,
-				// 注册期无法可靠探测 Process Group 契约 → unknown（渲染期用 grouped view 形状定论）
-				nativeStepGroups: undefined,
-				// durable projection 由宿主半边注册、客户端经 projection wire 运行时探测
-				// （拿不到就是 undefined，指标自动回落客户端 step 数据）→ 此处不猜。
-				durableProjection: false,
-			});
+			return hostCapabilitiesOf({ nativeTurnFold: nativeTurnFold });
 		}
-		/** 一次性诊断（§25：启动时一次，不刷屏）。 */
-		function reportHostMode(caps, where) {
-			var mode = caps.turnFold === "modern" && caps.stepFold === "modern" ? "modern"
-				: (caps.turnFold === "legacy" ? "legacy" : "mixed");
-			if (hostCapabilityLog !== null && hostCapabilityLog.mode === mode) return hostCapabilityLog;
-			hostCapabilityLog = { mode: mode, caps: caps, where: where };
+		/** 定论一个 feature（unknown → 定论值单向迁移；已定论不翻转）。返回是否有变化。 */
+		function resolveHostFeature(feature, value) {
+			if (hostCapabilityState[feature] !== "unknown") return false;
+			if (value !== "modern" && value !== "legacy" && value !== "reactive" && value !== "fallback" && value !== "official") return false;
+			hostCapabilityState[feature] = value;
+			reportResolvedHostMode();
+			return true;
+		}
+		/** 注册期定论：turnFold 写进运行时状态并输出 probing 事实行。stepFold/metrics/
+		 *  sessionScope 不在此处定论（注册期探不到 → unknown，等渲染期 runtime probe）。 */
+		function adoptRegistrationCapabilities(caps) {
+			if ((caps.turnFold === "modern" || caps.turnFold === "legacy") && hostCapabilityState.turnFold === "unknown") {
+				hostCapabilityState.turnFold = caps.turnFold;
+			}
+			reportHostCapabilities(caps);
+			reportResolvedHostMode();
+		}
+		/** 注册期诊断（probing 事实行；签名不变不重复输出）。
+		 *  注册期**不下最终结论**：modern + unknown 不是 mixed——最终结论由运行时
+		 *  resolution 完成后的 "host mode:" 行给出。 */
+		function reportHostCapabilities(caps) {
+			var sig = "caps|" + (caps && caps.turnFold);
+			if (hostCapabilityLog === sig) return;
+			hostCapabilityLog = sig;
+			try {
+				if (typeof console !== "undefined" && typeof console.info === "function") {
+					console.info("[dsh-turn-fold] host capabilities: turn=" + (caps && caps.turnFold) + ", step=probing, metrics=probing");
+				}
+			} catch (e) { /* 诊断失败不影响运行 */ }
+		}
+		/** 定论行：mode 的三个组成 feature（turnFold/stepFold/metrics）全部定论后才输出
+		 *  （每个有效变化最多一次，不逐 Turn 刷）。
+		 *  turn=legacy 的宿主现代渲染器不注册、runtime probe 不会跑 → mode 由 turnFold
+		 *  单独定论（此时 step/metrics 仍如实显示 unknown）。 */
+		function reportResolvedHostMode() {
+			var s = hostCapabilityState;
+			if (s.turnFold === "unknown") return;
+			if (s.turnFold === "modern" && (s.stepFold === "unknown" || s.metrics === "unknown")) return;
+			var mode = s.turnFold === "legacy" ? "legacy" : (s.stepFold === "modern" ? "modern" : "mixed");
+			var sig = "mode|" + mode + "|" + s.turnFold + "|" + s.stepFold + "|" + s.metrics;
+			if (hostCapabilityLog === sig) return;
+			hostCapabilityLog = sig;
 			try {
 				if (typeof console !== "undefined" && typeof console.info === "function") {
 					console.info("[dsh-turn-fold] host mode: " + mode +
-						" (turn: " + caps.turnFold + ", step: " + caps.stepFold + ", metrics: " + caps.metrics + ")");
+						" (turn: " + s.turnFold + ", step: " + s.stepFold + ", metrics: " + s.metrics + ")");
 				}
 			} catch (e) { /* 诊断失败不影响运行 */ }
-			return hostCapabilityLog;
 		}
-		/** Legacy Fold 引擎入口：**只在官方契约缺失时**才会被调用。
-		 *  本轮落地的是"能力判定 + 一次性诊断 + 激活计数"（现代宿主必须恒为 0）；
-		 *  引擎本体（从 main@356db80 移植的 legacy Turn/Step fold）尚未移植——
-		 *  未移植前绝不注册任何影子渲染器，也绝不在现代宿主上激活。 */
-		function activateLegacyFoldEngine(caps) {
-			if (caps.turnFold === "legacy") {
-				// 没有官方 turn-process 的宿主同样没有官方 Process Group（逐版本审计确认）→
-				// Turn/Step 两套 legacy 一起记账；hybrid 宿主的 Step legacy 由渲染期
-				// （noteLegacyStepEngine：grouped view 形状探不到）定论。
-				legacyTurnEngineActivations += 1;
-				legacyStepEngineActivations += 1;
-			}
+		/** Legacy Turn 引擎入口：**只在 turnFold === "legacy"**（注册期官方 slot 表明确没有
+		 *  turn-process 契约）才会被调用。引擎本体（从 main@356db80 移植的 legacy turn
+		 *  fold）尚未移植——未移植前只记账，绝不注册任何影子渲染器。
+		 *  UNKNOWN 绝不进入本函数。 */
+		function activateLegacyTurnEngine() {
+			legacyTurnEngineActivations += 1;
 			return false;
 		}
-		/** 渲染期定论：宿主没有官方 Process Group 契约（会话快照拿不到 grouped view /
-		 *  groupSource）→ 记一次 Step legacy 激活。Modern 宿主恒不触发（有官方分组）。
-		 *  只在进程内记一次（诊断/测试用，不做任何折叠语义）。 */
+		/** Legacy Step 引擎入口：**只在 stepFold === "legacy"** 才会被调用。注册期
+		 *  stepFold 恒为 unknown → 绝不在注册期触发；唯一现实路径是渲染期快照就绪后
+		 *  证明 Process Group 契约缺失（noteLegacyStepEngine）。
+		 *  UNKNOWN 绝不进入本函数。 */
+		function activateLegacyStepEngine() {
+			legacyStepEngineActivations += 1;
+			return false;
+		}
+		/** 渲染期定论：会话快照就绪（真实可读）且官方 Process Group 契约缺失 → Step
+		 *  legacy 成立，记一次激活。Modern 宿主恒不触发（契约在）。进程内只记一次。 */
 		function noteLegacyStepEngine() {
 			if (legacyStepEngineNoted) return;
 			legacyStepEngineNoted = true;
-			legacyStepEngineActivations += 1;
+			activateLegacyStepEngine();
 		}
 		/** 诊断/测试：Legacy 引擎激活计数（Modern 宿主必须恒为 0）。 */
 		function getLegacyEngineActivations() {
 			return { turn: legacyTurnEngineActivations, step: legacyStepEngineActivations };
+		}
+		/** 诊断/测试：重置诊断签名（生产永不调用——同一有效变化只输出一次）。 */
+		function resetHostCapabilityDiagnostics() {
+			hostCapabilityLog = null;
 		}
 
 		// ---- Cordis 插件入口 ----
@@ -3051,13 +3216,11 @@ window.__ModuleLoader__.load({
 				// 渲染器（注册也永远不会有节点），改走 legacy 决策；现代宿主上
 				// legacyTurnEngineActivations / legacyStepEngineActivations 恒为 0。
 				var caps = detectHostCapabilitiesAtRegistration(slotsSvc);
-				reportHostMode(caps, "registration");
-				// 任一 feature 走 legacy → 记一次激活（现代宿主两项都 modern ⇒ 恒为 0）。
-				// 引擎本体（从 main@356db80 移植）尚未移植：hybrid/legacy 宿主上只做能力判定
-				// 与诊断，不注册任何影子渲染器、不参与折叠语义。
-				if (caps.turnFold !== "modern" || caps.stepFold !== "modern") {
-					activateLegacyFoldEngine(caps);
-				}
+				adoptRegistrationCapabilities(caps);
+				// UNKNOWN ≠ LEGACY：只有被显式证明缺失的 feature 才进入 legacy 入口；
+				// unknown（注册期的 Step/metrics）只能等渲染期 runtime probe，绝不猜 legacy。
+				if (caps.turnFold === "legacy") activateLegacyTurnEngine();
+				if (caps.stepFold === "legacy") activateLegacyStepEngine();   // 注册期恒 unknown → 不触发
 				if (caps.turnFold !== "modern") return;
 				safeRegisterSlot(slotsSvc, {
 					name: "conversation.chat.node",
