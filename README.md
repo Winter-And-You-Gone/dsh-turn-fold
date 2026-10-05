@@ -335,19 +335,46 @@ useConversation 或快照无 views.grouped 的显式证据；`undefined` = 未�
 **Legacy adapter 在官方等价契约存在时永不运行**：判据全部是能力探针，版本号只出现在
 测试 fixtures、README 与 `engines.dsh` 里。
 
+### Turn owner contract evolution（owner 形状归一化）
+
+官方 `TurnProcessOwnerProps` 有两代形状（逐 tag 审计），插件用
+`normalizeTurnProcessOwner(turnProcess, alwaysOpen)`（纯函数、唯一的形状适配点）
+归一化，**视图从不感知契约代际**：
+
+- **旧 modern owner 契约（0.1.2-rc.1 ~ 0.1.6-alpha.2）**：
+  `{ spec, foldable, open, setOpen }` —— 没有 hasContent 字段。官方 0.1.2 的
+  TurnProcessNodeView 语义：`foldable` 即足以决定可折叠，`open = turnProcess.open`、
+  点击 `setOpen(!open)`。
+- **新 modern owner 契约（0.1.7-rc.1+）**：增加 `readonly hasContent: boolean`，
+  可折叠 = `foldable && hasContent`。
+
+归一化规则用 `Object.prototype.hasOwnProperty.call(turnProcess, "hasContent")` 区分：
+
+- **字段不存在（旧契约）**：`canCollapse = foldable && !alwaysOpen`；
+- **字段存在且 false（新契约）**：`canCollapse = false`（静态栏、不调 setOpen）；
+- **字段存在且 true**：`canCollapse = foldable && !alwaysOpen`（0.1.7+ 零回归）。
+
+**MISSING hasContent ≠ hasContent=false，更 ≠ LEGACY TURN**——缺字段是契约代际
+差异，不是缺官方 owner；`turnFold` 对 0.1.2~0.1.6 仍然判 `modern`（官方已拥有
+foldable/open/setOpen，插件只消费官方 owner state）。能力矩阵里对应的是 raw 探针
+`turnOwnerHasContent`（owner 契约形状能力，绝不参与 turnFold 计算、绝不触发
+Legacy Turn Engine）。`foldable=false`（Verbose）与 `alwaysOpen`（aborted/error/
+running）语义两代契约一致、零回归；所有切换仍只调用 `turnProcess.setOpen()`，
+插件不自持 open 状态、不重算 membership、不做 DOM 隐藏。
+
 ### 能力矩阵（官方 release tag 逐版本源码审计）
 
 来源见 `tests/version-fixtures/host-matrix.mjs`（每个探针字段独立审计、绝不互相推导）：
 
-| DSH 版本 | Turn backend | Step backend | Metrics backend | 会话作用域 |
+| DSH 版本 | Turn backend | Owner 契约 | Step backend | Metrics backend | 会话作用域 |
 | --- | --- | --- | --- | --- |
-| 0.1.1-rc.2 | legacy（无 turn-process 节点、无 useChat/useConversation） | legacy（无官方 Process Group） | fallback（无 turnDataSource） | none（无任何锚点） |
-| 0.1.2-rc.1 | **modern**（official owner state） | legacy（无分组契约） | **fallback**（无 turnDataSource，指标走逐 step 直读） | none |
-| 0.1.5-rc.3 | modern | legacy | fallback | none |
-| 0.1.6-alpha.2 | modern | legacy | fallback | tree-only（首次出现 `data-conversation-content`） |
-| 0.1.7-rc.1 | modern | modern | **reactive**（turnDataSource 首次出现） | tree-only（有 content、无 session 锚点） |
-| 0.1.7-rc.2 | modern | modern | reactive | official（`data-conversation-session`，commit b7ac0ade10） |
-| 0.2.0-rc.2 | modern | modern | reactive | official |
+| 0.1.1-rc.2 | legacy（无 turn-process 节点、无 useChat/useConversation） | —（无 owner 契约） | legacy（无官方 Process Group） | fallback（无 turnDataSource） | none（无任何锚点） |
+| 0.1.2-rc.1 | **modern**（official owner state） | 旧形状（无 hasContent） | legacy（无分组契约） | **fallback**（无 turnDataSource，指标走逐 step 直读） | none |
+| 0.1.5-rc.3 | modern | 旧形状（无 hasContent） | legacy | fallback | none |
+| 0.1.6-alpha.2 | modern | 旧形状（无 hasContent） | legacy | fallback | tree-only（首次出现 `data-conversation-content`） |
+| 0.1.7-rc.1 | modern | 新形状（hasContent 起） | modern | **reactive**（turnDataSource 首次出现） | tree-only（有 content、无 session 锚点） |
+| 0.1.7-rc.2 | modern | 新形状 | modern | reactive | official（`data-conversation-session`，commit b7ac0ade10） |
+| 0.2.0-rc.2 | modern | 新形状 | modern | reactive | official |
 
 ### 诊断输出：probing → resolved 两行制
 

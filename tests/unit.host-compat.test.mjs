@@ -57,6 +57,7 @@ describe('兼容架构 A：能力探测与模式（三态语义）', () => {
       assert.equal(caps.stepFold, fixture.expect.stepFold, 'step 模式')
       assert.equal(caps.metrics, fixture.expect.metrics, 'metrics 模式（reactive/fallback/unknown 三态）')
       assert.equal(caps.sessionScope, fixture.expect.sessionScope, '会话作用域（official/tree-only/none/unknown 四态）')
+      assert.equal(caps.turnOwnerHasContent, fixture.probe.turnOwnerHasContent === true, fixture.version + ' owner 契约形状（hasContent 是否存在）——与 fold ownership 无关')
       const mode = caps.turnFold === 'modern' && caps.stepFold === 'modern' ? 'modern'
         : (caps.turnFold === 'legacy' && caps.stepFold === 'legacy' ? 'legacy' : 'mixed')
       assert.equal(mode, fixture.expect.mode, '总模式')
@@ -85,6 +86,13 @@ describe('兼容架构 A：能力探测与模式（三态语义）', () => {
     assert.equal(caps.stepFold, 'modern')
     assert.equal(caps.metrics, 'fallback', 'metrics 与 turn fold 解耦：无 turnDataSource = fallback，不是 legacy fold engine')
     assert.notEqual(caps.metrics, 'reactive')
+  })
+  it('owner 契约形状 ≠ ownership：nativeTurnFold=true + turnOwnerHasContent=false → turnFold 仍 modern', () => {
+    const caps = T.hostCapabilitiesOf({ nativeTurnFold: true, turnOwnerHasContent: false, nativeStepGroups: true })
+    assert.equal(caps.turnFold, 'modern', '缺 hasContent 是契约代际差异，绝不是 legacy turn')
+    assert.equal(caps.turnOwnerHasContent, false, '形状能力如实记录（raw probe）')
+    assert.equal(T.hostCapabilitiesOf({ nativeTurnFold: true, turnOwnerHasContent: true }).turnOwnerHasContent, true)
+    assert.equal(T.hostCapabilitiesOf({ nativeTurnFold: true }).turnOwnerHasContent, undefined, '注册期探不到 → undefined')
   })
   it('sessionScope 四态：official / tree-only / none / unknown 由独立探针决定', () => {
     assert.equal(T.hostCapabilitiesOf({ sessionDomScope: true }).sessionScope, 'official')

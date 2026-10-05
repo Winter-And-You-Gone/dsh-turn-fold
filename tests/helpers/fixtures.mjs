@@ -148,17 +148,20 @@ export function makeTurnNode(opts = {}) {
 /** TurnProcessOwnerProps mock（官方 ChatNodeSeat 构建的 owner state）。 */
 export function makeTurnProcessOwner(overrides = {}) {
   const setOpen = overrides.setOpen ?? (() => {})
-  return {
+  // 旧 modern 契约（0.1.2~0.1.6）没有 hasContent 字段——omitHasContent 时**真省略 key**
+  //（不能写 hasContent: undefined：hasOwnProperty 会返回 true，新旧契约就混淆了）
+  const owner = {
     spec: overrides.spec ?? {
       turn: 13, controlAnchorSeq: 100, processStartSeq: 100,
       answerAnchorSeq: 200, answerStep: 5, inlineReasoning: false,
       messageCount: 1, toolCallCount: 4, subagentCount: 0,
     },
     foldable: overrides.foldable ?? true,
-    hasContent: overrides.hasContent ?? true,
     open: overrides.open ?? false,
     setOpen,
   }
+  if (overrides.omitHasContent !== true) owner.hasContent = overrides.hasContent ?? true
+  return owner
 }
 
 /** 官方聚合 tokenUsage（turn-tail 携带，deriveTurnTokenUsage 形状）。 */

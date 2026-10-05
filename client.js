@@ -7,7 +7,7 @@
 //   并用一层纯 CSS 的 Poker 皮给官方 Step 分组栏换装。
 //
 //   - Turn 折叠状态完全来自官方 owner state（TurnProcessOwnerProps）：
-//       turnProcess.foldable / hasContent / open / setOpen / spec
+//       turnProcess 的 foldable / hasContent / open / setOpen / spec
 //     点击 Turn 栏只调用 turnProcess.setOpen()；官方 ChatNodeSeat 自己负责
 //     隐藏/显示折叠成员（data-turn-process-hidden），插件绝不碰成员可见性。
 //   - 运行中（回合未结束）：官方 turn-process 节点在 turn/start 即投影，但官方
@@ -2964,36 +2964,72 @@ window.__ModuleLoader__.load({
 					cardBridge
 				);
 			}
-			// 回合结束：折叠语义全部来自官方 turnProcess。
-			var spec = turnProcess && turnProcess.spec ? turnProcess.spec : (clock.data && typeof clock.data.get === "function" ? clock.data.get("turn-process") : undefined);
+			// 回合结束：折叠语义全部来自官方 turnProcess（经 owner-shape 归一化，
+			// 本组件不知道官方契约是哪一代形状）。
 			// turnProcessAlwaysOpen（官方 contract/turn-process.ts 同款语义）：
 			// live（不可能，已在 running 分支）、aborted、error 的回合不可折叠。
 			var alwaysOpen = clock.status === "open" || clock.reason === "aborted" || clock.reason === "error";
-			var canCollapse = !!(turnProcess && turnProcess.foldable && turnProcess.hasContent) && !alwaysOpen;
-			// 官方 TurnProcessNodeView 语义：open = !foldable || open——foldable=false
-			//（如 Verbose，官方 foldCompletedTurns=false）时内容实际始终展开，
-			// Poker 必须呈扇形/展开态；turnProcess 缺失（降级）同理按展开态处理。
-			var foldable = !!(turnProcess && turnProcess.foldable);
-			var open = !foldable || (turnProcess && turnProcess.open === true);
+			var owner = normalizeTurnProcessOwner(turnProcess, alwaysOpen);
+			var spec = owner.available && owner.spec
+				? owner.spec
+				: (clock.data && typeof clock.data.get === "function" ? clock.data.get("turn-process") : undefined);
 			var statusText = turnStatusLabel(clock.reason);
 			return react.createElement(react.Fragment, null,
 				react.createElement(TurnBarView, {
 					running: false,
-					open: open,
-					canToggle: canCollapse,
+					open: owner.open,
+					canToggle: owner.canCollapse,
 					turnNumber: clock.number,
 					label: label,
 					statusText: statusText,
 					statusFailed: clock.reason === "error",
-					poker: turnPokerIcon(iconStyle, specCardCountFromSpec(spec), false, open, clock.number, canCollapse, props.sessionId),
+					poker: turnPokerIcon(iconStyle, specCardCountFromSpec(spec), false, owner.open, clock.number, owner.canCollapse, props.sessionId),
 					round: round,
 					onToggle: function () {
 						// 唯一合法的折叠通道：官方 owner state 的 setOpen。
-						if (turnProcess && typeof turnProcess.setOpen === "function") turnProcess.setOpen(!open);
+						if (typeof owner.setOpen === "function") owner.setOpen(!owner.open);
 					}
 				}),
 				cardBridge
 			);
+		}
+		/** Turn owner 契约形状归一化（owner-shape normalization；纯函数、唯一的形状适配点）。
+		 *  官方 TurnProcessOwnerProps 有两代形状（逐 tag 审计，见 README「Turn owner contract
+		 *  evolution」）：
+		 *   · 旧 modern 契约（0.1.2-rc.1 ~ 0.1.6-alpha.2）：{ spec, foldable, open, setOpen }
+		 *     ——没有 hasContent 字段；官方 0.1.2 TurnProcessNodeView 语义：foldable 即足以
+		 *     决定可折叠（foldable=false 官方整个不渲染），open = turnProcess.open、点击
+		 *     setOpen(!open)；
+		 *   · 新 modern 契约（0.1.7-rc.1+）：多了 readonly hasContent: boolean，折叠 =
+		 *     foldable && hasContent。
+		 *  两代用 hasOwnProperty 区分——**字段不存在 ≠ 字段为 false**（MISSING hasContent
+		 *  IS NOT hasContent=false，更不是 LEGACY TURN）：旧契约 foldable=true → 可折叠；
+		 *  新契约显式 hasContent=false → 不可折叠（静态栏、不调 setOpen）。
+		 *  Shared UI（TurnBarView / Poker helper）只消费这里的归一化语义
+		 *  （open / canCollapse / setOpen），不知道契约代际。
+		 *  turnProcess 缺失（异常/极旧宿主降级）→ available=false，按展开静态栏处理（不抛错）。 */
+		function normalizeTurnProcessOwner(turnProcess, alwaysOpen) {
+			var available = !!turnProcess;
+			var tp = turnProcess || {};
+			var foldable = tp.foldable === true;
+			var hasExplicitHasContent = Object.prototype.hasOwnProperty.call(tp, "hasContent");
+			// 旧契约（无该属性）：foldable 即折叠语义的全部内容；
+			// 新契约（属性存在）：必须显式 true（false/其它值都不可折叠）。
+			var contentAllowsCollapse = hasExplicitHasContent ? tp.hasContent === true : true;
+			var canCollapse = available && foldable && contentAllowsCollapse && alwaysOpen !== true;
+			// open 保持官方规则：foldable=false（如 Verbose，官方 foldCompletedTurns=false）
+			// 时内容实际始终展开 → Poker 必须呈扇形/展开态；turnProcess 缺失（降级）同理。
+			var open = !foldable || tp.open === true;
+			return {
+				available: available,
+				spec: available ? tp.spec : undefined,
+				foldable: foldable,
+				open: open,
+				canCollapse: canCollapse,
+				hasExplicitHasContent: hasExplicitHasContent,
+				hasContent: hasExplicitHasContent ? tp.hasContent === true : undefined,
+				setOpen: typeof tp.setOpen === "function" ? tp.setOpen : undefined,
+			};
 		}
 		/** useChat 的 selector：只取本 (turn, kind) 的 identity-stable 增量数据源——
 		 *  绝不返回整个 snapshot（架构守卫测试禁止内联 selector）。
@@ -3089,6 +3125,8 @@ window.__ModuleLoader__.load({
 		 *   nativeStepGroups        官方 Process Group 契约（views.grouped 函数存在性；注册期探不到）
 		 *   sessionDomScope         官方 DOM 会话锚点 data-conversation-session（审计/运行时契约读取）
 		 *   conversationContentAnchor  旧代会话内容锚点 data-conversation-content（0.1.6-alpha.2 起）
+		 *   turnOwnerHasContent     官方 TurnProcessOwnerProps 是否含 hasContent 字段
+		 *                           （契约形状能力；0.1.7-rc.1 起才有——绝不影响 turnFold）
 		 *   durableProjection       宿主半边是否注册 turnFoldMetrics projection（运行时探测） */
 		function hostCapabilitiesOf(probe) {
 			var p = probe || {};
@@ -3099,6 +3137,10 @@ window.__ModuleLoader__.load({
 			var sessionDomScope = p.sessionDomScope === true ? true : (p.sessionDomScope === false ? false : undefined);
 			var contentAnchor = p.conversationContentAnchor === true ? true : (p.conversationContentAnchor === false ? false : undefined);
 			var durable = p.durableProjection === true ? true : (p.durableProjection === false ? false : undefined);
+			// owner 契约形状能力（≠ Fold ownership mode）：官方 TurnProcessOwnerProps 是否
+			// 含 hasContent 字段（0.1.7-rc.1 起才有；0.1.2~0.1.6 是旧形状）。它**绝不**
+			// 参与 turnFold 计算——缺 hasContent 是契约代际差异，不是缺官方 owner。
+			var turnOwnerHasContent = p.turnOwnerHasContent === true ? true : (p.turnOwnerHasContent === false ? false : undefined);
 			var sessionScope;
 			if (sessionDomScope === true) sessionScope = "official";
 			else if (sessionDomScope === false) sessionScope = contentAnchor === true ? "tree-only" : "none";
@@ -3110,6 +3152,7 @@ window.__ModuleLoader__.load({
 				nativeStepGroups: nativeStepGroups,
 				sessionDomScope: sessionDomScope,
 				conversationContentAnchor: contentAnchor,
+				turnOwnerHasContent: turnOwnerHasContent,
 				durableProjection: durable,
 				// feature-level 模式（允许 hybrid：Turn modern + Step legacy + metrics fallback）
 				turnFold: nativeTurnFold ? "modern" : "legacy",

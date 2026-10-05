@@ -514,3 +514,114 @@ describe('唯一 Fold icon（Poker 右侧不再有折叠箭头）', () => {
     } finally { act(() => { T.setIconStyle('poker') }) }
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════
+// Turn owner contract evolution（0.1.2~0.1.6 旧 modern owner 形状兼容）：
+// 官方 TurnProcessOwnerProps 0.1.7-rc.1 起才有 hasContent；旧形状
+// { spec, foldable, open, setOpen } 下 foldable 即足以决定可折叠。
+// MISSING hasContent ≠ hasContent=false ≠ legacy turn —— 全部经
+// normalizeTurnProcessOwner 归一化，视图不感知契约代际。
+// ══════════════════════════════════════════════════════════════════════
+describe('Turn owner 契约演进：旧 modern owner（无 hasContent 字段）', () => {
+  it('A: foldable=true + 无 hasContent → 可折叠栏，点击 → setOpen(true) 恰一次', () => {
+    renderView(closedProps({ omitHasContent: true }))
+    const bar = container.querySelector('button.ccg-turn-bar-main')
+    assert.ok(bar, '可折叠栏呈现（不是静态栏）')
+    assert.equal(bar.getAttribute('data-tf-static'), null, '不得是静态栏')
+    assert.equal(bar.getAttribute('aria-expanded'), 'false')
+    assert.equal(bar.getAttribute('data-open'), null)
+    clickMain()
+    assert.deepEqual(setOpenCalls, [true], '点击只调官方 setOpen(true) 恰一次')
+  })
+  it('B: 旧 owner open=true → 展开视觉，点击 → setOpen(false) 恰一次', () => {
+    renderView(closedProps({ omitHasContent: true, open: true }))
+    const bar = container.querySelector('button.ccg-turn-bar-main')
+    assert.ok(bar)
+    assert.equal(bar.getAttribute('data-tf-static'), null)
+    assert.equal(bar.getAttribute('aria-expanded'), 'true')
+    assert.equal(bar.getAttribute('data-open'), 'true')
+    clickMain()
+    assert.deepEqual(setOpenCalls, [false], '点击只调官方 setOpen(false) 恰一次')
+  })
+  it('C: 旧 owner foldable=false → 静态栏 + data-open=true，点击不调 setOpen', () => {
+    renderView(closedProps({ omitHasContent: true, foldable: false }))
+    const bar = container.querySelector('button.ccg-turn-bar-main')
+    assert.ok(bar, 'Verbose 语义静态栏')
+    assert.equal(bar.getAttribute('data-tf-static'), 'true')
+    assert.equal(bar.getAttribute('aria-expanded'), null)
+    assert.equal(bar.getAttribute('data-open'), 'true', '官方 open=!foldable||open → 展开视觉')
+    clickMain()
+    assert.deepEqual(setOpenCalls, [], 'foldable=false 不得调 setOpen')
+  })
+  it('F: 旧 owner + aborted/error → alwaysOpen 优先，仍不可折叠', () => {
+    for (const reason of ['aborted', 'error']) {
+      const steps = makeStepsSource([])
+      renderView({
+        node: makeTurnNode({ status: 'closed', reason }),
+        turnProcess: owner({ omitHasContent: true }),
+        useTurnData: makeUseTurnData({}),
+        useChat: makeUseChat(steps, 13),
+      })
+      const bar = container.querySelector('button.ccg-turn-bar-main')
+      assert.ok(bar, reason + ' 静态栏')
+      assert.equal(bar.getAttribute('data-tf-static'), 'true', reason + ' 不可折叠')
+      clickMain()
+      assert.deepEqual(setOpenCalls, [], reason + ' 不得调 setOpen')
+    }
+  })
+  it('H: 旧 owner 可折叠时 Poker/Native 图标语义正常（与契约代际无关）', () => {
+    // Poker：open=false → 收起牌堆（无旋转），open=true → 扇形（有旋转）
+    renderView(closedProps({ omitHasContent: true }))
+    const closedRot = [...container.querySelectorAll('.ccg-poker-motion')]
+      .some((m) => (m.getAttribute('transform') || '').includes('rotate'))
+    assert.equal(closedRot, false, '收起牌堆无旋转')
+    renderView(closedProps({ omitHasContent: true, open: true }))
+    const fanRot = [...container.querySelectorAll('.ccg-poker-motion')]
+      .some((m) => (m.getAttribute('transform') || '').includes('rotate'))
+    assert.ok(fanRot, '展开扇形有旋转')
+    // Native：前导 chevron 存在且随 open 翻转
+    act(() => { T.setIconStyle('native') })
+    try {
+      renderView(closedProps({ omitHasContent: true }))
+      const chevron = container.querySelector('.ccg-turn-row svg')
+      assert.ok(chevron, 'native 前导 chevron 存在')
+    } finally { act(() => { T.setIconStyle('poker') }) }
+  })
+})
+
+describe('Turn owner 契约演进：归一化纯函数与源码守卫', () => {
+  it('normalizeTurnProcessOwner：missing hasContent ≠ hasContent=false', () => {
+    const setOpen = () => {}
+    const legacyOwner = { spec: { turn: 1 }, foldable: true, open: false, setOpen }
+    assert.equal(Object.prototype.hasOwnProperty.call(legacyOwner, 'hasContent'), false, 'fixture 必须真省略 key')
+    const legacy = T.normalizeTurnProcessOwner(legacyOwner, false)
+    assert.equal(legacy.available, true)
+    assert.equal(legacy.foldable, true)
+    assert.equal(legacy.hasExplicitHasContent, false)
+    assert.equal(legacy.hasContent, undefined, 'missing → undefined（不是 false）')
+    assert.equal(legacy.canCollapse, true, '旧契约 foldable=true → 可折叠')
+    assert.equal(legacy.open, false)
+    const newOff = T.normalizeTurnProcessOwner({ spec: { turn: 1 }, foldable: true, hasContent: false, open: false, setOpen }, false)
+    assert.equal(newOff.hasExplicitHasContent, true)
+    assert.equal(newOff.hasContent, false)
+    assert.equal(newOff.canCollapse, false, '显式 hasContent=false → 不可折叠')
+    const newOn = T.normalizeTurnProcessOwner({ spec: { turn: 1 }, foldable: true, hasContent: true, open: false, setOpen }, false)
+    assert.equal(newOn.canCollapse, true, '显式 hasContent=true → 可折叠')
+    const verbose = T.normalizeTurnProcessOwner({ spec: { turn: 1 }, foldable: false, open: false, setOpen }, false)
+    assert.equal(verbose.canCollapse, false)
+    assert.equal(verbose.open, true, 'foldable=false → 展开视觉')
+    const always = T.normalizeTurnProcessOwner(legacyOwner, true)
+    assert.equal(always.canCollapse, false, 'alwaysOpen 优先')
+    const missing = T.normalizeTurnProcessOwner(undefined, false)
+    assert.equal(missing.available, false)
+    assert.equal(missing.canCollapse, false)
+    assert.equal(missing.open, true, '缺失 → 降级展开静态栏')
+  })
+  it('源码守卫：视图不得重新出现 turnProcess.foldable/hasContent 直接布尔绑定', () => {
+    const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+    assert.ok(src.includes('function normalizeTurnProcessOwner'), '必须存在归一化 helper')
+    assert.ok(src.includes('normalizeTurnProcessOwner(turnProcess, alwaysOpen)'), '视图必须经归一化消费 owner')
+    assert.ok(!src.includes('turnProcess.hasContent'), '禁止 turnProcess.hasContent 直接绑定（兼容判断收敛进 helper）')
+    assert.ok(!src.includes('turnProcess.foldable'), '禁止 turnProcess.foldable 直接绑定')
+  })
+})

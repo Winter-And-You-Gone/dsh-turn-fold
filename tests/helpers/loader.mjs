@@ -175,6 +175,7 @@ const TEST_EXPORTS = [
   'AnimatedLabel',
   'TurnBarView',
   'EnhancedTurnProcessView',
+  'normalizeTurnProcessOwner',
   'NativeChevronIcon',
   'specCardCountFromSpec',
   'selectTurnNodeSource',
