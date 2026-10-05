@@ -1616,30 +1616,64 @@ window.__ModuleLoader__.load({
 			else run();
 		}
 
-		// ---- 委托渲染：官方 builtin renderer（priority 0 条目）----
+		// ---- 委托渲染：官方 builtin renderer（安装期 preflight 捕获，render 零扫描）----
 		// slots 服务在 apply 时保存（§8：只保存，不提前注册）。官方条目仍可枚举 →
-		// shadow 委托原 renderer，原内容零复制、零变形（§20/§21）。
+		// 安装前 preflight 捕获 priority-0 builtin 并固定保存（legacyStepBuiltinRenderers）：
+		// renderer 只读安装期引用，**不再在渲染路径扫描 slots.entries()**（真机审计：
+		// StoredEntry.component 在 0.1.2/0.1.5/0.1.6/0.2.0 均直接暴露；ui-renderer 的
+		// slots.inject 在 slot 已声明时同步执行回调并同步抛出 setup 失败——注册成败可观测）。
+		// 捕获必须发生在 shadow 注册**之前**：否则 entries() 会先看到插件自己的 shadow。
 		var legacyStepSlotsRef = null;
-		var legacyBuiltinWarned = {};
-		function legacyBuiltinRenderer(kind) {
-			var slots = legacyStepSlotsRef;
-			if (!slots || typeof slots.entries !== "function") return undefined;
+		var legacyStepBuiltinRenderers = null;   // { assistantStep, toolCall } | null（仅 COMMIT 后非 null）
+		var legacyStepWarned = {};
+		function legacyWarnOnce(tag, message) {
+			if (legacyStepWarned[tag]) return;
+			legacyStepWarned[tag] = true;
+			try {
+				if (typeof console !== "undefined" && console.warn) console.warn("[dsh-turn-fold] " + message);
+			} catch (e) { /* 忽略 */ }
+		}
+		/** 严格 builtin 查找：key 匹配 + priority 恰好 0 + component 非空。
+		 *  component 类型不做 function 限制（memo/forwardRef 是 object，同样可 createElement）。 */
+		function findLegacyBuiltinRenderer(slots, kind) {
+			if (!slots || typeof slots.entries !== "function") return null;
 			var entries = null;
 			try { entries = slots.entries("conversation.chat.node"); } catch (e) { entries = null; }
 			for (var i = 0; entries && i < entries.length; i++) {
 				var e = entries[i];
-				if (e && e.options && e.options.key === kind && (e.options.priority || 0) === 0) return e.component;
+				if (e && e.options && e.options.key === kind && (e.options.priority || 0) === 0 && e.component != null) {
+					return e.component;
+				}
 			}
-			if (!legacyBuiltinWarned[kind]) {
-				legacyBuiltinWarned[kind] = true;
-				try {
-					if (typeof console !== "undefined" && console.warn) {
-						console.warn('[dsh-turn-fold] builtin renderer for conversation.chat.node key "' + kind +
-							'" (priority 0) not found — legacy step delegated rendering will be empty.');
+			return null;
+		}
+		/** shadow 槽位可用性 preflight：priority -1 未被任何条目占用（第三方插件优先）。 */
+		function legacyShadowSlotFree(slots, kind) {
+			if (!slots || typeof slots.entries !== "function") return false;
+			var entries = null;
+			try { entries = slots.entries("conversation.chat.node"); } catch (e) { return false; }
+			for (var i = 0; entries && i < entries.length; i++) {
+				var e = entries[i];
+				if (e && e.options && e.options.key === kind && (e.options.priority || 0) === -1) return false;
+			}
+			return true;
+		}
+		/** 原子校验：两个 shadow 是否都已真正成为各自 cell 的 active occupant
+		 *  （entriesOfSlot = 每个 cell 的最低优先级条目；无法验证的宿主回退信任 register 未抛）。 */
+		function legacyShadowsActive(slots) {
+			try {
+				if (!slots || typeof slots.entriesOfSlot !== "function") return true;
+				var winners = slots.entriesOfSlot("conversation.chat.node");
+				var seen = {};
+				for (var i = 0; winners && i < winners.length; i++) {
+					var e = winners[i];
+					if (!e || !e.options) continue;
+					if ((e.options.key === "assistant-step" || e.options.key === "tool-call") && (e.options.priority || 0) < 0) {
+						seen[e.options.key] = true;
 					}
-				} catch (e) { /* 忽略 */ }
-			}
-			return undefined;
+				}
+				return !!seen["assistant-step"] && !!seen["tool-call"];
+			} catch (e) { return true; }
 		}
 		/** think-only / text-only 派生节点（旧 main 已验证的最小构造，非官方 UI 复制）：
 		 *  think+text 成员 → think 部分入段（可隐藏）、text 部分段外恒可见。 */
@@ -1809,15 +1843,20 @@ window.__ModuleLoader__.load({
 			var snapshot = useLegacyChatSnapshot(props);
 			var group = legacyGroupForNode(snapshot, node && node.key);
 			var openManual = useLegacyStepOpen(sessionKey, group ? group.leaderKey : "", !!group);
-			var Builtin = legacyBuiltinRenderer("tool-call");
-			if (!Builtin || !group || !group.memberKeys[node.key]) {
-				// 非成员（排除工具/无组）或委托面缺失 → 原样直通，绝不隐藏（FAIL OPEN）
-				return Builtin ? react.createElement(Builtin, props) : null;
+			var member = !!(group && node && group.memberKeys[node.key]);
+			// surface 生命周期 Hook **无条件调用**（早于任何 return）：non-member ↔ member
+			// 的流式转换绝不改变 Hook 顺序（旧条件 useEffect 会触发 "Rendered more hooks"）。
+			useLegacyStepSurface(sessionKey, member);
+			var Builtin = legacyStepBuiltinRenderers ? legacyStepBuiltinRenderers.toolCall : null;
+			if (!Builtin) {
+				// 不可能状态（安装事务保证 builtin 已捕获）：shadow 已占位，只能降级告警。
+				legacyWarnOnce("builtin-lost-tool", "legacy step tool-call builtin reference lost unexpectedly");
+				return null;
 			}
-			react.useEffect(function () {
-				legacyStepSurfaceMounted(sessionKey);
-				return function () { legacyStepSurfaceUnmounted(sessionKey); };
-			}, [sessionKey]);
+			if (!member) {
+				// 非成员（排除工具/无组）→ 原样直通，绝不隐藏（FAIL OPEN）
+				return react.createElement(Builtin, props);
+			}
 			var open = legacyStepEffectiveOpen(group, openManual);
 			var hidden = !open;
 			var kids = [];
@@ -1845,15 +1884,19 @@ window.__ModuleLoader__.load({
 			var snapshot = useLegacyChatSnapshot(props);
 			var group = legacyGroupForNode(snapshot, node && node.key);
 			var openManual = useLegacyStepOpen(sessionKey, group ? group.leaderKey : "", !!group);
-			var Builtin = legacyBuiltinRenderer("assistant-step");
-			if (!Builtin || !group || !group.memberKeys[node.key]) {
-				// 非成员（最终答案/纯 text 节点）→ 原样直通，绝不隐藏（最终答案永在 Fold 外）
-				return Builtin ? react.createElement(Builtin, props) : null;
+			var member = !!(group && node && group.memberKeys[node.key]);
+			// surface 生命周期 Hook **无条件调用**（早于任何 return）：assistant-step 的
+			// blocks 从空 → reasoning 的流式转换会让 non-member → member，Hook 顺序必须恒定。
+			useLegacyStepSurface(sessionKey, member);
+			var Builtin = legacyStepBuiltinRenderers ? legacyStepBuiltinRenderers.assistantStep : null;
+			if (!Builtin) {
+				legacyWarnOnce("builtin-lost-assistant", "legacy step assistant-step builtin reference lost unexpectedly");
+				return null;
 			}
-			react.useEffect(function () {
-				legacyStepSurfaceMounted(sessionKey);
-				return function () { legacyStepSurfaceUnmounted(sessionKey); };
-			}, [sessionKey]);
+			if (!member) {
+				// 非成员（最终答案/纯 text 节点）→ 原样直通，绝不隐藏（最终答案永在 Fold 外）
+				return react.createElement(Builtin, props);
+			}
 			var open = legacyStepEffectiveOpen(group, openManual);
 			var hidden = !open;
 			var kids = [];
@@ -1892,18 +1935,40 @@ window.__ModuleLoader__.load({
 			}, kids);
 		}
 
-		// ---- Legacy Step backend installer（§6-9）----
+		// ---- surface 生命周期（无条件 Hook；non-member ↔ member 不改变 Hook 顺序）----
+		/** Legacy member surface 的挂载登记：active 时计入 session surface registry，
+		 *  微任务清理语义与 completed face 一致（StrictMode replay 不误清）。
+		 *  **必须在两个 renderer 的每一次 render 里无条件调用**（早于任何 return）。 */
+		function useLegacyStepSurface(sessionKey, active) {
+			react.useEffect(function () {
+				if (!active) return undefined;
+				legacyStepSurfaceMounted(sessionKey);
+				return function () { legacyStepSurfaceUnmounted(sessionKey); };
+			}, [sessionKey, active]);
+		}
+
+		// ---- Legacy Step backend installer（§6-9：preflight + 原子事务 + rollback）----
 		// 只允许 stepFold unknown → legacy 的那次 committed 迁移调用
 		//（noteLegacyStepEngine → activateLegacyStepEngine）；StrictMode effect replay /
-		// 重复 render 幂等（已安装直接返回 false）。插件卸载 dispose 全部注销。
-		var legacyStepRegistration = null;   // { disposers: [], keys: [] } | null
+		// 重复 render 幂等（已安装直接返回 false，不算 attempt）。
+		// FAIL OPEN 的准确含义：preflight 不能捕获两个官方 builtin（或 shadow 槽位被
+		// 第三方占用 / 半套注册失败）→ **整个 backend 不安装** → 官方 priority-0 renderer
+		// 保持 owner、内容原样显示，代价只是 Step 不折叠；绝不出现"内容消失 / 半套折叠"。
+		var legacyStepRegistration = null;   // { disposers: [], keys: [] } | null（仅 COMMIT 后非 null）
+		var legacyStepEngineInstalls = 0;    // 成功安装次数（activation attempts 之外的独立计数）
+		var legacyStepInstallStats = { attempts: 0, successes: 0, preflightFailures: 0, rollbacks: 0 };
+		/** 注册单个 shadow（priority 固定 -1，不参与让位；冲突由 preflight 整体让位）。
+		 *  返回 { ok, dispose }：ok 表示 register 未抛且回调同步执行（slot 已声明）；
+		 *  真正"成为 active occupant"由调用方 legacyShadowsActive 统一校验。
+		 *  （真机审计：ui-renderer 的 slots.inject 在 slot 已声明时同步执行回调、
+		 *  setup 失败同步抛出并停止该 injection——注册成败可同步观测。） */
 		function legacyRegisterShadow(key, component) {
 			var slots = legacyStepSlotsRef;
-			if (!slots || typeof slots.inject !== "function" || typeof slots.register !== "function") return null;
+			if (!slots || typeof slots.inject !== "function" || typeof slots.register !== "function") return { ok: false, dispose: null };
 			var options = {
 				name: "conversation.chat.node",
 				key: key,
-				priority: resolveSlotPriority(slots, "conversation.chat.node", function (o) { return o.key === key; }, 'conversation.chat.node key "' + key + '"'),
+				priority: -1,
 				locale: "chat",
 			};
 			try {
@@ -1911,40 +1976,79 @@ window.__ModuleLoader__.load({
 					try {
 						return slots.register(options, component);
 					} catch (err) {
-						noteSlotDegradation(options.name, key, err);
-						return undefined;
+						throw err;   // slot 已声明时：同步抛出 → inject 同步 rethrow → 外层统一 note + 事务捕获
 					}
 				});
-				return typeof dispose === "function" ? dispose : null;
+				return { ok: true, dispose: typeof dispose === "function" ? dispose : null };
 			} catch (err) {
 				noteSlotDegradation(options.name, key, err);
-				return null;
+				return { ok: false, dispose: null };
 			}
 		}
-		/** Legacy Step backend 安装：注册 minimal shadow set（assistant-step / tool-call）。
-		 *  绝不注册 turn-process / context / user（§18/§19/§45/§46 的最小 shadow 集）。
-		 *  返回是否发生了"未安装 → 已安装"的迁移（幂等）。 */
+		/** Legacy Step backend 安装（同步事务）：
+		 *   1) preflight 捕获两个官方 builtin（注册前！否则 entries() 会看到自己的 shadow）
+		 *   2) preflight 两个 shadow 槽位（priority -1 均空闲，任一被占 → 整体让位）
+		 *   3) 依次注册两个 shadow；任一失败/未成为 active occupant → 回滚已注册的全部
+		 *   4) 全部成功才 COMMIT（registration + builtin 引用一起落定）
+		 *  返回是否发生了"未安装 → 已安装"的迁移（幂等；重复调用不算 attempt）。 */
 		function activateLegacyStepEngine() {
-			legacyStepEngineActivations += 1;
-			if (legacyStepRegistration) return false;   // 已安装：StrictMode/重放不再注册
+			if (legacyStepRegistration) return false;   // 已安装：StrictMode/重放 no-op（不是 attempt）
 			if (!legacyStepSlotsRef) return false;      // 无 slots 面（防御；apply 未跑过）
+			legacyStepEngineActivations += 1;           // activation attempt（≠ 安装成功）
+			legacyStepInstallStats.attempts += 1;
+			var slots = legacyStepSlotsRef;
+			// 1) builtin preflight（捕获必须先于注册）
+			var assistantBuiltin = findLegacyBuiltinRenderer(slots, "assistant-step");
+			var toolBuiltin = findLegacyBuiltinRenderer(slots, "tool-call");
+			if (!assistantBuiltin || !toolBuiltin) {
+				legacyStepInstallStats.preflightFailures += 1;
+				legacyWarnOnce("builtin-missing", "Legacy Step disabled: official builtin renderer not capturable (content stays on the original owner)");
+				return false;
+			}
+			// 2) shadow 槽位 preflight（第三方占 -1 → 整体让位，绝不半套）
+			if (!legacyShadowSlotFree(slots, "assistant-step") || !legacyShadowSlotFree(slots, "tool-call")) {
+				legacyStepInstallStats.preflightFailures += 1;
+				legacyWarnOnce("priority-conflict", "Legacy Step disabled: required shadow priority occupied by another plugin");
+				return false;
+			}
+			// 3) 注册事务（任一失败 → 回滚全部）
 			var disposers = [];
 			var keys = [];
 			var defs = [
 				["assistant-step", LegacyStepAssistantView],
 				["tool-call", LegacyStepToolCallView],
 			];
+			var failed = false;
 			for (var i = 0; i < defs.length; i++) {
-				var dispose = legacyRegisterShadow(defs[i][0], defs[i][1]);
-				if (dispose) {
-					disposers.push(dispose);
+				var res = legacyRegisterShadow(defs[i][0], defs[i][1]);
+				if (res && res.ok && res.dispose) {
+					disposers.push(res.dispose);
 					keys.push(defs[i][0]);
+				} else {
+					failed = true;
+					break;
 				}
 			}
+			if (!failed && !legacyShadowsActive(slots)) failed = true;   // occupant 校验（延迟注册 → 同步不可证实 → 回滚）
+			if (failed) {
+				for (var d = 0; d < disposers.length; d++) {
+					try { disposers[d](); } catch (e) { /* 回滚失败不阻塞其余 */ }
+				}
+				legacyStepInstallStats.rollbacks += 1;
+				legacyStepBuiltinRenderers = null;
+				legacyStepRegistration = null;   // 中途绝不让 registration 非 null 表示成功
+				legacyWarnOnce("partial-registration", "Legacy Step disabled: shadow registration failed (rolled back, official UI untouched)");
+				return false;
+			}
+			// 4) COMMIT（builtin 引用与 registration 一起落定）
+			legacyStepBuiltinRenderers = { assistantStep: assistantBuiltin, toolCall: toolBuiltin };
 			legacyStepRegistration = { disposers: disposers, keys: keys };
+			legacyStepEngineInstalls += 1;
+			legacyStepInstallStats.successes += 1;
 			return true;
 		}
 		/** 注销全部 Legacy Step shadow 条目（插件卸载/热重载；不留 zombie registration）。
+		 *  同时清安装期 builtin 捕获引用；**不动** completedFaceSets / 共享 Poker 资产。
 		 *  返回是否真的注销了一套。 */
 		function disposeLegacyStepEngine() {
 			if (!legacyStepRegistration) return false;
@@ -1952,11 +2056,35 @@ window.__ModuleLoader__.load({
 				try { legacyStepRegistration.disposers[i](); } catch (e) { /* 单个注销失败不影响其余 */ }
 			}
 			legacyStepRegistration = null;
+			legacyStepBuiltinRenderers = null;
 			return true;
 		}
 		/** 诊断/测试：当前已安装的 legacy shadow keys（Modern 宿主必须为空）。 */
 		function getLegacyStepRegistrationKeys() {
 			return legacyStepRegistration ? legacyStepRegistration.keys.slice() : [];
+		}
+		/** 诊断/测试：安装状态（原子不变量：installed === true 必然 keys 恰好两个）。 */
+		function getLegacyStepRegistrationState() {
+			return {
+				installed: legacyStepRegistration !== null,
+				keys: legacyStepRegistration ? legacyStepRegistration.keys.slice() : [],
+				builtinsCaptured: !!(legacyStepBuiltinRenderers
+					&& legacyStepBuiltinRenderers.assistantStep != null
+					&& legacyStepBuiltinRenderers.toolCall != null),
+			};
+		}
+		/** 诊断/测试：安装期捕获的 builtin renderer 引用（primitive/var 导出会被快照，必须经 getter）。 */
+		function getLegacyStepBuiltinRenderers() { return legacyStepBuiltinRenderers; }
+		/** 诊断/测试：安装统计（activation attempt ≠ successful install）。 */
+		function getLegacyStepInstallStats() {
+			return {
+				attempts: legacyStepInstallStats.attempts,
+				successes: legacyStepInstallStats.successes,
+				preflightFailures: legacyStepInstallStats.preflightFailures,
+				rollbacks: legacyStepInstallStats.rollbacks,
+				activationAttempts: legacyStepEngineActivations,
+				installs: legacyStepEngineInstalls,
+			};
 		}
 
 		// ---- 注入样式（记录在案的软兼容点） ----

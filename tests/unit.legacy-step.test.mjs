@@ -434,3 +434,437 @@ describe('Legacy Step D：与官方 Turn 正交', () => {
     assert.deepEqual(turnCalls, [true], 'legacy 操作不调 turnProcess.setOpen')
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════
+// E. 安装事务（preflight + 原子 install + rollback + 固定 builtin 引用）
+// ══════════════════════════════════════════════════════════════════════
+describe('Legacy Step E：原子安装事务', () => {
+  /** 可参数化的 slots 环境：
+   *   omitAssistantBuiltin / omitToolBuiltin：去掉 priority-0 builtin
+   *   thirdPartyAssistant / thirdPartyTool：第三方占用 priority -1
+   *   throwOnRegisterKeys：指定 key 的 register 抛异常（模拟半套失败） */
+  function makeSlotsVariant(opts = {}) {
+    const registered = []
+    const registerCalls = []
+    let entriesCalls = 0
+    const official = []
+    if (!opts.omitAssistantBuiltin) official.push({ options: { key: 'assistant-step', priority: 0 }, component: FakeAssistant })
+    if (!opts.omitToolBuiltin) official.push({ options: { key: 'tool-call', priority: 0 }, component: FakeToolCall })
+    if (opts.thirdPartyAssistant) official.push({ options: { key: 'assistant-step', priority: -1 }, component: () => null })
+    if (opts.thirdPartyTool) official.push({ options: { key: 'tool-call', priority: -1 }, component: () => null })
+    return {
+      registered, registerCalls,
+      getEntriesCalls: () => entriesCalls,
+      entriesOfSlot: (slotName) => {
+        if (slotName !== 'conversation.chat.node') return []
+        const sorted = official.concat(registered).slice().sort((a, b) => (a.options.priority || 0) - (b.options.priority || 0))
+        const seen = {}
+        const winners = []
+        for (const e of sorted) {
+          if (seen[e.options.key]) continue
+          seen[e.options.key] = true
+          winners.push(e)
+        }
+        return winners
+      },
+      entries: (slotName) => {
+        if (slotName !== 'conversation.chat.node') return []
+        entriesCalls += 1
+        return official.concat(registered)
+      },
+      inject: (_slot, fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
+      register: (options, component) => {
+        registerCalls.push(options.key)
+        if (opts.throwOnRegisterKeys && opts.throwOnRegisterKeys.indexOf(options.key) >= 0) {
+          throw new Error('register failed for ' + options.key)
+        }
+        registered.push({ options, component })
+        return () => { const i = registered.findIndex((r) => r.options === options); if (i >= 0) registered.splice(i, 1) }
+      },
+    }
+  }
+  function applyWith(slots) {
+    return T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+  }
+
+  it('E1 preflight 全成功 → 原子安装：installed、keys 恰好 2、builtins 已捕获、统计正确', () => {
+    const slots = makeSlotsVariant()
+    applyWith(slots)
+    const statsBefore = T.getLegacyStepInstallStats()
+    assert.equal(T.activateLegacyStepEngine(), true)
+    const st = T.getLegacyStepRegistrationState()
+    assert.deepEqual(st, { installed: true, keys: ['assistant-step', 'tool-call'], builtinsCaptured: true })
+    assert.equal(slots.registered.length, 2)
+    const stats = T.getLegacyStepInstallStats()
+    assert.equal(stats.attempts - statsBefore.attempts, 1)
+    assert.equal(stats.successes - statsBefore.successes, 1)
+    assert.equal(stats.installs - statsBefore.installs, 1)
+  })
+  it('E2 assistant builtin 缺失 → 整体不安装（0 shadow、官方 tool 未被触碰）', () => {
+    const slots = makeSlotsVariant({ omitAssistantBuiltin: true })
+    applyWith(slots)
+    const before = T.getLegacyStepInstallStats()
+    assert.equal(T.activateLegacyStepEngine(), false)
+    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false })
+    assert.equal(slots.registered.length, 0, '一个 shadow 都不注册（含 tool-call）')
+    assert.equal(T.getLegacyStepInstallStats().preflightFailures - before.preflightFailures, 1)
+  })
+  it('E3 tool builtin 缺失 → 同上（不能只装 assistant）', () => {
+    const slots = makeSlotsVariant({ omitToolBuiltin: true })
+    applyWith(slots)
+    assert.equal(T.activateLegacyStepEngine(), false)
+    assert.equal(slots.registered.length, 0)
+    assert.deepEqual(T.getLegacyStepRegistrationKeys(), [])
+  })
+  it('E4 第三方占用 assistant priority -1 → 整体让位（tool 也不注册）', () => {
+    const slots = makeSlotsVariant({ thirdPartyAssistant: true })
+    applyWith(slots)
+    assert.equal(T.activateLegacyStepEngine(), false)
+    assert.equal(T.getLegacyStepRegistrationState().installed, false)
+    assert.equal(slots.registered.length, 0, '绝不半套')
+    assert.deepEqual(slots.registerCalls, [], 'preflight 失败时根本不进入注册')
+  })
+  it('E5 第三方占用 tool priority -1 → 整体让位', () => {
+    const slots = makeSlotsVariant({ thirdPartyTool: true })
+    applyWith(slots)
+    assert.equal(T.activateLegacyStepEngine(), false)
+    assert.equal(slots.registered.length, 0)
+    assert.deepEqual(slots.registerCalls, [])
+  })
+  it('E6 第二个 shadow（tool）注册失败 → 回滚 assistant、registration/builtins 清空、官方 entries 仍在', () => {
+    const slots = makeSlotsVariant({ throwOnRegisterKeys: ['tool-call'] })
+    applyWith(slots)
+    const before = T.getLegacyStepInstallStats()
+    assert.equal(T.activateLegacyStepEngine(), false)
+    assert.deepEqual(slots.registerCalls, ['assistant-step', 'tool-call'], '先 assistant 后 tool，tool 失败')
+    assert.equal(slots.registered.length, 0, 'assistant 已被回滚（无半套）')
+    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false })
+    assert.equal(T.getLegacyStepInstallStats().rollbacks - before.rollbacks, 1)
+    assert.equal(slots.entries('conversation.chat.node').filter((e) => (e.options.priority || 0) === 0).length, 2, '官方 builtin entries 原样')
+  })
+  it('E7 第一个 shadow（assistant）注册失败 → tool 根本不尝试；0 shadow', () => {
+    const slots = makeSlotsVariant({ throwOnRegisterKeys: ['assistant-step'] })
+    applyWith(slots)
+    assert.equal(T.activateLegacyStepEngine(), false)
+    assert.deepEqual(slots.registerCalls, ['assistant-step'], 'tool 不得尝试')
+    assert.equal(slots.registered.length, 0)
+    assert.equal(T.getLegacyStepRegistrationState().installed, false)
+  })
+  it('E8 dispose 清空 registration + builtin 引用；可重新 preflight/捕获/安装', () => {
+    const slots = makeSlotsVariant()
+    applyWith(slots)
+    assert.equal(T.activateLegacyStepEngine(), true)
+    assert.equal(T.disposeLegacyStepEngine(), true)
+    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false })
+    assert.equal(slots.registered.length, 0)
+    assert.equal(T.activateLegacyStepEngine(), true, '重新安装成功')
+    assert.equal(T.getLegacyStepRegistrationState().builtinsCaptured, true)
+    assert.equal(slots.registered.length, 2)
+  })
+  it('E9 固定 builtin 引用：安装后 mock entries 换掉/移除 priority-0 → renderer 仍用捕获引用', () => {
+    const slots = makeSlotsVariant()
+    applyWith(slots)
+    T.activateLegacyStepEngine()
+    const captured = T.getLegacyStepBuiltinRenderers()
+    assert.ok(captured && captured.assistantStep === FakeAssistant && captured.toolCall === FakeToolCall)
+    // 抽掉 mock 的官方条目（模拟 entries 形状变化）：renderer 不受影响
+    const originalEntries = slots.entries
+    slots.entries = () => []
+    const snap = makeSnapshot([
+      makeNode('tool-call', 'x1', {}),
+      makeNode('assistant-step', 'a', { blocks: textBlocks('x') }),
+    ])
+    const c = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(c)
+    const r = createRoot(c)
+    try {
+      act(() => { r.render(react.createElement(T.LegacyStepToolCallView, { node: snap.nodes.get('x1'), useChat: (sel) => sel(snap), sessionId: 'fixed-ref' })) })
+      assert.ok(c.querySelector('[data-fake="tool-call"]'), '仍用安装期捕获的 builtin 渲染内容')
+    } finally {
+      act(() => { r.unmount() })
+      c.remove()
+      slots.entries = originalEntries
+    }
+  })
+  it('E10 render 路径零扫描：多次 render 不增加 entries() 调用', () => {
+    const slots = makeSlotsVariant()
+    applyWith(slots)
+    T.activateLegacyStepEngine()
+    const snap = makeSnapshot([
+      makeNode('tool-call', 'x1', {}),
+      makeNode('assistant-step', 'a', { blocks: textBlocks('x') }),
+    ])
+    const c = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(c)
+    const r = createRoot(c)
+    try {
+      const before = slots.getEntriesCalls()
+      for (let i = 0; i < 5; i += 1) {
+        act(() => {
+          r.render(react.createElement(react.Fragment, null, [
+            react.createElement(T.LegacyStepToolCallView, { key: 't', node: snap.nodes.get('x1'), useChat: (sel) => sel(snap), sessionId: 'no-scan' }),
+            react.createElement(T.LegacyStepAssistantView, { key: 'a', node: snap.nodes.get('a'), useChat: (sel) => sel(snap), sessionId: 'no-scan' }),
+          ]))
+        })
+      }
+      assert.equal(slots.getEntriesCalls() - before, 0, 'render 不调用 slots.entries（preflight/诊断除外）')
+    } finally {
+      act(() => { r.unmount() })
+      c.remove()
+    }
+  })
+  it('E11 atomic invariant + activation attempt 语义：installed ⇒ keys 恰好 2；重复 activate 不算 attempt', () => {
+    const slots = makeSlotsVariant()
+    applyWith(slots)
+    assert.equal(T.activateLegacyStepEngine(), true)
+    const st = T.getLegacyStepRegistrationState()
+    assert.equal(st.installed && st.keys.length === 2, true, 'installed ⇒ keys === 2')
+    const stats1 = T.getLegacyStepInstallStats()
+    assert.equal(T.activateLegacyStepEngine(), false)
+    assert.equal(T.activateLegacyStepEngine(), false)
+    const stats2 = T.getLegacyStepInstallStats()
+    assert.equal(stats2.attempts, stats1.attempts, '已安装时的重复调用是 no-op，不算 attempt')
+    assert.equal(stats2.activationAttempts, stats1.activationAttempts, 'activation 计数同样不因 no-op 增长')
+    assert.equal(slots.registered.length, 2, '仍只有一套')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// F. Hook 生命周期（无条件 surface Hook；non-member ↔ member 不改变 Hook 顺序）
+// ══════════════════════════════════════════════════════════════════════
+describe('Legacy Step F：Hook 生命周期', () => {
+  const SESSION = 'hook-sess'
+  function setupSlots() {
+    const slots = {
+      registered: [],
+      entries: (name) => (name === 'conversation.chat.node'
+        ? [
+          { options: { key: 'assistant-step', priority: 0 }, component: FakeAssistant },
+          { options: { key: 'tool-call', priority: 0 }, component: FakeToolCall },
+        ].concat(slots.registered)
+        : []),
+      inject: (_slot, fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
+      register: (options, component) => {
+        slots.registered.push({ options, component })
+        return () => { const i = slots.registered.findIndex((r) => r.options === options); if (i >= 0) slots.registered.splice(i, 1) }
+      },
+    }
+    return slots
+  }
+  /** 可变的会话环境：currentSnapshot 变化后重渲染 → 同一个组件实例跨 non-member/member。 */
+  function makeHarness(component) {
+    const slots = setupSlots()
+    const dispose = T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+    T.activateLegacyStepEngine()
+    const state = { node: null, snapshot: null }
+    const useChat = (selector) => {
+      react.useSyncExternalStore(() => () => {}, () => selector(state.snapshot))
+      return undefined // 不用它的返回值（本 harness 直接同步调用 selector）
+    }
+    const c = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(c)
+    const r = createRoot(c)
+    const render = (nodeEl) => {
+      act(() => {
+        r.render(react.createElement(component, { node: state.node, useChat: (sel) => sel(state.snapshot), sessionId: SESSION }))
+      })
+    }
+    return { slots, dispose, state, c, r, render }
+  }
+  const errs = []
+  let origError = null
+  function captureErrors() {
+    origError = console.error
+    errs.length = 0
+    console.error = (...a) => { errs.push(a.map(String).join(' ')) }
+  }
+  function releaseErrors() { if (origError) console.error = origError }
+  function assertNoHookWarnings() {
+    const bad = errs.filter((l) => /Rendered (more|fewer) hooks|Rules of Hooks|Warning:/.test(l))
+    assert.deepEqual(bad, [], '不得出现 Hook/React 告警：' + JSON.stringify(bad))
+  }
+
+  it('F1 non-member → member（同实例）：无 Hook 告警；surface 0 → 1', () => {
+    captureErrors()
+    const h = makeHarness(T.LegacyStepAssistantView)
+    try {
+      // render 1：blocks=[] → 不是成员
+      h.state.node = makeNode('assistant-step', 's1', { blocks: [] })
+      h.state.snapshot = makeSnapshot([h.state.node])
+      h.render()
+      assert.equal(T.legacyStepSurfaces.get(SESSION), undefined, '非成员不计 surface')
+      // render 2：同 key，出现 reasoning → 成为成员（同一组件实例）
+      h.state.node = makeNode('assistant-step', 's1', { blocks: thinkBlocks('想') })
+      h.state.snapshot = makeSnapshot([h.state.node])
+      h.render()
+      assert.equal(T.legacyStepSurfaces.get(SESSION), 1, 'surface 0 → 1')
+      assert.equal(h.c.querySelector('[data-tf-legacy-step="header"]') !== null, true, 'header 出现')
+      assertNoHookWarnings()
+    } finally {
+      act(() => { h.r.unmount() }); h.c.remove(); h.dispose(); releaseErrors()
+    }
+  })
+  it('F2 member → non-member（同实例）：无 Hook 告警；surface 1 → 0（微任务后）', async () => {
+    captureErrors()
+    const h = makeHarness(T.LegacyStepAssistantView)
+    try {
+      h.state.node = makeNode('assistant-step', 's2', { blocks: thinkBlocks('想') })
+      h.state.snapshot = makeSnapshot([h.state.node])
+      h.render()
+      assert.equal(T.legacyStepSurfaces.get(SESSION), 1)
+      // 同一实例：节点变成纯 text（非成员）
+      h.state.node = makeNode('assistant-step', 's2', { blocks: textBlocks('答案') })
+      h.state.snapshot = makeSnapshot([h.state.node])
+      h.render()
+      await new Promise((res) => setTimeout(res, 0))
+      assert.equal(T.legacyStepSurfaces.get(SESSION), undefined, 'surface 1 → 0')
+      assert.equal(h.c.querySelector('[data-fake="assistant-step"]') !== null, true, '内容继续由 builtin 渲染')
+      assertNoHookWarnings()
+    } finally {
+      act(() => { h.r.unmount() }); h.c.remove(); h.dispose(); releaseErrors()
+    }
+  })
+  it('F3 StrictMode：member 初始 mount → effect replay 后 registry = 1；unmount → 0', async () => {
+    captureErrors()
+    const slots = setupSlots()
+    const dispose = T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+    T.activateLegacyStepEngine()
+    const n = makeNode('tool-call', 'sm1', {})
+    const snap = makeSnapshot([n])
+    const c = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(c)
+    const r = createRoot(c)
+    try {
+      act(() => {
+        r.render(react.createElement(react.StrictMode, null,
+          react.createElement(T.LegacyStepToolCallView, { node: n, useChat: (sel) => sel(snap), sessionId: SESSION })))
+      })
+      assert.equal(T.legacyStepSurfaces.get(SESSION), 1, 'StrictMode replay 后恰好 1（非 2/0/负数）')
+      act(() => { r.unmount() })
+      await new Promise((res) => setTimeout(res, 0))
+      assert.equal(T.legacyStepSurfaces.get(SESSION), undefined, 'unmount → 0')
+      assertNoHookWarnings()
+    } finally { c.remove(); dispose(); releaseErrors() }
+  })
+  it('F4 assistant streaming 三段：[] → [reasoning] → [reasoning,text]；surface 0→1→1，text 恒可见', () => {
+    captureErrors()
+    const h = makeHarness(T.LegacyStepAssistantView)
+    try {
+      h.state.node = makeNode('assistant-step', 'st1', { blocks: [] })
+      h.state.snapshot = makeSnapshot([h.state.node])
+      h.render()
+      assert.equal(T.legacyStepSurfaces.get(SESSION), undefined, 'stage1：非成员')
+      h.state.node = makeNode('assistant-step', 'st1', { blocks: thinkBlocks('想') })
+      h.state.snapshot = makeSnapshot([h.state.node])
+      h.render()
+      assert.equal(T.legacyStepSurfaces.get(SESSION), 1, 'stage2：成员')
+      h.state.node = makeNode('assistant-step', 'st1', { blocks: [{ kind: 'reasoning', text: '想' }, { kind: 'text', text: '正文' }] })
+      h.state.snapshot = makeSnapshot([h.state.node, makeNode('assistant-step', 'after', { blocks: textBlocks('答案') })])
+      h.render()
+      assert.equal(T.legacyStepSurfaces.get(SESSION), 1, 'stage3：仍是成员（同实例稳定）')
+      assert.equal(h.c.querySelector('[data-tf-legacy-step="member"]') !== null, true, 'think 部分可折')
+      assert.equal(h.c.querySelector('[data-tf-legacy-step="text"]') !== null, true, 'text 正文恒可见通道')
+      assertNoHookWarnings()
+    } finally { act(() => { h.r.unmount() }); h.c.remove(); h.dispose(); releaseErrors() }
+  })
+  it('F5 tool membership transition：excluded(todo_write) → 普通 tool → 再回 excluded，同实例无 Hook 告警', async () => {
+    captureErrors()
+    const h = makeHarness(T.LegacyStepToolCallView)
+    try {
+      h.state.node = makeNode('tool-call', 'tt1', { tool: 'todo_write' })
+      h.state.snapshot = makeSnapshot([h.state.node])
+      h.render()
+      assert.equal(T.legacyStepSurfaces.get(SESSION), undefined, 'excluded 非成员')
+      h.state.node = makeNode('tool-call', 'tt1', { tool: 'read' })
+      h.state.snapshot = makeSnapshot([h.state.node])
+      h.render()
+      assert.equal(T.legacyStepSurfaces.get(SESSION), 1, '变成员')
+      h.state.node = makeNode('tool-call', 'tt1', { tool: 'todo_write' })
+      h.state.snapshot = makeSnapshot([h.state.node])
+      h.render()
+      await new Promise((res) => setTimeout(res, 0))
+      assert.equal(T.legacyStepSurfaces.get(SESSION), undefined, '回非成员')
+      assertNoHookWarnings()
+    } finally { act(() => { h.r.unmount() }); h.c.remove(); h.dispose(); releaseErrors() }
+  })
+  it('F6 surface registry 精确性：两个成员 = 2 → 一个变非成员 = 1 → 全卸载 = 0 且清理', async () => {
+    const slots = setupSlots()
+    const dispose = T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+    T.activateLegacyStepEngine()
+    const mk = (key, blocks) => makeNode('assistant-step', key, { blocks })
+    const stateA = { node: mk('r1', thinkBlocks('a')), snapshot: null }
+    const stateB = { node: mk('r2', thinkBlocks('b')), snapshot: null }
+    const combined = () => makeSnapshot([stateA.node, stateB.node])
+    stateA.snapshot = combined()
+    stateB.snapshot = combined()
+    const c = sharedDocument.createElement('div')
+    sharedDocument.body.appendChild(c)
+    const r = createRoot(c)
+    try {
+      act(() => {
+        r.render(react.createElement(react.Fragment, null, [
+          react.createElement(T.LegacyStepAssistantView, { key: 'a', node: stateA.node, useChat: (sel) => sel(stateA.snapshot), sessionId: SESSION }),
+          react.createElement(T.LegacyStepAssistantView, { key: 'b', node: stateB.node, useChat: (sel) => sel(stateB.snapshot), sessionId: SESSION }),
+        ]))
+      })
+      assert.equal(T.legacyStepSurfaces.get(SESSION), 2, '两个成员 = 2')
+      T.legacySetStepOpen(SESSION, 'r1', true)
+      // B 变非成员（同实例）
+      stateB.node = mk('r2', textBlocks('answer'))
+      stateB.snapshot = combined()
+      act(() => {
+        r.render(react.createElement(react.Fragment, null, [
+          react.createElement(T.LegacyStepAssistantView, { key: 'a', node: stateA.node, useChat: (sel) => sel(stateA.snapshot), sessionId: SESSION }),
+          react.createElement(T.LegacyStepAssistantView, { key: 'b', node: stateB.node, useChat: (sel) => sel(stateB.snapshot), sessionId: SESSION }),
+        ]))
+      })
+      await new Promise((res) => setTimeout(res, 0))
+      assert.equal(T.legacyStepSurfaces.get(SESSION), 1, '一个变非成员 = 1（无重复 mount/unmount）')
+      act(() => { r.unmount() })
+      await new Promise((res) => setTimeout(res, 0))
+      assert.equal(T.legacyStepSurfaces.get(SESSION), undefined, '全卸载 = 0')
+      assert.equal(T.legacyStepOpenBySession.has(SESSION), false, '微任务后 open store 清理')
+    } finally { c.remove(); dispose() }
+  })
+  it('F8 源码守卫：entriesOfSlot 只允许出现在安装事务校验（legacyShadowsActive）内', () => {
+    const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+    // 只统计代码（剥离块注释与行注释）：文档注释里提到旧标识符是允许的
+    const stripComments = (text) => text
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').map((l) => l.split('//')[0]).join('\n')
+    const code = stripComments(src)
+    const fnStart = code.indexOf('function legacyShadowsActive(')
+    assert.ok(fnStart > 0, 'legacyShadowsActive 必须在')
+    let fnEnd = code.indexOf('\n\t\tfunction ', fnStart + 1)
+    if (fnEnd < 0) fnEnd = code.length
+    const total = code.split('entriesOfSlot').length - 1
+    const inside = code.slice(fnStart, fnEnd).split('entriesOfSlot').length - 1
+    assert.equal(total, inside, 'entriesOfSlot 只允许出现在 legacyShadowsActive 内（render 路径零扫描）')
+    assert.ok(inside >= 1, '安装事务必须做 occupant 校验')
+  })
+  it('F7 源码守卫：renderer 无条件调用 surface Hook、early return 后不得再有 Hook、render 不触 slots 扫描', () => {
+    const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+    for (const name of ['LegacyStepToolCallView', 'LegacyStepAssistantView']) {
+      const start = src.indexOf('function ' + name + '(props)')
+      assert.ok(start > 0, name + ' 必须存在')
+      let end = src.indexOf('\n\t\tfunction ', start + 1)
+      if (end < 0) end = src.length
+      const body = src.slice(start, end)
+      const hookCalls = body.split('useLegacyStepSurface(').length - 1
+      assert.ok(hookCalls === 1, name + ' 必须有且仅有一处 useLegacyStepSurface：' + hookCalls)
+      const surfaceIdx = body.indexOf('useLegacyStepSurface(')
+      const firstReturn = body.indexOf('\n\t\t\treturn ')
+      assert.ok(firstReturn === -1 || surfaceIdx < firstReturn, name + ' 的 surface Hook 必须早于任何 return')
+      assert.ok(body.indexOf('react.useEffect') === -1, name + ' 内不得再有直写 useEffect（条件 Hook 风险）')
+      assert.ok(body.indexOf('findLegacyBuiltinRenderer') === -1, name + ' 不得做 builtin lookup')
+      assert.ok(body.indexOf('slots.entries') === -1 && body.indexOf('legacyStepSlotsRef') === -1, name + ' 不得触碰 slots 注册表')
+    }
+    // builtin lookup 只允许发生在安装/preflight
+    const lookups = src.split('findLegacyBuiltinRenderer(').length - 1
+    assert.ok(lookups >= 1, 'preflight 必须调用 findLegacyBuiltinRenderer')
+    const installerStart = src.indexOf('function activateLegacyStepEngine()')
+    const installerEnd = src.indexOf('function disposeLegacyStepEngine()')
+    const installer = src.slice(installerStart, installerEnd)
+    assert.equal(installer.split('findLegacyBuiltinRenderer(').length - 1, 2, '安装器恰好捕获两个 builtin')
+  })
+})

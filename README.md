@@ -484,6 +484,28 @@ LegacyStepHeader 是两种不同的 DOM，共用同一套 Poker 资产**——0.
 （open store / 共享牌面分配）在该 session 最后一个 Legacy 面卸载后（微任务确认，
 与 modern 桥共享同一清理门）才清理。
 
+**Installation safety（原子安装；FAIL OPEN 的准确含义）**：Legacy Step backend 的
+安装是**同步事务**——① 在注册 shadow **之前** preflight 捕获两个官方 builtin
+renderer（`entries()` 的 priority-0 条目；真机审计确认 0.1.2/0.1.5/0.1.6/0.2.0 的
+`StoredEntry` 都直接暴露 `component`；ui-renderer 的 `slots.inject` 在 slot 已声明时
+**同步执行回调并同步抛出 setup 失败**——注册成败可同步观测）；② preflight 两个 shadow
+槽位（priority -1 任一被第三方占用 → **整体让位**，绝不半套）；③ 依次注册，任一失败或
+occupant 校验不通过 → **回滚已注册的全部**；④ 全部成功才 COMMIT（builtin 引用与
+registration 一起落定，`installed === true` 必然意味着 keys 恰好两个）。因此：
+**"无法安全捕获两个 builtin / 无法同时取得两个 shadow 槽位 → 整个 backend 不安装，
+官方 priority-0 renderer 保持 owner、内容原样显示，代价只是 Step 不折叠"**——绝不出现
+"内容消失 / 半套折叠 / 返回 null"。render 路径只读**安装期捕获的 builtin 引用**，
+**不再扫描 slots.entries()**（源码守卫 + 调用计数测试锁死）；安装期降级只警告一次
+（builtin 缺失 / 优先级冲突 / 半套回滚），激活计数（attempts）与安装成功数
+（`getLegacyStepInstallStats().installs/successes`）分开记账。
+
+**Hook lifecycle（架构约束）**：Legacy member surface 的挂载登记由**无条件 Hook**
+`useLegacyStepSurface(sessionKey, active)` 管理——两个 renderer 在每一次 render 里都
+先调用它（早于任何 return），non-member ↔ member 的流式转换（assistant-step 的 blocks
+从空到 reasoning、工具的排除/恢复）**绝不改变 Hook 顺序**；渲染路径内不再有任何直写
+`useEffect`（源码守卫锁死）。surface registry 计数与真实挂载的成员数严格一致
+（StrictMode effect replay 后恰好 1，卸载回 0，无重复 mount / 负计数 / zombie session）。
+
 Legacy 层的语义最小化：rich title（编辑 diff 文案 / 文件名 / failure 聚合 / 自动跟随
 think）与旧 Turn 折叠算法（含旧 metrics）**明确不移植**；Legacy 层不计算任何指标
 （TTFT/TPS/token/cache 全部仍由 EnhancedTurnProcessView 的 fallback 面负责）。
