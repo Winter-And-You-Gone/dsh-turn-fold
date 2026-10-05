@@ -907,7 +907,10 @@ window.__ModuleLoader__.load({
 			var run = function () {
 				if (!stepCardPendingCleanup.has(sessionKey)) return;
 				stepCardPendingCleanup.delete(sessionKey);
+				// Modern 桥与 Legacy Step 面共享同一份 per-session 牌面分配/bag——任何一面
+				// 仍然在场都不得清理（否则 hybrid 宿主上 modern 桥先卸载会误清 legacy 的牌面）。
 				if (stepCardBridgeSessions.has(sessionKey)) return;   // 又被挂载 → 不清理
+				if (legacyStepSurfaces.has(sessionKey)) return;       // legacy 面仍在场 → 不清理
 				cleanupCompletedStepSession(sessionKey);
 			};
 			if (typeof Promise === "function") Promise.resolve().then(run);
@@ -1006,12 +1009,18 @@ window.__ModuleLoader__.load({
 		 *  否则会把运行中的五牌面轮换 mask 压掉（软依赖：官方 shimmer 钩子改名 → 排除失效
 		 *  → 最坏退化为静态牌堆/扇形，轮换不再显示）。
 		 *  sessionId 缺失（旧宿主/降级）→ 不加任何作用域前缀（回落为历史行为，且输出层只在
-		 *  唯一会话时输出，见 writeStepCardRulesMerged）。 */
-		function buildStepCardRulesCss(map, sessionId) {
+		 *  唯一会话时输出，见 writeStepCardRulesMerged）。
+		 *  surface（Legacy Step 兼容层）：'official'（默认/缺省 = 现代宿主官方 DOM 面，
+		 *  行为逐字节不变）| 'legacy'（插件自有 LegacyStepHeader 面——scope 前缀换成
+		 *  [data-tf-legacy-session="<sessionKey>"]，单分支：该属性挂在插件自己渲染的
+		 *  DOM 上、天然精确限定，无需官方锚点回退分支，也不受官方 sessionScope 影响）。 */
+		function buildStepCardRulesCss(map, sessionId, surface) {
 			var rules = [];
+			var legacySurface = surface === "legacy";
 			var hasSession = sessionId !== undefined && sessionId !== null && String(sessionId) !== "";
-			var officialScope = hasSession ? '[data-conversation-session="' + cssAttrValue(sessionId) + '"] ' : "";
-			var fallbackScope = hasSession ? '[data-conversation-content]:not([data-conversation-session]) ' : "";
+			var officialScope = !legacySurface && hasSession ? '[data-conversation-session="' + cssAttrValue(sessionId) + '"] ' : "";
+			var fallbackScope = !legacySurface && hasSession ? '[data-conversation-content]:not([data-conversation-session]) ' : "";
+			var legacyScope = legacySurface && hasSession ? '[data-tf-legacy-session="' + cssAttrValue(sessionId) + '"] ' : "";
 			if (map) {
 				for (var key in map) {
 					if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
@@ -1032,7 +1041,11 @@ window.__ModuleLoader__.load({
 					var fanPre = ' [data-process-activity][aria-expanded="true"]' + idle + ' [data-step-process-icon]::before';
 					var fanDecl = '{-webkit-mask-image:var(--tf-face-' + set.id + '-fan);mask-image:var(--tf-face-' + set.id +
 						'-fan);animation-name:tf-face-open-' + set.id + '}';
-					if (hasSession) {
+					if (legacySurface) {
+						// legacy 面：插件自有属性单分支（不依赖官方 DOM 锚点）
+						rules.push(legacyScope + groupHost + stackPre + stackDecl);
+						rules.push(legacyScope + groupHost + fanPre + fanDecl);
+					} else if (hasSession) {
 						rules.push(officialScope + groupHost + stackPre + ',' + fallbackScope + groupHost + stackPre + stackDecl);
 						rules.push(officialScope + groupHost + fanPre + ',' + fallbackScope + groupHost + fanPre + fanDecl);
 					} else {
@@ -1346,6 +1359,606 @@ window.__ModuleLoader__.load({
 		}
 
 
+		// ══════════════════════════════════════════════════════════════════════
+		// Legacy Step Compatibility Layer（hybrid 宿主 0.1.2-rc.1 ~ 0.1.6-alpha.2）
+		// ------------------------------------------------------------------
+		// 结构审计定论（见 README「Legacy Step Compatibility Layer」）：
+		//   Turn  = MODERN：官方 turn-process owner state（foldable/open/setOpen），
+		//           EnhancedTurnProcessView 消费，Legacy 层绝不触碰（不 shadow
+		//           turn-process、不改 turnProcess.open、不算 Turn membership）。
+		//   Step  = LEGACY：官方没有 Process Group / ChatGroupSeat / views.grouped
+		//           / groupSource / data-step-process —— 插件在这里补一个最小 Step
+		//           backend：纯数据分组 + 插件自有 Header（挂官方 Poker skin 钩子）。
+		//   Metrics = FALLBACK：EnhancedTurnProcessView 已处理，Legacy 层不算任何指标。
+		// 旧 main@356db80 只提取了 A 类（Step membership/open/hide）代码：
+		//   旧的段分组算法 → legacyBuildStepIndex（重命名 + 单遍建索引 + WeakMap memo）；
+		//   旧的 overrides Map → legacyStepOpenBySession（语义一致）；
+		//   旧的隐藏标记 / 折叠内容包装器 / leader 代渲染 → 不移植（改为"成员原地
+		//   wrapper 隐藏"，原官方内容留在原位、DOM 顺序不变，杜绝内容搬移/重复/变形）；
+		//   旧的整回合折叠算法 / turn overrides / rich title / metrics / user 占位条
+		//   → 明确不移植（B/C 类，见最终报告）。
+		// ══════════════════════════════════════════════════════════════════════
+
+		// ---- 数据层：纯函数分组（无 DOM、无文字匹配、无轮询） ----
+		// 输入 = 官方 useChat 快照（hybrid 宿主标准 kit；具名 selector，legacy 层专用）。
+		/** think 块判定：有 reasoning 块即算（think 与 text 同节点的消息，think 入段、
+		 *  text 段外恒可见——与旧 main 已验证语义一致）。 */
+		function legacyHasReasoning(node) {
+			if (!node || node.kind !== "assistant-step") return false;
+			var blocks = node.data && node.data.blocks;
+			return Array.isArray(blocks) && blocks.some(function (b) { return !!b && b.kind === "reasoning"; });
+		}
+		/** 是否含实际 text 块（非空文本）——段边界/闭合标记。 */
+		function legacyHasText(node) {
+			if (!node || node.kind !== "assistant-step" || !node.data || !Array.isArray(node.data.blocks)) return false;
+			var blocks = node.data.blocks;
+			for (var i = 0; i < blocks.length; i++) {
+				var b = blocks[i];
+				if (b && b.kind === "text" && typeof b.text === "string" && b.text.trim() !== "") return true;
+			}
+			return false;
+		}
+		/** 工具调用名（已结算/运行中统一；缺失空串）。 */
+		function legacyToolCallName(node) {
+			if (!node || node.kind !== "tool-call" || !node.data) return "";
+			var root = node.data.root;
+			if (!root) return "";
+			if ("kind" in root) {
+				var call = root.call || root;
+				return call.name || "";
+			}
+			return root.name || "";
+		}
+		/** 排除在步骤分组外的工具（旧 main 已验证清单，精确小写匹配）：
+		 *  它们不是 Step 成员——原样直通渲染、永不隐藏。 */
+		var LEGACY_EXCLUDED_SEGMENT_TOOLS = ["todo_write"];
+		function legacyIsExcludedTool(node) {
+			var name = legacyToolCallName(node).toLowerCase();
+			var list = LEGACY_EXCLUDED_SEGMENT_TOOLS;
+			for (var i = 0; i < list.length; i++) if (name === list[i]) return true;
+			return false;
+		}
+		/** 段成员：tool-call（排除工具除外）或含 reasoning 的 assistant-step。
+		 *  user / context / 纯 text 的 assistant-step 都不是成员（边界/答案，永不隐藏）。 */
+		function legacyIsSegmentMember(node) {
+			if (!node) return false;
+			if (node.kind === "tool-call") return !legacyIsExcludedTool(node);
+			return node.kind === "assistant-step" && legacyHasReasoning(node);
+		}
+		/** 节点回合号（非回合定位返回 undefined）。 */
+		function legacyTurnNumberOf(node) {
+			if (!node || !node.location) return undefined;
+			var loc = node.location;
+			return (loc.kind === "turn" || loc.kind === "step") ? loc.turn.turn : undefined;
+		}
+		/** legacyStepGroupComputations：Legacy 索引构建计数（诊断/测试）。
+		 *  Modern 宿主上 Legacy 层从不安装 → 恒为 0（架构守卫测试锁死）。 */
+		var legacyStepGroupComputations = 0;
+		/** 诊断/测试：Legacy 索引构建计数（primitive 导出会被快照，必须经 getter 读）。 */
+		function getLegacyStepGroupComputations() { return legacyStepGroupComputations; }
+		/** 单遍构建整快照的 Step 索引（每 snapshot 身份最多一次，WeakMap memo；
+		 *  之后每个 node 的组查询 O(1)——杜绝旧 main 每 node O(N) 重算的 O(N²)）。
+		 *  段语义与旧 main 的段分组算法逐条对齐：
+		 *   · 段 = 两个 text 之间的 tool-call + 含 reasoning 的 assistant-step 混排；
+		 *   · think 不打断段，text 出现即段闭合（含 think+text 的节点：think 入段、
+		 *     text 段外恒可见）；
+		 *   · anchor（组内第一个成员）= leader = 唯一渲染 Header 的节点；
+		 *   · 回合已结束（legacy.turnEnds，0.1.2+ 审计存在）也强制段闭合（中断/出错
+		 *     可能没有最终 text，避免 Header 永久 running）。 */
+		var legacyStepIndexCache = new WeakMap();
+		function legacyBuildStepIndex(snapshot) {
+			legacyStepGroupComputations += 1;
+			var safe = snapshot && typeof snapshot === "object" ? snapshot : {};
+			var order = Array.isArray(safe.order) ? safe.order : [];
+			var nodes = safe.nodes;
+			var getNode = function (key) {
+				try { return nodes && typeof nodes.get === "function" ? nodes.get(key) : undefined; } catch (e) { return undefined; }
+			};
+			var turnEnds = safe.legacy && safe.legacy.turnEnds;
+			var turnEnded = typeof turnEnds === "object" && turnEnds !== null && typeof turnEnds.has === "function"
+				? function (turn) { try { return turnEnds.has(turn); } catch (e) { return false; } }
+				: function () { return false; };
+			// pass 1：单遍切段（成员连续且前驱无 text → 同段；非成员/前驱含 text → 断段）
+			var groups = [];
+			var current = null;
+			var prev = null;
+			for (var i = 0; i < order.length; i++) {
+				var key = order[i];
+				var n = getNode(key);
+				if (legacyIsSegmentMember(n)) {
+					if (current && !legacyHasText(prev)) {
+						current.keys.push(key);
+					} else {
+						current = { leaderKey: key, keys: [key], index: i };
+						groups.push(current);
+					}
+				} else {
+					current = null;
+				}
+				prev = n;
+			}
+			// pass 2：text 后缀数组 → 每段 closed = 尾成员含 text || 其后任意位置出现 text
+			//         || 回合已结束；顺带统计 toolCount / lastToolName / running 成员。
+			var lastTextAt = new Array(order.length);
+			var seen = -1;
+			for (var j = order.length - 1; j >= 0; j--) {
+				if (legacyHasText(getNode(order[j]))) seen = j;
+				lastTextAt[j] = seen;
+			}
+			for (var g = 0; g < groups.length; g++) {
+				var grp = groups[g];
+				var memberKeys = {};
+				var toolCount = 0;
+				var lastToolName = "";
+				var turn;
+				for (var m = 0; m < grp.keys.length; m++) {
+					memberKeys[grp.keys[m]] = true;
+					var mn = getNode(grp.keys[m]);
+					if (!mn) continue;
+					if (mn.kind === "tool-call") {
+						toolCount += 1;
+						lastToolName = legacyToolCallName(mn) || lastToolName;
+					}
+					turn = legacyTurnNumberOf(mn);
+				}
+				var tailHasText = legacyHasText(getNode(grp.keys[grp.keys.length - 1]));
+				var textAfter = false;
+				for (var p = grp.index + grp.keys.length; p < order.length; p++) {
+					if (lastTextAt[p] === p) { textAfter = true; break; }
+				}
+				grp.memberKeys = memberKeys;
+				grp.count = grp.keys.length;
+				grp.toolCount = toolCount;
+				grp.lastToolName = lastToolName;
+				grp.turn = turn;
+				grp.closed = tailHasText || textAfter || turnEnded(turn);
+			}
+			var byLeader = new Map();
+			var byNode = new Map();
+			for (var b = 0; b < groups.length; b++) {
+				byLeader.set(groups[b].leaderKey, groups[b]);
+				for (var nb = 0; nb < groups[b].keys.length; nb++) byNode.set(groups[b].keys[nb], groups[b]);
+			}
+			return { groups: groups, byLeader: byLeader, byNode: byNode };
+		}
+		/** 节点 → 所属组（memo：同 snapshot 身份只建一次索引）。 */
+		function legacyGroupForNode(snapshot, nodeKey) {
+			if (!snapshot || nodeKey === undefined || nodeKey === null) return null;
+			var index = legacyStepIndexCache.get(snapshot);
+			if (!index) {
+				index = legacyBuildStepIndex(snapshot);
+				legacyStepIndexCache.set(snapshot, index);
+			}
+			return index.byNode.get(nodeKey) || null;
+		}
+		/** useChat 具名 selector：返回整份 chat 快照（Legacy 分组算法的输入）。
+		 *  **仅 Legacy 层使用**：Step 分组天然是全量有序节点上的结构问题，不存在
+		 *  "最小切片"；该 selector 只被 capability-gated 的 legacy shadow 消费
+		 *  （Modern 宿主上从不安装，见 activateLegacyStepEngine 的门控）。 */
+		function selectLegacyChatSnapshot(s) {
+			return s;
+		}
+		/** Legacy shadow 共享快照订阅（hook 无条件调用；useChat 是标准 kit 成员、
+		 *  hybrid 宿主进程内恒定）。 */
+		function useLegacyChatSnapshot(props) {
+			var useChat = props.useChat;
+			return typeof useChat === "function" ? useChat(selectLegacyChatSnapshot) : undefined;
+		}
+
+		// ---- open store（插件自有；sessionKey+leaderKey 隔离；不与 turnProcess.open 混用） ----
+		var legacyStepOpenBySession = new Map();   // sessionKey → Map<leaderKey, true|false>
+		var legacyStepOpenListeners = new Set();
+		function legacyStepOpenSubscribe(fn) {
+			legacyStepOpenListeners.add(fn);
+			return function () { legacyStepOpenListeners.delete(fn); };
+		}
+		function legacyNotifyStepOpen() {
+			var fns = [];
+			legacyStepOpenListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) {
+				try { fns[i](); } catch (e) { /* 单个订阅者异常不带走 store */ }
+			}
+		}
+		/** 手动展开/收起（null = 未手动干预，跟随默认：running 可见 / completed 收起）。 */
+		function legacyReadStepOpen(sessionKey, leaderKey) {
+			var bucket = legacyStepOpenBySession.get(sessionKey);
+			var v = bucket ? bucket.get(leaderKey) : undefined;
+			return v === undefined ? null : v;
+		}
+		function legacySetStepOpen(sessionKey, leaderKey, open) {
+			var bucket = legacyStepOpenBySession.get(sessionKey);
+			if (!bucket) {
+				bucket = new Map();
+				legacyStepOpenBySession.set(sessionKey, bucket);
+			}
+			if (bucket.get(leaderKey) === open) return;
+			bucket.set(leaderKey, open);
+			legacyNotifyStepOpen();
+		}
+		/** 有效展开态：running 恒展开（绝不隐藏正在生成的内容，§最高优先级）；
+		 *  completed 跟随手动选择（默认收起）。 */
+		function legacyStepEffectiveOpen(group, manual) {
+			return group && !group.closed ? true : manual === true;
+		}
+		/** React 订阅：本组的手动选择（uSES；快照恒为原始值/null，身份稳定）。 */
+		function useLegacyStepOpen(sessionKey, leaderKey, active) {
+			return useSyncExternalStore(
+				active ? legacyStepOpenSubscribe : subscribeNothing,
+				active ? function () { return legacyReadStepOpen(sessionKey, leaderKey); } : getUndefinedSnapshot
+			);
+		}
+
+		// ---- session 表面 registry（§49：最后一面卸载才清 session 状态） ----
+		var legacyStepSurfaces = new Map();      // sessionKey → 已挂载 legacy 面计数
+		var legacyStepPendingCleanup = new Set();
+		function legacyStepSurfaceMounted(sessionKey) {
+			legacyStepSurfaces.set(sessionKey, (legacyStepSurfaces.get(sessionKey) || 0) + 1);
+			legacyStepPendingCleanup.delete(sessionKey);   // 同 commit 内重挂载 → 取消待清理
+		}
+		function legacyStepSurfaceUnmounted(sessionKey) {
+			var n = (legacyStepSurfaces.get(sessionKey) || 0) - 1;
+			if (n > 0) {
+				legacyStepSurfaces.set(sessionKey, n);
+				return;
+			}
+			legacyStepSurfaces.delete(sessionKey);
+			// 清理延迟到微任务：StrictMode 的 effect replay 会 cleanup→再 mount，
+			// 同步清会误清（与 completed face 清理同款防护）。
+			legacyStepPendingCleanup.add(sessionKey);
+			var run = function () {
+				if (!legacyStepPendingCleanup.has(sessionKey)) return;
+				legacyStepPendingCleanup.delete(sessionKey);
+				if (legacyStepSurfaces.has(sessionKey) || stepCardBridgeSessions.has(sessionKey)) return;
+				legacyStepOpenBySession.delete(sessionKey);
+				cleanupCompletedStepSession(sessionKey);   // 共享 bag/分配（内部跨面门已由上方双查保证）
+			};
+			if (typeof Promise === "function") Promise.resolve().then(run);
+			else run();
+		}
+
+		// ---- 委托渲染：官方 builtin renderer（priority 0 条目）----
+		// slots 服务在 apply 时保存（§8：只保存，不提前注册）。官方条目仍可枚举 →
+		// shadow 委托原 renderer，原内容零复制、零变形（§20/§21）。
+		var legacyStepSlotsRef = null;
+		var legacyBuiltinWarned = {};
+		function legacyBuiltinRenderer(kind) {
+			var slots = legacyStepSlotsRef;
+			if (!slots || typeof slots.entries !== "function") return undefined;
+			var entries = null;
+			try { entries = slots.entries("conversation.chat.node"); } catch (e) { entries = null; }
+			for (var i = 0; entries && i < entries.length; i++) {
+				var e = entries[i];
+				if (e && e.options && e.options.key === kind && (e.options.priority || 0) === 0) return e.component;
+			}
+			if (!legacyBuiltinWarned[kind]) {
+				legacyBuiltinWarned[kind] = true;
+				try {
+					if (typeof console !== "undefined" && console.warn) {
+						console.warn('[dsh-turn-fold] builtin renderer for conversation.chat.node key "' + kind +
+							'" (priority 0) not found — legacy step delegated rendering will be empty.');
+					}
+				} catch (e) { /* 忽略 */ }
+			}
+			return undefined;
+		}
+		/** think-only / text-only 派生节点（旧 main 已验证的最小构造，非官方 UI 复制）：
+		 *  think+text 成员 → think 部分入段（可隐藏）、text 部分段外恒可见。 */
+		function legacyThinkOnlyNode(n) {
+			return Object.assign({}, n, {
+				data: Object.assign({}, n.data, {
+					blocks: (n.data && n.data.blocks ? n.data.blocks : []).filter(function (b) { return !b || b.kind !== "text"; })
+				})
+			});
+		}
+		function legacyTextOnlyNode(n) {
+			return Object.assign({}, n, {
+				data: Object.assign({}, n.data, {
+					blocks: (n.data && n.data.blocks ? n.data.blocks : []).filter(function (b) { return !!b && (b.kind === "text" || b.kind === "image"); })
+				})
+			});
+		}
+		/** 最小可靠标题（§39：只用官方 node 数据；rich title 明确延后）：
+		 *  running = 正在思考 / 正在运行 {最后一个工具名}；completed = 步骤。 */
+		function legacyStepHeaderTitle(group, currentLocaleIsZh) {
+			if (group.closed) return currentLocaleIsZh ? "步骤" : "Steps";
+			if (group.lastToolName) return (currentLocaleIsZh ? "正在运行 " : "Running ") + group.lastToolName;
+			return currentLocaleIsZh ? "正在思考" : "Thinking";
+		}
+		/** Legacy 组的 activity（官方词表子集，驱动 --tf-suit 的 reduced-motion 回落）。 */
+		function legacyStepActivity(group) {
+			return group.closed ? (group.toolCount > 0 ? "tools" : "thinking") : "thinking";
+		}
+
+		// ---- Legacy Step Header（插件自有 DOM；挂官方 Poker skin 钩子） ----
+		// data-step-process / data-chat-group-key / data-process-activity / aria-expanded /
+		// data-step-process-icon 与现代官方组条同钩 → Step Poker skin（含 running 五牌面
+		// 轮换：running 时在自己 DOM 上置 data-shimmer="true"，皮肤 :has() 直接命中）
+		// 与 completed 逐组牌面规则全部复用。data-tf-legacy-* 是插件身份标记（测试/调试/
+		// CSS scope），只写在插件自己的节点上，绝不改官方 DOM（§26/§28）。
+		function LegacyStepHeader(props) {
+			var group = props.group;
+			var sessionKey = props.sessionKey;
+			var open = props.open;                     // 有效展开态（running 恒 true）
+			var running = !group.closed;
+			var iconStyle = useIconStyle();            // 无条件一次（本组件无条件渲染路径）
+			var title = legacyStepHeaderTitle(group, currentLocale() === "zh");
+			var count = group.toolCount <= STEP_CARD_SMALL_MAX ? STEP_CARD_COUNT_SMALL : STEP_CARD_COUNT_LARGE;
+			// completed 组的逐组牌面规则（legacy surface；running 组走轮换不写规则）
+			react.useEffect(function () {
+				if (!running) {
+					writeLegacyStepRules(sessionKey, group.leaderKey, { count: count });
+				}
+				return function () { writeLegacyStepRules(sessionKey, group.leaderKey, null); };
+			}, [running, count, sessionKey, group.leaderKey]);
+			return react.createElement("div", {
+				"data-step-process": "",
+				"data-chat-group-key": group.leaderKey,
+				"data-tf-legacy-step": "header",
+				"data-tf-legacy-session": sessionKey,
+				"data-tf-legacy-group": group.leaderKey,
+			},
+				react.createElement("button", {
+					"data-process-activity": legacyStepActivity(group),
+					"aria-expanded": open ? "true" : "false",
+					"data-shimmer": running ? "true" : undefined,
+					onClick: function () { props.onToggle(); },
+				},
+					iconStyle === "native" ? react.createElement(NativeChevronIcon, { open: open }) : null,
+					react.createElement("span", { "data-step-process-icon": "" }),
+					react.createElement("span", { "data-tf-legacy-title": "" }, title)
+				)
+			);
+		}
+
+		// ---- legacy 逐组牌面规则（独立样式元素；插件属性天然隔离，无降级策略） ----
+		var LEGACY_STEP_CSS_ID = "dsh-turn-fold/style-step-cards-legacy";
+		var legacyStepStyleEl = null;
+		var legacyStepRulesBySession = new Map();   // sessionKey → css chunk
+		var legacyStepRulesCache = null;
+		function ensureLegacyStepStyleEl() {
+			if (legacyStepStyleEl || typeof document === "undefined") return legacyStepStyleEl;
+			try {
+				var tag = document.querySelector('style[data-plugin-css="' + LEGACY_STEP_CSS_ID + '"]');
+				if (!tag) {
+					tag = document.createElement("style");
+					tag.dataset.plugin = "@winteries/dsh-turn-fold";
+					tag.dataset.pluginCss = LEGACY_STEP_CSS_ID;
+					document.head.appendChild(tag);
+				}
+				legacyStepStyleEl = tag;
+				legacyStepRulesCache = tag.textContent;
+			} catch (e) { legacyStepStyleEl = null; }
+			return legacyStepStyleEl;
+		}
+		function writeLegacyStepRules(sessionKey, groupKey, state) {
+			try {
+				if (!ensureLegacyStepStyleEl()) return;
+				var bucket = legacyStepRulesBySession.get(sessionKey);
+				var had = bucket && bucket.has(groupKey);
+				if (!state) {
+					if (!had) return;
+					bucket.delete(groupKey);
+				} else {
+					if (!bucket) {
+						bucket = new Map();
+						legacyStepRulesBySession.set(sessionKey, bucket);
+					}
+					var prev = had ? bucket.get(groupKey) : undefined;
+					if (prev && prev.count === state.count) return;
+					bucket.set(groupKey, { count: state.count });
+				}
+				// 该 session 的整块重建（内容比较幂等）
+				var map = {};
+				var b2 = legacyStepRulesBySession.get(sessionKey);
+				b2.forEach(function (v, k) { map[k] = { count: v.count, closed: true }; });
+				var css = buildStepCardRulesCss(map, sessionKey, "legacy");
+				if ((legacyStepRulesBySession.get("__css__" + sessionKey) || "") === css) return;
+				legacyStepRulesBySession.set("__css__" + sessionKey, css);
+				var out = [];
+				legacyStepRulesBySession.forEach(function (v, k) {
+					if (k.indexOf("__css__") === 0 && v) out.push(v);
+				});
+				var merged = out.join("\n");
+				if (merged === legacyStepRulesCache) return;
+				legacyStepRulesCache = merged;
+				legacyStepStyleEl.textContent = merged;
+			} catch (e) { /* 视觉增强可坏，折叠语义不受影响（FAIL OPEN） */ }
+		}
+		function clearLegacyStepRulesForSession(sessionKey) {
+			try {
+				legacyStepRulesBySession.delete("__css__" + sessionKey);
+				legacyStepRulesBySession.delete(sessionKey);
+				var out = [];
+				legacyStepRulesBySession.forEach(function (v, k) {
+					if (k.indexOf("__css__") === 0 && v) out.push(v);
+				});
+				var merged = out.join("\n");
+				if (legacyStepStyleEl && merged !== legacyStepRulesCache) {
+					legacyStepRulesCache = merged;
+					legacyStepStyleEl.textContent = merged;
+				}
+			} catch (e) { /* 同上 */ }
+		}
+
+		// ---- Legacy shadow renderers（minimal set：assistant-step / tool-call）----
+		// 结构审计（main@356db80 + 0.1.2 tag）：context 是 Turn 折叠成员、不是 Step 段成员
+		// （legacyIsSegmentMember=false）→ 不 shadow，纯数据层当边界；user shadow 在旧 main
+		// 只是"0 秒占位条"载体（C 类）→ 不 shadow；turn-process 由现代路径持有（§禁止）。
+		// 委托保真：原 builtin 收到**原 props + 原 node**（assistant-step 的 think+text 拆分
+		// 用官方同款 blocks 过滤构造派生节点，内容零复制零变形）。
+		/** 插件自有 wrapper 的折叠隐藏 props：React 会把 hidden 归一成布尔属性
+		 *  （值被清空），直到 Chromium 的 "until-found" 字面量必须经 ref 设置——失效时
+		 *  安全回退普通 hidden（内容仍可见可手动展开，只是 find 不自动 reveal）。 */
+		function legacyHiddenProps(hidden, onReveal) {
+			return {
+				"data-tf-legacy-hidden": hidden ? "true" : undefined,
+				ref: function (el) {
+					if (!el || typeof el.setAttribute !== "function") return;
+					if (typeof onReveal === "function") el.onbeforematch = onReveal;   // React 不识别 onBeforeMatch 合成事件，直挂 DOM property
+					if (hidden) {
+						try { el.setAttribute("hidden", "until-found"); } catch (e) { el.setAttribute("hidden", ""); }
+					} else {
+						el.removeAttribute("hidden");
+					}
+				},
+			};
+		}
+		function LegacyStepToolCallView(props) {
+			var node = props.node;
+			var sessionKey = sessionKeyOf(props.sessionId);
+			var snapshot = useLegacyChatSnapshot(props);
+			var group = legacyGroupForNode(snapshot, node && node.key);
+			var openManual = useLegacyStepOpen(sessionKey, group ? group.leaderKey : "", !!group);
+			var Builtin = legacyBuiltinRenderer("tool-call");
+			if (!Builtin || !group || !group.memberKeys[node.key]) {
+				// 非成员（排除工具/无组）或委托面缺失 → 原样直通，绝不隐藏（FAIL OPEN）
+				return Builtin ? react.createElement(Builtin, props) : null;
+			}
+			react.useEffect(function () {
+				legacyStepSurfaceMounted(sessionKey);
+				return function () { legacyStepSurfaceUnmounted(sessionKey); };
+			}, [sessionKey]);
+			var open = legacyStepEffectiveOpen(group, openManual);
+			var hidden = !open;
+			var kids = [];
+			if (group.leaderKey === node.key) {
+				kids.push(react.createElement(LegacyStepHeader, {
+					key: "h", group: group, sessionKey: sessionKey, open: open,
+					onToggle: function () { legacySetStepOpen(sessionKey, group.leaderKey, !open); },
+				}));
+			}
+			var reveal = function () { legacySetStepOpen(sessionKey, group.leaderKey, true); };
+			kids.push(react.createElement("div", Object.assign({
+				key: "m",
+				"data-tf-legacy-step": "member",
+				"data-tf-legacy-session": sessionKey,
+				"data-tf-legacy-group": group.leaderKey,
+			}, legacyHiddenProps(hidden, reveal)), react.createElement(Builtin, props)));
+			return react.createElement("div", {
+				"data-tf-legacy-step": "node",
+				"data-tf-legacy-session": sessionKey,
+			}, kids);
+		}
+		function LegacyStepAssistantView(props) {
+			var node = props.node;
+			var sessionKey = sessionKeyOf(props.sessionId);
+			var snapshot = useLegacyChatSnapshot(props);
+			var group = legacyGroupForNode(snapshot, node && node.key);
+			var openManual = useLegacyStepOpen(sessionKey, group ? group.leaderKey : "", !!group);
+			var Builtin = legacyBuiltinRenderer("assistant-step");
+			if (!Builtin || !group || !group.memberKeys[node.key]) {
+				// 非成员（最终答案/纯 text 节点）→ 原样直通，绝不隐藏（最终答案永在 Fold 外）
+				return Builtin ? react.createElement(Builtin, props) : null;
+			}
+			react.useEffect(function () {
+				legacyStepSurfaceMounted(sessionKey);
+				return function () { legacyStepSurfaceUnmounted(sessionKey); };
+			}, [sessionKey]);
+			var open = legacyStepEffectiveOpen(group, openManual);
+			var hidden = !open;
+			var kids = [];
+			if (group.leaderKey === node.key) {
+				kids.push(react.createElement(LegacyStepHeader, {
+					key: "h", group: group, sessionKey: sessionKey, open: open,
+					onToggle: function () { legacySetStepOpen(sessionKey, group.leaderKey, !open); },
+				}));
+			}
+			if (legacyHasText(node)) {
+				// think+text 成员：think 部分入段（可隐藏）；text 正文段外恒可见（不折叠）
+				var reveal = function () { legacySetStepOpen(sessionKey, group.leaderKey, true); };
+				kids.push(react.createElement("div", Object.assign({
+					key: "t",
+					"data-tf-legacy-step": "member",
+					"data-tf-legacy-session": sessionKey,
+					"data-tf-legacy-group": group.leaderKey,
+				}, legacyHiddenProps(hidden, reveal)), react.createElement(Builtin, Object.assign({}, props, { node: legacyThinkOnlyNode(node) }))));
+				kids.push(react.createElement("div", {
+					key: "x",
+					"data-tf-legacy-step": "text",
+					"data-tf-legacy-session": sessionKey,
+				}, react.createElement(Builtin, Object.assign({}, props, { node: legacyTextOnlyNode(node) }))));
+			} else {
+				var reveal = function () { legacySetStepOpen(sessionKey, group.leaderKey, true); };
+				kids.push(react.createElement("div", Object.assign({
+					key: "m",
+					"data-tf-legacy-step": "member",
+					"data-tf-legacy-session": sessionKey,
+					"data-tf-legacy-group": group.leaderKey,
+				}, legacyHiddenProps(hidden, reveal)), react.createElement(Builtin, props)));
+			}
+			return react.createElement("div", {
+				"data-tf-legacy-step": "node",
+				"data-tf-legacy-session": sessionKey,
+			}, kids);
+		}
+
+		// ---- Legacy Step backend installer（§6-9）----
+		// 只允许 stepFold unknown → legacy 的那次 committed 迁移调用
+		//（noteLegacyStepEngine → activateLegacyStepEngine）；StrictMode effect replay /
+		// 重复 render 幂等（已安装直接返回 false）。插件卸载 dispose 全部注销。
+		var legacyStepRegistration = null;   // { disposers: [], keys: [] } | null
+		function legacyRegisterShadow(key, component) {
+			var slots = legacyStepSlotsRef;
+			if (!slots || typeof slots.inject !== "function" || typeof slots.register !== "function") return null;
+			var options = {
+				name: "conversation.chat.node",
+				key: key,
+				priority: resolveSlotPriority(slots, "conversation.chat.node", function (o) { return o.key === key; }, 'conversation.chat.node key "' + key + '"'),
+				locale: "chat",
+			};
+			try {
+				var dispose = slots.inject(options.name, function () {
+					try {
+						return slots.register(options, component);
+					} catch (err) {
+						noteSlotDegradation(options.name, key, err);
+						return undefined;
+					}
+				});
+				return typeof dispose === "function" ? dispose : null;
+			} catch (err) {
+				noteSlotDegradation(options.name, key, err);
+				return null;
+			}
+		}
+		/** Legacy Step backend 安装：注册 minimal shadow set（assistant-step / tool-call）。
+		 *  绝不注册 turn-process / context / user（§18/§19/§45/§46 的最小 shadow 集）。
+		 *  返回是否发生了"未安装 → 已安装"的迁移（幂等）。 */
+		function activateLegacyStepEngine() {
+			legacyStepEngineActivations += 1;
+			if (legacyStepRegistration) return false;   // 已安装：StrictMode/重放不再注册
+			if (!legacyStepSlotsRef) return false;      // 无 slots 面（防御；apply 未跑过）
+			var disposers = [];
+			var keys = [];
+			var defs = [
+				["assistant-step", LegacyStepAssistantView],
+				["tool-call", LegacyStepToolCallView],
+			];
+			for (var i = 0; i < defs.length; i++) {
+				var dispose = legacyRegisterShadow(defs[i][0], defs[i][1]);
+				if (dispose) {
+					disposers.push(dispose);
+					keys.push(defs[i][0]);
+				}
+			}
+			legacyStepRegistration = { disposers: disposers, keys: keys };
+			return true;
+		}
+		/** 注销全部 Legacy Step shadow 条目（插件卸载/热重载；不留 zombie registration）。
+		 *  返回是否真的注销了一套。 */
+		function disposeLegacyStepEngine() {
+			if (!legacyStepRegistration) return false;
+			for (var i = 0; i < legacyStepRegistration.disposers.length; i++) {
+				try { legacyStepRegistration.disposers[i](); } catch (e) { /* 单个注销失败不影响其余 */ }
+			}
+			legacyStepRegistration = null;
+			return true;
+		}
+		/** 诊断/测试：当前已安装的 legacy shadow keys（Modern 宿主必须为空）。 */
+		function getLegacyStepRegistrationKeys() {
+			return legacyStepRegistration ? legacyStepRegistration.keys.slice() : [];
+		}
+
 		// ---- 注入样式（记录在案的软兼容点） ----
 		// 官方插件实践禁止在组件外写 DOM；但截至当前 master（21638c5631）DSH 没有给
 		// plain-JS client plugin 提供样式注册 API（全宿主唯一的 createElement('style')
@@ -1447,7 +2060,14 @@ window.__ModuleLoader__.load({
 				".ccg-preview-bubble-body svg{width:80px;height:80px;display:block}",
 				".ccg-preview-bubble-body .ccg-poker-icon{width:80px;height:80px}",
 				"@media (prefers-reduced-motion:reduce){.ccg-preview-bubble{transition:none!important}}",
-				"@keyframes ccg-gear-fade{from{opacity:0}to{opacity:1}}",
+								/* ── Legacy Step 兼容层（hybrid 宿主；插件自有 DOM，见 README）── */
+				"[data-tf-legacy-step=node]{display:flex;flex-direction:column;min-width:0}",
+				"[data-tf-legacy-step=header] button{display:flex;align-items:center;gap:6px;width:100%;min-width:0;background:none;border:none;padding:0;margin:0;font:inherit;font-size:14px;line-height:24px;color:var(--dsw-alias-label-secondary,#9ca3af);cursor:pointer;text-align:left}",
+				"[data-tf-legacy-step=header] button:hover{color:var(--dsw-alias-label-primary,#1f2328)}",
+				"[data-tf-legacy-title]{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+				"[data-tf-legacy-step=member][data-tf-legacy-hidden=true]{display:none}",
+				"@media (prefers-reduced-motion:reduce){[data-tf-legacy-step=member]{display:none!important}}",
+"@keyframes ccg-gear-fade{from{opacity:0}to{opacity:1}}",
 				"@media (prefers-reduced-motion:reduce){.ccg-gear-overlay{animation:none!important}}",
 				/* 运行中数字动画尊重系统减弱动效设置 */
 				"@media (prefers-reduced-motion:reduce){.ccg-roll-strip{transition:none!important}}"
@@ -3239,14 +3859,6 @@ window.__ModuleLoader__.load({
 			legacyTurnEngineActivations += 1;
 			return false;
 		}
-		/** Legacy Step 引擎入口：**只在 stepFold === "legacy"** 才会被调用。注册期
-		 *  stepFold 恒为 unknown → 绝不在注册期触发；唯一现实路径是渲染期快照就绪后
-		 *  证明 Process Group 契约缺失（noteLegacyStepEngine）。
-		 *  UNKNOWN 绝不进入本函数。 */
-		function activateLegacyStepEngine() {
-			legacyStepEngineActivations += 1;
-			return false;
-		}
 		/** 渲染期定论：会话快照就绪（真实可读）且官方 Process Group 契约缺失 → Step
 		 *  legacy 成立，记一次激活。Modern 宿主恒不触发（契约在）。
 		 *  幂等性由调用方的 changed 门保证（只有 unknown → legacy 那次迁移才调用）；
@@ -3304,6 +3916,10 @@ window.__ModuleLoader__.load({
 			applyIconStyle();
 			ctx.inject(["slots"], function (scope) {
 				var slotsSvc = scope.slots;
+				// §8：只**保存** slots 服务引用（供 Legacy Step 激活时注册 shadow 用），
+				// 不提前注册任何 legacy renderer——stepFold=unknown 时零注册，Modern 宿主
+				// 永远看不到 Legacy Step registration。
+				legacyStepSlotsRef = slotsSvc;
 				// 能力优先：官方没有 turn-process 契约的宿主（0.1.1-rc.2 等）不注册现代
 				// 渲染器（注册也永远不会有节点），改走 legacy 决策；现代宿主上
 				// legacyTurnEngineActivations / legacyStepEngineActivations 恒为 0。
@@ -3321,6 +3937,11 @@ window.__ModuleLoader__.load({
 					locale: "chat"
 				}, EnhancedTurnProcessView);
 			});
+			// 插件卸载/热重载：注销全部 Legacy Step shadow（不留 zombie registration）。
+			// cordis 的 dispose 回调在条目卸载时执行；返回值同时作为本 inject 的 dispose。
+			return function () {
+				disposeLegacyStepEngine();
+			};
 		};
 
 		return module.exports;

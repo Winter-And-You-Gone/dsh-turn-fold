@@ -57,7 +57,7 @@ describe('兼容架构 A：能力探测与模式（三态语义）', () => {
       assert.equal(caps.stepFold, fixture.expect.stepFold, 'step 模式')
       assert.equal(caps.metrics, fixture.expect.metrics, 'metrics 模式（reactive/fallback/unknown 三态）')
       assert.equal(caps.sessionScope, fixture.expect.sessionScope, '会话作用域（official/tree-only/none/unknown 四态）')
-      assert.equal(caps.turnOwnerHasContent, fixture.probe.turnOwnerHasContent === true, fixture.version + ' owner 契约形状（hasContent 是否存在）——与 fold ownership 无关')
+      assert.equal(caps.turnOwnerHasContent, fixture.probe.turnOwnerHasContent === true ? true : (fixture.probe.turnOwnerHasContent === false ? false : undefined), fixture.version + ' owner 契约形状（0.1.1 无 owner=undefined；0.1.2~0.1.6 owner 无 hasContent=false；0.1.7+=true）')
       const mode = caps.turnFold === 'modern' && caps.stepFold === 'modern' ? 'modern'
         : (caps.turnFold === 'legacy' && caps.stepFold === 'legacy' ? 'legacy' : 'mixed')
       assert.equal(mode, fixture.expect.mode, '总模式')

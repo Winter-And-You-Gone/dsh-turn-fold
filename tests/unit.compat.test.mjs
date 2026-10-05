@@ -197,7 +197,7 @@ describe('架构守卫（源码扫描）', () => {
     // 牌面资产表只承载逐组 faces 的 mask/keyframes（追加式：只增不改，不写官方 DOM、
     // 不加官方属性）。
     const headInjects = src.match(/document\.head\.appendChild\(/g) || []
-    assert.equal(headInjects.length, 4, '样式注入只有 base + skin + step-cards + step-faces 四处')
+    assert.equal(headInjects.length, 5, '样式注入共五处（含 Legacy Step 表，插件属性作用域 + 能力门控）')
   })
 
   it('插件不写 transcriptView（写入调用 / 声明 / 注入面一律禁止）', () => {
@@ -214,9 +214,10 @@ describe('架构守卫（源码扫描）', () => {
     // selectChatNodeShape（store 形状探针，metrics capability 运行时定论用）。
     assert.ok(!/useChat\(\s*(function|\()/.test(src), 'useChat 只能传具名 selector')
     const calls = src.match(/useChat\(/g) || []
-    assert.equal(calls.length, 2, 'useChat 恰好两处具名订阅（数据源 + store 形状探针）')
+    assert.equal(calls.length, 3, 'useChat 恰好三处具名订阅（数据源 + 形状探针 + legacy 快照）')
     assert.ok(src.includes('selectTurnNodeSource(number, "assistant-step")'), '订阅面 = 本 Turn 的 assistant-step 源')
     assert.ok(src.includes('useChat(selectChatNodeShape)'), 'store 形状探针也是具名 selector')
+    assert.ok(src.includes('useChat(selectLegacyChatSnapshot)'), 'legacy 快照也是具名 selector（能力门控：Modern 宿主从不执行）')
   })
 
   it('插件不再 shadow tool-call / assistant-step / context / user（仅 turn-process）', () => {

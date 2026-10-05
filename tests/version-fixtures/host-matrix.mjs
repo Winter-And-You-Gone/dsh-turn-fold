@@ -14,6 +14,8 @@
 //      data-conversation-content。0.1.6-alpha.2 起才有 content 锚点）
 //   · shimmer 契约（旧 data-text-shimmer / 新 data-shimmer）→ ProcessGroupHeader
 //   · turnOwnerHasContent（TurnProcessOwnerProps 是否含 hasContent）→ ui-chat
+//     （0.1.1 没有 TurnProcessOwnerProps → 省略 = undefined；0.1.2~0.1.6 有 owner
+//      但无 hasContent → false；0.1.7+ → true）
 //     contract/slots.ts：0.1.2-rc.1 的 owner = { spec, foldable, open, setOpen }
 //     （无 hasContent）；0.1.7-rc.1 起增加 readonly hasContent: boolean
 //   · transcriptView                             → settings 侧
@@ -28,7 +30,7 @@ export const HOST_VERSION_FIXTURES = [
   {
     version: '0.1.1-rc.2',
     tag: 'dsh-v0.1.1-rc.2',
-    probe: { officialTurnProcess: false, officialStandardKit: false, turnDataSource: false, stepGroups: false, sessionDomScope: false, conversationContentAnchor: false, oldShimmer: false, newShimmer: false, transcriptView: false, turnOwnerHasContent: false },
+    probe: { officialTurnProcess: false, officialStandardKit: false, turnDataSource: false, stepGroups: false, sessionDomScope: false, conversationContentAnchor: false, oldShimmer: false, newShimmer: false, transcriptView: false },
     expect: { turnFold: 'legacy', stepFold: 'legacy', metrics: 'fallback', sessionScope: 'none', mode: 'legacy' },
     note: '无 turn-process 节点、无 useChat/useConversation、无 Step 分组 —— 纯旧宿主',
   },
@@ -87,6 +89,6 @@ export function capabilitiesFromFixture(fixture) {
     sessionDomScope: p.sessionDomScope === true,
     conversationContentAnchor: p.conversationContentAnchor === true,
     durableProjection: false,
-    turnOwnerHasContent: p.turnOwnerHasContent === true,
+    turnOwnerHasContent: p.turnOwnerHasContent === true ? true : (p.turnOwnerHasContent === false ? false : undefined),
   }
 }
