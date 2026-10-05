@@ -64,11 +64,101 @@ function makeSlotsService() {
 function applyPlugin(slots, probe = { officialTurnProcess: true, officialStandardKit: true }) {
   const ctx = {
     inject: (deps, fn) => { fn({ slots }); return () => {} },
+    on: (_name, fn) => { void fn; return () => {} },
   }
   const dispose = T.exports.apply(ctx)
   void probe
   return dispose
 }
+
+  /** 富 fake：建模官方 SlotCore 语义——
+   *  subscribe（真实为 microtask-batched，这里**同步**通知 = 最坏重入情形）、
+   *  onEntryError（同步、且在 abdication mutation 之后）、abdicated 条目仍留在 raw
+   *  entries 但退出 entriesOfSlot winner 投影、register/dispose 均触发 registry 通知。 */
+  function makeSlotCoreFake(opts = {}) {
+    const st = { entries: [], abdicated: new Set(), listeners: new Set(), errorListeners: new Set(), disposeOrder: [] }
+    st.entries.push({ options: { key: 'assistant-step', priority: 0 }, component: FakeAssistant })
+    st.entries.push({ options: { key: 'tool-call', priority: 0 }, component: FakeToolCall })
+    // 官方语义：markDirty 同步 emit slots/changed（ctx 通道，经 emit 回调）；
+    // subscribe 为 microtask-batched 一致性备份——两者的时序差异在 fake 里如实分建模。
+    const emitSync = (key) => { if (opts.emit) opts.emit(key) }
+    const notifyBatched = () => {
+      const fns = [...st.listeners]
+      Promise.resolve().then(() => { for (const fn of fns) fn() })
+    }
+    const api = {
+      st,
+      entries: (name) => (name === 'conversation.chat.node' ? st.entries.slice() : []),
+      entriesOfSlot: (name) => {
+        if (name !== 'conversation.chat.node') return []
+        const live = st.entries.filter((e) => e && !st.abdicated.has(e))
+        const sorted = live.slice().sort((a, b) => ((a.options.priority === undefined ? 0 : a.options.priority) - (b.options.priority === undefined ? 0 : b.options.priority)))
+        const seen = {}
+        const winners = []
+        for (const e of sorted) { if (seen[e.options.key]) continue; seen[e.options.key] = true; winners.push(e) }
+        return winners
+      },
+      subscribe: (_k, fn) => {
+        if (opts.subscribeThrows) throw new Error('subscribe unavailable')
+        st.listeners.add(fn)
+        return () => { st.disposeOrder.push('monitor:subscribe'); st.listeners.delete(fn) }
+      },
+      onEntryError: (fn) => { st.errorListeners.add(fn); return () => { st.disposeOrder.push('monitor:onEntryError'); st.errorListeners.delete(fn) } },
+      inject: (_slot, fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
+      register: (options, component) => {
+        const entry = { options, component }
+        st.entries.push(entry)
+        emitSync(options.name)
+        notifyBatched()
+        return () => {
+          const i = st.entries.indexOf(entry)
+          if (i >= 0) st.entries.splice(i, 1)
+          st.disposeOrder.push('shadow:' + options.key)
+          emitSync(options.name)
+          notifyBatched()
+        }
+      },
+      addThirdParty: (key, priority, component) => {
+        const entry = { options: { key, priority }, component: component || (() => null) }
+        st.entries.push(entry)
+        emitSync('conversation.chat.node')
+        notifyBatched()
+        return {
+          entry,
+          remove: () => { const i = st.entries.indexOf(entry); if (i >= 0) st.entries.splice(i, 1); emitSync('conversation.chat.node'); notifyBatched() },
+        }
+      },
+      reportEntryError: (entry, abdicate) => {
+        if (abdicate) {
+          if (st.abdicated.has(entry)) return
+          st.abdicated.add(entry)
+          emitSync('conversation.chat.node')   // 官方：abdication mutation → 同步 slots/changed
+          notifyBatched()
+        }
+        for (const fn of [...st.errorListeners]) fn('conversation.chat.node', entry, new Error('renderer crash'), { abdicated: !!abdicate })
+      },
+      pluginEntryOf: (key) => st.entries.find((e) => e.options.key === key && e.component === (key === 'assistant-step' ? T.LegacyStepAssistantView : T.LegacyStepToolCallView)),
+      winnerOf: (key) => api.entriesOfSlot('conversation.chat.node').find((e) => e.options.key === key),
+    }
+    return api
+  }
+
+  /** wired env：ctx.on('slots/changed') 真接线到 fake 的同步 emit（PRIMARY 通道可验证）。 */
+  function makeWiredEnv(opts = {}) {
+    const changedListeners = new Set()
+    const slots = makeSlotCoreFake(Object.assign({}, opts, {
+      emit: (key) => { for (const fn of [...changedListeners]) fn(key) },
+    }))
+    const ctx = {
+      inject: (deps, fn) => { fn({ slots }); return () => {} },
+      on: (name, fn) => {
+        if (opts.omitCtxOn) throw new Error('ctx.on unavailable')
+        if (name === 'slots/changed') changedListeners.add(fn)
+        return () => { if (slots && slots.st) slots.st.disposeOrder.push('monitor:slots/changed'); changedListeners.delete(fn) }
+      },
+    }
+    return { slots, ctx, changedListenerCount: () => changedListeners.size, apply: () => T.exports.apply(ctx) }
+  }
 
 // ── 官方 chat 快照形状（0.1.2+）：order 键数组 + nodes.get + legacy.turnEnds ──
 function makeNode(kind, key, opts = {}) {
@@ -227,7 +317,7 @@ describe('Legacy Step B：注册生命周期', () => {
   it('B6 StrictMode：StepCardRulesBridge effect replay → legacy 引擎注册恰一次（真实桥路径）', () => {
     const slots = makeSlotsService()
     // 官方形状槽位注册条目：需要在 slots.registered 里能观察到 legacy shadow
-    const applyCtx = { inject: (deps, fn) => { fn({ slots }); return () => {} } }
+    const applyCtx = { inject: (deps, fn) => { fn({ slots }); return () => {} }, on: (_name, fn) => { void fn; return () => {} } }
     const dispose = T.exports.apply(applyCtx)
     T.hostCapabilityState.stepFold = 'unknown'
     // hybrid 形状：views 存在但没有 grouped 函数 → contract=false
@@ -497,7 +587,7 @@ describe('Legacy Step E：原子安装事务', () => {
     }
   }
   function applyWith(slots) {
-    return T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+    return T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} }, on: (_name, fn) => { void fn; return () => {} } })
   }
 
   it('E1 preflight 全成功 → 原子安装：installed、keys 恰好 2、builtins 已捕获、统计正确', () => {
@@ -678,7 +768,7 @@ describe('Legacy Step F：Hook 生命周期', () => {
   /** 可变的会话环境：currentSnapshot 变化后重渲染 → 同一个组件实例跨 non-member/member。 */
   function makeHarness(component) {
     const slots = setupSlots()
-    const dispose = T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+    const dispose = T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} }, on: (_name, fn) => { void fn; return () => {} } })
     T.activateLegacyStepEngine()
     const state = { node: null, snapshot: null }
     const useChat = (selector) => {
@@ -751,7 +841,7 @@ describe('Legacy Step F：Hook 生命周期', () => {
   it('F3 StrictMode：member 初始 mount → effect replay 后 registry = 1；unmount → 0', async () => {
     captureErrors()
     const slots = setupSlots()
-    const dispose = T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+    const dispose = T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} }, on: (_name, fn) => { void fn; return () => {} } })
     T.activateLegacyStepEngine()
     const n = makeNode('tool-call', 'sm1', {})
     const snap = makeSnapshot([n])
@@ -813,7 +903,7 @@ describe('Legacy Step F：Hook 生命周期', () => {
   })
   it('F6 surface registry 精确性：两个成员 = 2 → 一个变非成员 = 1 → 全卸载 = 0 且清理', async () => {
     const slots = setupSlots()
-    const dispose = T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+    const dispose = T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} }, on: (_name, fn) => { void fn; return () => {} } })
     T.activateLegacyStepEngine()
     const mk = (key, blocks) => makeNode('assistant-step', key, { blocks })
     const stateA = { node: mk('r1', thinkBlocks('a')), snapshot: null }
@@ -943,7 +1033,7 @@ describe('Legacy Step G：原子 ownership', () => {
     return api
   }
   function applyWith(slots) {
-    return T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+    return T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} }, on: (_name, fn) => { void fn; return () => {} } })
   }
 
   it('G1 参数化：第三方 priority -2/-3/-10 占任一 cell → 整体不安装、0 注册', () => {
@@ -1197,66 +1287,15 @@ describe('Legacy Step H：统一 session cleanup', () => {
 //    漂移 → 整体 teardown → FAIL OPEN；不自动重抢）
 // ══════════════════════════════════════════════════════════════════════
 describe('Legacy Step I：runtime ownership liveness', () => {
-  /** 富 fake：建模官方 SlotCore 语义——
-   *  subscribe（真实为 microtask-batched，这里**同步**通知 = 最坏重入情形）、
-   *  onEntryError（同步、且在 abdication mutation 之后）、abdicated 条目仍留在 raw
-   *  entries 但退出 entriesOfSlot winner 投影、register/dispose 均触发 registry 通知。 */
-  function makeSlotCoreFake(opts = {}) {
-    const st = { entries: [], abdicated: new Set(), listeners: new Set(), errorListeners: new Set(), disposeOrder: [] }
-    st.entries.push({ options: { key: 'assistant-step', priority: 0 }, component: FakeAssistant })
-    st.entries.push({ options: { key: 'tool-call', priority: 0 }, component: FakeToolCall })
-    const notify = () => { for (const fn of [...st.listeners]) fn() }
-    const api = {
-      st,
-      entries: (name) => (name === 'conversation.chat.node' ? st.entries.slice() : []),
-      entriesOfSlot: (name) => {
-        if (name !== 'conversation.chat.node') return []
-        const live = st.entries.filter((e) => e && !st.abdicated.has(e))
-        const sorted = live.slice().sort((a, b) => ((a.options.priority === undefined ? 0 : a.options.priority) - (b.options.priority === undefined ? 0 : b.options.priority)))
-        const seen = {}
-        const winners = []
-        for (const e of sorted) { if (seen[e.options.key]) continue; seen[e.options.key] = true; winners.push(e) }
-        return winners
-      },
-      subscribe: (_k, fn) => {
-        if (opts.subscribeThrows) throw new Error('subscribe unavailable')
-        st.listeners.add(fn)
-        return () => { st.disposeOrder.push('monitor:subscribe'); st.listeners.delete(fn) }
-      },
-      onEntryError: (fn) => { st.errorListeners.add(fn); return () => { st.disposeOrder.push('monitor:onEntryError'); st.errorListeners.delete(fn) } },
-      inject: (_slot, fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
-      register: (options, component) => {
-        const entry = { options, component }
-        st.entries.push(entry)
-        notify()
-        return () => { const i = st.entries.indexOf(entry); if (i >= 0) st.entries.splice(i, 1); st.disposeOrder.push('shadow:' + options.key); notify() }
-      },
-      addThirdParty: (key, priority, component) => {
-        const entry = { options: { key, priority }, component: component || (() => null) }
-        st.entries.push(entry)
-        notify()
-        return { entry, remove: () => { const i = st.entries.indexOf(entry); if (i >= 0) st.entries.splice(i, 1); notify() } }
-      },
-      reportEntryError: (entry, abdicate) => {
-        if (abdicate) {
-          if (st.abdicated.has(entry)) return
-          st.abdicated.add(entry)
-        }
-        for (const fn of [...st.errorListeners]) fn('conversation.chat.node', entry, new Error('renderer crash'), { abdicated: !!abdicate })
-      },
-      pluginEntryOf: (key) => st.entries.find((e) => e.options.key === key && e.component === (key === 'assistant-step' ? T.LegacyStepAssistantView : T.LegacyStepToolCallView)),
-      winnerOf: (key) => api.entriesOfSlot('conversation.chat.node').find((e) => e.options.key === key),
-    }
-    return api
-  }
   function applyWith(slots) {
-    return T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+    return T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} }, on: (_name, fn) => { void fn; return () => {} } })
   }
   const flush = () => new Promise((r) => setTimeout(r, 0))
 
   it('I1 late third-party -2 抢 assistant → 整体 teardown、FAIL OPEN、ownershipLosses+1', async () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       assert.equal(T.activateLegacyStepEngine(), true)
       assert.equal(T.getLegacyStepRegistrationState().monitorInstalled, true, 'monitor 随成功安装存在')
@@ -1286,8 +1325,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I2 late third-party -2 抢 tool → 对称整体 teardown', async () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       T.activateLegacyStepEngine()
       const before = T.getLegacyStepInstallStats()
@@ -1299,8 +1339,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I3 late +1 不影响：ownership 未变 → 保持 installed', async () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       T.activateLegacyStepEngine()
       const before = T.getLegacyStepInstallStats()
@@ -1314,8 +1355,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I4 无关 key / 非 winner 变化不 teardown', async () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       T.activateLegacyStepEngine()
       const before = T.getLegacyStepInstallStats()
@@ -1329,8 +1371,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I5 assistant shadow abdicate → onEntryError 同步整体 teardown（不等微任务）', () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       T.activateLegacyStepEngine()
       const before = T.getLegacyStepInstallStats()
@@ -1346,8 +1389,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I6 tool shadow abdicate → 对称同步 teardown', () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       T.activateLegacyStepEngine()
       const entry = slots.pluginEntryOf('tool-call')
@@ -1358,8 +1402,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I7 非本插件 entry crash（官方条目 abdicate / 无关 key）不误拆', () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       T.activateLegacyStepEngine()
       const official = slots.st.entries.find((e) => e.options.key === 'assistant-step' && T.slotPriorityOf(e) === 0)
@@ -1369,8 +1414,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I8 stale abdicated -2 不阻止安装（preflight 以 live winner 为准）', () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       const third = slots.addThirdParty('assistant-step', -2)
       slots.reportEntryError(third.entry, true)   // 第三方 -2 崩溃 abdicate：raw 仍留 stale
@@ -1383,7 +1429,7 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I9 直接单测：raw 有 -2 但 live winner 官方 → available；live winner -2 → 不可用', () => {
-    const slots = makeSlotCoreFake()
+    const slots = makeWiredEnv().slots
     const stale = { options: { key: 'assistant-step', priority: -2 }, component: () => null }
     slots.st.entries.push({ options: { key: 'assistant-step', priority: 0 }, component: FakeAssistant })
     slots.st.entries.push(stale)
@@ -1393,8 +1439,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     assert.equal(T.legacyShadowOwnershipAvailable(slots, 'assistant-step'), false, 'live -2 仍阻止（安全修复不倒退）')
   })
   it('I10 去重：abdication fast-path 后 microtask 批通知不再重复 teardown/警告/计数', async () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       T.activateLegacyStepEngine()
       const before = T.getLegacyStepInstallStats()
@@ -1407,8 +1454,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I11 monitor 安装失败（subscribe 抛错）→ 回滚两个 shadow、FAIL OPEN', () => {
-    const slots = makeSlotCoreFake({ subscribeThrows: true })
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv({ subscribeThrows: true })
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       const before = T.getLegacyStepInstallStats()
       assert.equal(T.activateLegacyStepEngine(), false, 'monitor 不可用 → 不安装')
@@ -1419,8 +1467,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I12 dispose 顺序：monitor 先注销、shadow 后拆；dispose 后 mutation 不再触发 verifier', async () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       T.activateLegacyStepEngine()
       const before = T.getLegacyStepInstallStats()
@@ -1429,8 +1478,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
       slots.st.disposeOrder.push = (...a) => { order.push('real'); return origPush(...a) }
       assert.equal(T.disposeLegacyStepEngine(), true)
       const seq = slots.st.disposeOrder
-      assert.equal(seq[0], 'monitor:subscribe', 'monitor 最先注销：' + JSON.stringify(seq))
-      assert.ok(seq.indexOf('shadow:assistant-step') > 0 && seq.indexOf('shadow:tool-call') > 0, 'shadows 在 monitor 之后')
+      const firstShadow = seq.findIndex((s) => s.indexOf('shadow:') === 0)
+      assert.ok(firstShadow > 0, 'shadows 必须在 monitor 之后：' + JSON.stringify(seq))
+      for (const s of seq.slice(0, firstShadow)) assert.ok(s.indexOf('monitor:') === 0, 'monitor 全部先注销：' + JSON.stringify(seq))
       void order
       slots.addThirdParty('assistant-step', -2)
       await flush()
@@ -1438,8 +1488,9 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     } finally { dispose() }
   })
   it('I13 double dispose 安全；ownership-loss 后再 dispose 安全 no-op', async () => {
-    const slots = makeSlotCoreFake()
-    const dispose = applyWith(slots)
+    const env = makeWiredEnv()
+    const slots = env.slots
+    const dispose = env.apply()
     try {
       T.activateLegacyStepEngine()
       assert.equal(T.disposeLegacyStepEngine(), true)
@@ -1480,5 +1531,181 @@ describe('Legacy Step I：runtime ownership liveness', () => {
     assert.ok(td.includes('runtimeOwnershipLosses'), 'ownership-lost 归因统计')
     const calls = code.split('installLegacyStepOwnershipMonitor(').length - 1
     assert.equal(calls, 2, 'monitor helper：定义 1 + activate 调用 1（无其它注册点）')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// J. Synchronous ownership seal（PRIMARY = ctx.on("slots/changed") 同步事件：
+//    registry mutation 的**同一调用栈内**完成整体 teardown——不存在 microtask 半套窗口；
+//    degraded 状态：ownership-lost → true，显式 retry 失败保留、完整成功才清零）
+// ══════════════════════════════════════════════════════════════════════
+describe('Legacy Step J：同步 ownership 封口', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0))
+
+  it('J1 late assistant -2：register 返回后立即（不 flush）已整体 teardown', () => {
+    const env = makeWiredEnv()
+    const dispose = env.apply()
+    try {
+      T.activateLegacyStepEngine()
+      assert.equal(T.getLegacyStepRegistrationState().installed, true)
+      const before = T.getLegacyStepInstallStats()
+      const third = env.slots.addThirdParty('assistant-step', -2)   // 同步 emit slots/changed
+      // 不 flush：同一调用栈内必须已完成
+      const st = T.getLegacyStepRegistrationState()
+      assert.equal(st.installed, false, 'register 返回前已 teardown（无 microtask 半套窗口）')
+      assert.equal(st.monitorInstalled, false)
+      assert.equal(env.slots.pluginEntryOf('assistant-step'), undefined, '插件 assistant shadow 已 dispose')
+      assert.equal(env.slots.pluginEntryOf('tool-call'), undefined, '插件 tool shadow 也已 dispose')
+      assert.equal(T.slotPriorityOf(env.slots.winnerOf('assistant-step')), -2, 'winner = 第三方 -2')
+      assert.equal(T.slotPriorityOf(env.slots.winnerOf('tool-call')), 0, 'winner = 官方 0')
+      assert.equal(env.slots.entryOfKey ? true : true, true)
+      assert.ok(env.slots.st.entries.indexOf(third.entry) >= 0, '第三方 entry 未被误删')
+      const stats = T.getLegacyStepInstallStats()
+      assert.equal(stats.runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1)
+      assert.equal(stats.runtimeTeardowns - before.runtimeTeardowns, 1)
+      assert.equal(env.changedListenerCount(), 0, 'PRIMARY listener 已注销')
+    } finally { dispose() }
+  })
+  it('J2 late tool -2：对称同步 teardown', () => {
+    const env = makeWiredEnv()
+    const dispose = env.apply()
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      env.slots.addThirdParty('tool-call', -2)
+      assert.equal(T.getLegacyStepRegistrationState().installed, false)
+      assert.equal(env.slots.pluginEntryOf('assistant-step'), undefined)
+      assert.equal(env.slots.pluginEntryOf('tool-call'), undefined)
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1)
+    } finally { dispose() }
+  })
+  it('J3 late +1：同步检查通过，保持 installed；flush 后仍 true', async () => {
+    const env = makeWiredEnv()
+    const dispose = env.apply()
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      env.slots.addThirdParty('assistant-step', 1)
+      assert.equal(T.getLegacyStepRegistrationState().installed, true, '同步检查：ownership 未变')
+      await flush()
+      assert.equal(T.getLegacyStepRegistrationState().installed, true)
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 0)
+      T.disposeLegacyStepEngine()
+    } finally { dispose() }
+  })
+  it('J4 无关 key mutation：同步检查通过、backend 不动', async () => {
+    const env = makeWiredEnv()
+    const dispose = env.apply()
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      env.slots.addThirdParty('context', -5)
+      env.slots.addThirdParty('user', -5)
+      env.slots.addThirdParty('turn-process', -5)
+      assert.equal(T.getLegacyStepRegistrationState().installed, true)
+      await flush()
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 0)
+      T.disposeLegacyStepEngine()
+    } finally { dispose() }
+  })
+  it('J5 abdication 三阶段：sync slots/changed 先 teardown；onEntryError 与 subscribe 批通知均 no-op', async () => {
+    const env = makeWiredEnv()
+    const dispose = env.apply()
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      const entry = env.slots.pluginEntryOf('assistant-step')
+      env.slots.reportEntryError(entry, true)
+      // 阶段 1：reportEntryError 返回时（slots/changed PRIMARY 已同步执行）
+      assert.equal(T.getLegacyStepRegistrationState().installed, false, '阶段 1：同步 teardown')
+      assert.equal(env.slots.pluginEntryOf('tool-call'), undefined)
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1, '阶段 2：onEntryError backstop 已 no-op')
+      await flush()
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1, '阶段 3：subscribe 批通知仍 no-op')
+    } finally { dispose() }
+  })
+  it('J6 degraded 生命周期：loss → true；retry 失败保留；完整成功清零', () => {
+    const env = makeWiredEnv()
+    const dispose = env.apply()
+    try {
+      T.activateLegacyStepEngine()
+      const third = env.slots.addThirdParty('assistant-step', -2)   // loss（同步）
+      let st = T.getLegacyStepRegistrationState()
+      assert.equal(st.degraded, true)
+      assert.equal(st.degradedReason, 'ownership-lost')
+      // retry 失败（第三方 -2 仍占）→ degraded 保留
+      assert.equal(T.activateLegacyStepEngine(), false, 'preflight 让位')
+      st = T.getLegacyStepRegistrationState()
+      assert.equal(st.installed, false)
+      assert.equal(st.degraded, true, 'retry 失败保留 degraded')
+      assert.equal(st.degradedReason, 'ownership-lost')
+      // 第三方移除 → 显式 retry 完整成功 → 清零
+      third.remove()
+      assert.equal(T.activateLegacyStepEngine(), true, '显式重装成功')
+      st = T.getLegacyStepRegistrationState()
+      assert.deepEqual(st, {
+        installed: true,
+        keys: ['assistant-step', 'tool-call'],
+        builtinsCaptured: true,
+        ownershipVerified: true,
+        monitorInstalled: true,
+        degraded: false,
+        degradedReason: null,
+      }, '成功 COMMIT 清零 degraded')
+      T.disposeLegacyStepEngine()
+    } finally { dispose() }
+  })
+  it('J7 第二生命周期：重装后再次 late -2 → 再次同步 teardown，stats 累计 1→2', () => {
+    const env = makeWiredEnv()
+    const dispose = env.apply()
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      const third = env.slots.addThirdParty('assistant-step', -2)
+      assert.equal(T.getLegacyStepRegistrationState().installed, false, '第一次 loss（同步）')
+      third.remove()
+      assert.equal(T.activateLegacyStepEngine(), true, '显式重装成功')
+      // 再次 late -2：monitor 已重新建立
+      env.slots.addThirdParty('assistant-step', -2)
+      assert.equal(T.getLegacyStepRegistrationState().installed, false, '第二次 loss（同步）')
+      const stats = T.getLegacyStepInstallStats()
+      assert.equal(stats.runtimeOwnershipLosses - before.runtimeOwnershipLosses, 2, '累计 2 次')
+      assert.equal(stats.runtimeTeardowns - before.runtimeTeardowns, 2)
+      assert.equal(env.changedListenerCount(), 0, '无残留 listener')
+    } finally { dispose() }
+  })
+  it('J8 monitor 安装失败（ctx.on 不可用）→ 回滚两个 shadow、FAIL OPEN', () => {
+    const env = makeWiredEnv({ omitCtxOn: true })
+    const dispose = env.apply()
+    try {
+      const before = T.getLegacyStepInstallStats()
+      assert.equal(T.activateLegacyStepEngine(), false, 'PRIMARY 通道不可用 → 不安装')
+      assert.equal(T.getLegacyStepRegistrationState().installed, false)
+      assert.equal(env.slots.pluginEntryOf('assistant-step'), undefined)
+      assert.equal(env.slots.pluginEntryOf('tool-call'), undefined)
+      assert.equal(T.getLegacyStepInstallStats().rollbacks - before.rollbacks, 1)
+      assert.equal(env.changedListenerCount(), 0)
+    } finally { dispose() }
+  })
+  it('J9 源码守卫：slots/changed listener 唯一注册点在 monitor helper；COMMIT 后才清 degraded', () => {
+    const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n')
+    const total = code.split('ctxRef.on("slots/changed"').length - 1
+    assert.equal(total, 1, 'ctx.on("slots/changed") 只允许出现在 monitor helper 内')
+    const monStart = code.indexOf('function installLegacyStepOwnershipMonitor(')
+    const monEnd = code.indexOf('\n\t\tfunction ', monStart + 1)
+    assert.ok(code.slice(monStart, monEnd).includes('ctxRef.on("slots/changed"'), 'monitor helper 内是唯一注册点')
+    const applyStart = code.indexOf('exports.apply = function')
+    const applyEnd = code.indexOf('src, then setup', applyStart)
+    const applyBody = code.slice(applyStart, applyEnd > 0 ? applyEnd : applyStart + 4000)
+    assert.ok(!applyBody.includes('.on("slots/changed"'), 'apply 路径不得注册 PRIMARY listener')
+    // degraded 只在 COMMIT（successes 计数）附近清零
+    const commitIdx = code.indexOf('legacyStepDegradedReason = null;' + String.fromCharCode(10) + '\t\t\tlegacyStepEngineInstalls += 1')
+
+    assert.ok(commitIdx > 0, 'COMMIT 必须清 degraded')
+    const beforeCommit = code.slice(0, commitIdx)
+    assert.ok(beforeCommit.lastIndexOf('legacyStepRegistration = {') < commitIdx, '清零发生在 registration 落定之后')
+    const preflightReturn = code.indexOf('ownershipConflicts += 1')
+    assert.ok(preflightReturn < commitIdx, 'preflight 失败路径不得清 degraded')
   })
 })

@@ -48,7 +48,7 @@ function makeSlots(probe) {
   }
 }
 function applyPlugin(slots) {
-  const ctx = { inject: (deps, fn) => { fn({ slots }); return () => {}; } }
+  const ctx = { inject: (deps, fn) => { fn({ slots }); return () => {}; }, on: (_name, fn) => { void fn; return () => {}; } }
   T.exports.apply(ctx)
 }
 

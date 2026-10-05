@@ -518,27 +518,47 @@ ownershipConflicts / ownershipVerificationFailures / rollbacks + installs）。
 OWNED）**：安装事务只保证 COMMIT 那一刻成立；slot registry 是动态的——第三方插件
 可以后加载 `-2` 抢走某个 cell，官方也可能把崩溃的 renderer **abdicate**（从 winner
 投影中退休）。因此成功 COMMIT 后安装 **ownership monitor**（`activate` 事务的最后一
-步，失败即回滚 FAIL OPEN）：
-- `slots.subscribe("conversation.chat.node", …)` 持续观察 registry 变化
-  （**microtask-batched**——官方语义；任何 mutation 后重新验证两个 required cells）；
-- `slots.onEntryError(…)` 作为**同步 fast-path**：官方在 abdicating crash 时先完成
-  abdication mutation（`abdicated.add` + 版本 bump）**再同步通知**，callback 内重读
-  `entriesOfSlot` 已能看到新 winner——本插件 shadow 被 abdicate 时**立刻**（不等微任务）
-  拆掉另一半。
+步，三通道任一不可用即回滚 FAIL OPEN）：
+
+- **PRIMARY `ctx.on("slots/changed", key)`（同步事件，维护严格不变量）**：官方
+  ui-renderer 在 `SlotRegistry` 构造时把 `core.onMutate` 桥成
+  `ctx.emit("slots/changed", key)`（0.1.2/0.1.5/0.1.6 同形）——**同步**发射：官方
+  invariant 强制"emission must follow the applied mutation"（`register` 先替换
+  entries 数组、再 `markDirty` 同步派发监听器），官方 registry 测试也在 `register()`
+  之后**立即**断言事件序列（无 await/microtask）。因此**第三方 register/dispose 的
+  同一调用栈内**就完成 ownership 重验证与整体 teardown——**不存在一个 microtask 的
+  半套窗口**。监听器内 dispose 本插件 entries 是安全的（markDirty 用快照副本迭代、
+  `dirty` 是 Set、entries 为原子数组替换、disposer 幂等——官方源码审计）。
+- **BACKSTOP `slots.onEntryError(…)`**：renderer crash / abdication 的语义信号
+  （同步、在 abdication mutation 之后；PRIMARY 已在同一栈内 teardown 时自然 no-op）。
+- **SECONDARY `slots.subscribe("conversation.chat.node", …)`**：microtask-batched
+  一致性备份（成本极低，覆盖理论上的 event bridge 异常；**不承担同步 invariant**）。
 
 漂移处置（与 install 时同一套严格判据：`entriesOfSlot` 的 winner 必须 = 本次事务的
 renderer、priority 恰好 -1、component 一致）：任一 required cell 丢失 → **整体
 teardown**（`teardownLegacyStepEngine("ownership-lost")`：重入 guard → **先注销
-monitor** → 再 dispose 两个 shadow → 清 registration/builtins）→ **FAIL OPEN 到宿主
-当前 winners**（官方或第三方继续正常渲染），绝不半套运行、绝不 `return null`。
+三个 monitor** → 再 dispose 两个 shadow → 清 registration/builtins）→ **FAIL OPEN
+到宿主当前 winners**（官方或第三方继续正常渲染，第三方新 entry 与官方 builtin 原样
+保留），绝不半套运行、绝不 `return null`。register() 返回后**绝不存在**长期或
+microtask 级半套状态——同步不变量：
+
+```
+WHILE INSTALLED: 两个 required cell 的当前 live winner 都是本插件；
+任何破坏它的 registry mutation，都在同一次 mutation 调用栈内
+整体拆掉 Legacy backend。
+```
+
 **不自动重抢**：运行期 ownership 一旦丢失，本插件当前生命周期内不会重新争抢该 slot
 （即使冲突插件随后退出）——backend 保持 fail-open disabled（`stepFold` 能力仍为
-`legacy`；`getLegacyStepRegistrationState()` 给出 `degraded/degradedReason`），直到
-插件/宿主重新初始化（显式重新 activate 才会重新 preflight）。这是稳定共存策略，避免
-ownership oscillation 与重复 shadow mount/unmount。ownership-lost 只记
+`legacy`；`getLegacyStepRegistrationState()` 给出 `degraded/degradedReason`）。
+**显式重试语义**：外部显式再次 `activateLegacyStepEngine()` 时——preflight 失败
+（冲突仍在）→ degraded 状态**保留**；完整成功重新 COMMIT → **degraded 清零**
+（`degraded=false, degradedReason=null`，且 installed/ownershipVerified/
+monitorInstalled 全部为 true）。这是稳定共存策略，避免 ownership oscillation 与重复
+shadow mount/unmount。ownership-lost 只记
 `runtimeOwnershipLosses`/`runtimeTeardowns`（与 preflight/verification 计数分开），
-警告恰一次；**不动**任何 session presentation state（open/face/CSS 由统一 session
-cleanup 收尾）。
+警告恰一次（跨显式重装也不重复刷）；**不动**任何 session presentation state
+（open/face/CSS 由统一 session cleanup 收尾）。
 
 **raw entries vs live winners（审计边界）**：`slots.entries()` 是 **raw registration
 ledger**——abdicated 条目仍会列出（registration 未撤销、disposer 仍有效）；它只用于

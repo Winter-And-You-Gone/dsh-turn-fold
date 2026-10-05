@@ -1620,13 +1620,14 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- 委托渲染：官方 builtin renderer（安装期 preflight 捕获，render 零扫描）----
-		// slots 服务在 apply 时保存（§8：只保存，不提前注册）。官方条目仍可枚举 →
+		// slots 服务与 cordis ctx 在 apply 时保存（只保存，不提前注册任何 listener）。官方条目仍可枚举 →
 		// 安装前 preflight 捕获 priority-0 builtin 并固定保存（legacyStepBuiltinRenderers）：
 		// renderer 只读安装期引用，**不再在渲染路径扫描 slots.entries()**（真机审计：
 		// StoredEntry.component 在 0.1.2/0.1.5/0.1.6/0.2.0 均直接暴露；ui-renderer 的
 		// slots.inject 在 slot 已声明时同步执行回调并同步抛出 setup 失败——注册成败可观测）。
 		// 捕获必须发生在 shadow 注册**之前**：否则 entries() 会先看到插件自己的 shadow。
 		var legacyStepSlotsRef = null;
+		var legacyStepContextRef = null;         // cordis ctx（apply 时保存；PRIMARY monitor 的 ctx.on 通道）
 		var legacyStepBuiltinRenderers = null;   // { assistantStep, toolCall } | null（仅 COMMIT 后非 null）
 		var legacyStepWarned = {};
 		function legacyWarnOnce(tag, message) {
@@ -1728,27 +1729,49 @@ window.__ModuleLoader__.load({
 		}
 		/** 安装 ownership monitor（只能属于 successful Legacy backend；
 		 *  Modern 宿主 / preflight 失败路径永不注册，见源码守卫）。
-		 *  返回 disposers 数组；任一步不可用/抛错 → 返回 null（调用方回滚 shadows → FAIL OPEN）。 */
-		function installLegacyStepOwnershipMonitor(slots) {
+		 *  三通道（官方源码审计 0.1.2/0.1.5/0.1.6）：
+		 *   · PRIMARY  ctx.on("slots/changed", key)：ui-renderer 在 SlotRegistry 构造时把
+		 *     core.onMutate 桥成 ctx.emit("slots/changed", key)——**同步**事件（官方 invariant
+		 *     强制"mutation 先于 dispatch"；官方 registry 测试在 register 后**立即**断言 seen、
+		 *     无 await/microtask）→ 第三方 register/dispose 的调用栈内就完成 ownership
+		 *     重验证与整体 teardown（没有 microtask 半套窗口）；
+		 *   · BACKSTOP slots.onEntryError(key, …)：renderer crash / abdication 的语义信号
+		 *     （同步、在 abdication mutation 之后；PRIMARY 已 teardown 时自然 no-op）；
+		 *   · SECONDARY slots.subscribe(key, …)：microtask-batched 一致性备份（成本极低，
+		 *     覆盖理论上的 event bridge 异常；不承担同步 invariant）。
+		 *  三者任一不可用/抛错 → 返回 null（调用方回滚 shadows → FAIL OPEN）。
+		 *  监听器内 dispose 本插件 entries 是安全的：markDirty 迭代监听器用快照副本、
+		 *  dirty 是 Set、entries 为原子数组替换、disposer 幂等（官方源码审计）。 */
+		function installLegacyStepOwnershipMonitor(ctxRef, slots) {
 			var disposers = [];
+			function rollback() {
+				for (var i = 0; i < disposers.length; i++) { try { disposers[i](); } catch (e) { /* 忽略 */ } }
+				return null;
+			}
 			try {
-				if (typeof slots.subscribe !== "function" || typeof slots.onEntryError !== "function") return null;
-				var sub = slots.subscribe("conversation.chat.node", legacyStepOwnershipCheck);
-				if (typeof sub !== "function") return null;
-				disposers.push(sub);
+				if (!ctxRef || typeof ctxRef.on !== "function") return null;
+				if (typeof slots.onEntryError !== "function" || typeof slots.subscribe !== "function") return null;
+				var onChanged = ctxRef.on("slots/changed", function (key) {
+					if (key !== "conversation.chat.node") return;   // 只关心本 slot 的 registry mutation
+					legacyStepOwnershipCheck();
+				});
+				if (typeof onChanged !== "function") return rollback();
+				disposers.push(onChanged);
 				var errSub = slots.onEntryError(function (key) {
 					if (key !== "conversation.chat.node") return;
-					legacyStepOwnershipCheck();   // 同步 fast-path：abdication mutation 已完成
+					legacyStepOwnershipCheck();
 				});
-				if (typeof errSub !== "function") {
-					for (var i = 0; i < disposers.length; i++) { try { disposers[i](); } catch (e) { /* 忽略 */ } }
-					return null;
-				}
+				if (typeof errSub !== "function") return rollback();
 				disposers.push(errSub);
-				return disposers;
+				var sub = slots.subscribe("conversation.chat.node", legacyStepOwnershipCheck);
+				if (typeof sub !== "function") return rollback();
+				disposers.push(sub);
+				return {
+					disposers: disposers,
+					kinds: { slotsChanged: true, entryError: true, subscription: true },
+				};
 			} catch (e) {
-				for (var j = 0; j < disposers.length; j++) { try { disposers[j](); } catch (e2) { /* 忽略 */ } }
-				return null;
+				return rollback();
 			}
 		}
 		/** **统一** teardown（唯一底层入口）：插件 dispose 与运行期 ownership 丢失走同一条路径。
@@ -2156,8 +2179,8 @@ window.__ModuleLoader__.load({
 				return false;
 			}
 			// 5) 安装 ownership monitor（在 COMMIT 之前；不可用/抛错 → 回滚 shadows）
-			var monitorDisposers = installLegacyStepOwnershipMonitor(slots);
-			if (!monitorDisposers) {
+			var monitor = installLegacyStepOwnershipMonitor(legacyStepContextRef, slots);
+			if (!monitor) {
 				for (var md = 0; md < records.length; md++) {
 					try { if (records[md].dispose) records[md].dispose(); } catch (e) { /* 回滚失败不阻塞其余 */ }
 				}
@@ -2180,11 +2203,14 @@ window.__ModuleLoader__.load({
 			legacyStepBuiltinRenderers = { assistantStep: assistantBuiltin, toolCall: toolBuiltin };
 			legacyStepRegistration = {
 				disposers: disposers,
-				monitorDisposers: monitorDisposers,
+				monitorDisposers: monitor.disposers,
+				monitorKinds: monitor.kinds,
 				keys: keys,
 				records: ownershipRecords,
 				ownershipVerified: true,
 			};
+			// 完整成功安装才清 degraded（显式 retry 失败时保留上一轮的 ownership-lost 事实）
+			legacyStepDegradedReason = null;
 			legacyStepEngineInstalls += 1;
 			legacyStepInstallStats.successes += 1;
 			return true;
@@ -2208,8 +2234,12 @@ window.__ModuleLoader__.load({
 					&& legacyStepBuiltinRenderers.toolCall != null),
 				// installed ⇒ 两个 cell 的 winner 都经过身份验证确认是本插件的条目
 				ownershipVerified: legacyStepRegistration !== null && legacyStepRegistration.ownershipVerified === true,
-				// 运行期 monitor（subscribe + onEntryError）随 successful install 一起存在
-				monitorInstalled: legacyStepRegistration !== null && legacyStepRegistration.monitorDisposers.length === 2,
+				// 运行期 monitor（PRIMARY slots/changed + BACKSTOP onEntryError + SECONDARY subscribe）
+				// 随 successful install 一起存在——按 monitorKinds 判定，不硬编码 disposer 数
+				monitorInstalled: legacyStepRegistration !== null
+					&& legacyStepRegistration.monitorKinds.slotsChanged === true
+					&& legacyStepRegistration.monitorKinds.entryError === true
+					&& legacyStepRegistration.monitorKinds.subscription === true,
 				// 运行期 ownership 丢失后的降级状态（backend 关闭、capability 仍是 legacy）
 				degraded: legacyStepDegradedReason !== null,
 				degradedReason: legacyStepDegradedReason,
@@ -4188,6 +4218,7 @@ window.__ModuleLoader__.load({
 			// Step 皮总闸：皮肤样式元素的 disabled（幂等；模块初始化时已同步过一次，
 			// 此处兜底宿主时序）。不写 document.body attribute——官方实践禁止组件外 DOM 写入。
 			applyIconStyle();
+			legacyStepContextRef = ctx;   // 只保存：successful Legacy install 才会 ctx.on("slots/changed", …)
 			ctx.inject(["slots"], function (scope) {
 				var slotsSvc = scope.slots;
 				// §8：只**保存** slots 服务引用（供 Legacy Step 激活时注册 shadow 用），
