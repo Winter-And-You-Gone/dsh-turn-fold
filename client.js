@@ -4673,7 +4673,8 @@ window.__ModuleLoader__.load({
 		 *   durableProjection       宿主半边是否注册 turnFoldMetrics projection（运行时探测） */
 		function hostCapabilitiesOf(probe) {
 			var p = probe || {};
-			var nativeTurnFold = p.nativeTurnFold === true;
+			// 三态（true/false/undefined=未探）：注册期槽位未声明时是 undefined，绝不折叠成 false
+			var nativeTurnFold = p.nativeTurnFold === true ? true : (p.nativeTurnFold === false ? false : undefined);
 			var turnDataSource = p.turnDataSource === true ? true : (p.turnDataSource === false ? false : undefined);
 			var stepProbe = p.nativeStepGroups;
 			var nativeStepGroups = stepProbe === true ? true : (stepProbe === false ? false : undefined);
@@ -4697,8 +4698,9 @@ window.__ModuleLoader__.load({
 				conversationContentAnchor: contentAnchor,
 				turnOwnerHasContent: turnOwnerHasContent,
 				durableProjection: durable,
-				// feature-level 模式（允许 hybrid：Turn modern + Step legacy + metrics fallback）
-				turnFold: nativeTurnFold ? "modern" : "legacy",
+				// feature-level 模式（允许 hybrid：Turn modern + Step legacy + metrics fallback）。
+				// turnFold 三态：探针未运行（undefined）= unknown，绝不猜 legacy（UNKNOWN ≠ LEGACY）。
+				turnFold: nativeTurnFold === true ? "modern" : (nativeTurnFold === false ? "legacy" : "unknown"),
 				stepFold: nativeStepGroups === true ? "modern" : (nativeStepGroups === false ? "legacy" : "unknown"),
 				metrics: turnDataSource === true ? "reactive" : (turnDataSource === false ? "fallback" : "unknown"),
 				sessionScope: sessionScope,
@@ -4709,8 +4711,29 @@ window.__ModuleLoader__.load({
 		 *  turnDataSource / Process Group 契约 / DOM 会话锚点注册期一律探不到 → unknown，
 		 *  绝不从 nativeTurnFold 推导（0.1.2~0.1.6 的审计结论：有 turn-process 不代表有
 		 *  reactive metrics 数据面）。 */
+		/** conversation.chat.node 槽位此刻是否已被声明（三态：true/false/无法判定=null）。
+		 *  官方 conversation 层（ui-conversation / ui-chat）在**自己的 apply** 里经父槽
+		 *  children 表声明该槽位；以 bundle 方式装载时本插件的 apply 可能先于它就绪
+		 *  （cordis 按注入服务就绪度调度，本插件只注入 slots）。
+		 *  判定面 = 官方只读检查面 `slots.snapshot(root)`（0.1.1~0.2.0 的 service 均暴露，
+		 *  声明中 → 恰一棵子树、未声明 → 空数组）；service 没有 snapshot → 无法判定。 */
+		function chatNodeSlotDeclared(slotsSvc) {
+			try {
+				if (slotsSvc && typeof slotsSvc.snapshot === "function") {
+					var trees = slotsSvc.snapshot("conversation.chat.node");
+					return !!(trees && typeof trees.length === "number" && trees.length > 0);
+				}
+			} catch (e) { /* 探测失败按无法判定处理 */ }
+			return null;
+		}
 		function detectHostCapabilitiesAtRegistration(slotsSvc) {
 			var nativeTurnFold = slotHasEntry(slotsSvc, "conversation.chat.node", function (o) { return o.key === "turn-process"; });
+			// 槽位尚未声明 → "没有 turn-process 条目"不是 legacy 证据（官方 conversation 层
+			// 还没 apply）→ 保持 unknown，等槽位声明后由 slots/changed 事件驱动补定论
+			//（真机实证：0.2.0-rc.2 以 bundle 装载时先判 legacy 会在现代宿主上装出 3 键
+			//  legacy backend 且永不注册 Turn Bar）。宿主没有 snapshot 只读检查面（无法区分）→
+			//  保持既有语义（absence ⇒ legacy）。
+			if (chatNodeSlotDeclared(slotsSvc) === false && !nativeTurnFold) nativeTurnFold = undefined;
 			return hostCapabilitiesOf({ nativeTurnFold: nativeTurnFold });
 		}
 		/** 每个 feature 各自的合法定论值（feature-aware；禁止所有 feature 共用一个
@@ -4735,6 +4758,78 @@ window.__ModuleLoader__.load({
 		}
 		/** 注册期定论：turnFold 写进运行时状态并输出 probing 事实行。stepFold/metrics/
 		 *  sessionScope 不在此处定论（注册期探不到 → unknown，等渲染期 runtime probe）。 */
+		/** Deferred turnFold 定论（bundle 装载时序竞态的收口）：
+		 *  注册期槽位未声明 → unknown；此后**事件驱动**等待官方 conversation 层声明
+		 *  conversation.chat.node，在同步注入回调全部落地后的**一个微任务**里复判：
+		 *    · turn-process 条目在 → modern（注册现代 Turn 渲染器）；
+		 *    · 槽位已声明且至少一个官方节点渲染器在场、无 turn-process → legacy
+		 *      （0.1.1 形态：激活 Legacy Turn 引擎）；
+		 *    · 槽位已声明但零条目（声明 markDirty 先于官方 inject 回调落地）→ 继续等。
+		 *  微任务批与官方 slots.subscribe 同语义（事件驱动，无定时器/轮询）。 */
+		var deferredTurnFoldDisposer = null;
+		var deferredTurnFoldScheduled = false;
+		function stopDeferredTurnFoldResolution() {
+			if (deferredTurnFoldDisposer) {
+				try { deferredTurnFoldDisposer(); } catch (e) { /* 单个注销失败不阻塞 */ }
+				deferredTurnFoldDisposer = null;
+			}
+			deferredTurnFoldScheduled = false;
+		}
+		/** 诊断/测试：延迟定论是否仍在等待（modern 宿主定论后必须为 false）。 */
+		function getDeferredTurnFoldResolutionState() {
+			return { pending: deferredTurnFoldDisposer !== null, scheduled: deferredTurnFoldScheduled };
+		}
+		function resolveDeferredTurnFold(slotsSvc) {
+			// 槽位声明 markDirty 先于官方 inject 回调注册条目（核心先 markDirty 子槽声明、
+			// 后 notifyDeclaration）→ 零条目时"没有 turn-process"仍不是 legacy 证据，继续等。
+			var entries = null;
+			try { entries = slotsSvc && typeof slotsSvc.entries === "function" ? slotsSvc.entries("conversation.chat.node") : null; } catch (e) { entries = null; }
+			if (!entries || entries.length === 0) return false;
+			var caps = detectHostCapabilitiesAtRegistration(slotsSvc);
+			if (caps.turnFold === "unknown") return false;   // 槽位仍未声明 → 继续等
+			stopDeferredTurnFoldResolution();
+			adoptRegistrationCapabilities(caps);
+			if (caps.turnFold === "legacy") {
+				activateLegacyTurnEngine();
+				return true;
+			}
+			if (caps.turnFold !== "modern") return true;
+			registerModernTurnProcessRenderer(slotsSvc);
+			return true;
+		}
+		function startDeferredTurnFoldResolution(slotsSvc) {
+			if (deferredTurnFoldDisposer) return;   // 幂等（StrictMode/重复 apply）
+			var ctx = legacyStepContextRef;
+			if (!ctx || typeof ctx.on !== "function") return;   // 事件通道不可用 → 保持 unknown（FAIL OPEN：零注册）
+			var scheduled = false;
+			var check = function () {
+				scheduled = false;
+				deferredTurnFoldScheduled = false;
+				try { resolveDeferredTurnFold(slotsSvc); } catch (e) { /* 定论失败保持等待，不影响宿主 */ }
+			};
+			deferredTurnFoldDisposer = ctx.on("slots/changed", function (key) {
+				if (key !== "conversation.chat.node" || deferredTurnFoldDisposer === null) return;
+				if (scheduled) return;
+				scheduled = true;
+				deferredTurnFoldScheduled = true;
+				Promise.resolve().then(check);   // 等同一同步突变批（声明 + 官方 inject 回调注册）全部落地
+			});
+			// 同步首查：声明可能已经发生（apply 与官方 apply 的间隔内）。
+			check();
+		}
+		/** 测试/诊断：复位延迟定论状态（生产随插件生命周期自动清理）。 */
+		function resetDeferredTurnFoldResolution() {
+			stopDeferredTurnFoldResolution();
+		}
+		/** 现代 Turn 渲染器注册（直接定论与延迟定论共用同一条注册路径）。 */
+		function registerModernTurnProcessRenderer(slotsSvc) {
+			safeRegisterSlot(slotsSvc, {
+				name: "conversation.chat.node",
+				key: "turn-process",
+				priority: resolveSlotPriority(slotsSvc, "conversation.chat.node", function (o) { return o.key === "turn-process"; }, 'conversation.chat.node key "turn-process"'),
+				locale: "chat"
+			}, EnhancedTurnProcessView);
+		}
 		function adoptRegistrationCapabilities(caps) {
 			if ((caps.turnFold === "modern" || caps.turnFold === "legacy") && hostCapabilityState.turnFold === "unknown") {
 				hostCapabilityState.turnFold = caps.turnFold;
@@ -4862,13 +4957,15 @@ window.__ModuleLoader__.load({
 				// unknown（注册期的 Step/metrics）只能等渲染期 runtime probe，绝不猜 legacy。
 				if (caps.turnFold === "legacy") activateLegacyTurnEngine();
 				if (caps.stepFold === "legacy") activateLegacyStepEngine();   // 注册期恒 unknown → 不触发
+				if (caps.turnFold === "unknown") {
+					// bundle 装载时序竞态：官方 conversation 层还没声明 conversation.chat.node
+					// → 此刻"没有 turn-process"不是 legacy 证据。事件驱动等声明后补定论
+					//（现代宿主 → 注册 Turn 渲染器；0.1.1 → 激活 Legacy 引擎）。
+					startDeferredTurnFoldResolution(slotsSvc);
+					return;
+				}
 				if (caps.turnFold !== "modern") return;
-				safeRegisterSlot(slotsSvc, {
-					name: "conversation.chat.node",
-					key: "turn-process",
-					priority: resolveSlotPriority(slotsSvc, "conversation.chat.node", function (o) { return o.key === "turn-process"; }, 'conversation.chat.node key "turn-process"'),
-					locale: "chat"
-				}, EnhancedTurnProcessView);
+				registerModernTurnProcessRenderer(slotsSvc);
 			});
 			// 插件卸载/热重载：注销全部 Legacy Step shadow（不留 zombie registration）。
 			// cordis 的 dispose 回调在条目卸载时执行；返回值同时作为本 inject 的 dispose。
