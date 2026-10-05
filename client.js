@@ -898,20 +898,32 @@ window.__ModuleLoader__.load({
 				completedStepTopFaces.delete(sessionKey);
 			}
 		}
-		/** 卸载触发的 session 清理延迟到微任务：React（StrictMode 的 effect replay、
-		 *  同一 commit 内的结构性重挂载）会先 cleanup 再重新 mount 同一个 bridge——同步
-		 *  清理会把刚分配的牌面误清掉（同一组重挂载就换牌）。微任务里再确认"该 session
-		 *  确实仍然没有任何 bridge 实例"才真正清理。 */
-		function scheduleCompletedStepSessionCleanup(sessionKey) {
-			stepCardPendingCleanup.add(sessionKey);
+		/** 统一 session 活跃 gate：该 session 是否仍存在任何 Step presentation surface
+		 *  （modern 牌数桥 或 Legacy Step 面）。**唯一**的最终 cleanup 判据。 */
+		function stepPresentationSessionActive(sessionKey) {
+			return stepCardBridgeSessions.has(sessionKey) || legacyStepSurfaces.has(sessionKey);
+		}
+		/** 统一 session 最终清理（**唯一入口**）：两个 registry 都空时一次性清干净全部
+		 *  per-session Step presentation state——Legacy open store、Legacy 逐组 CSS、
+		 *  per-session 牌面分配/bag。全局共享资产（completedFaceSets / 变体样式 /
+		 *  Poker 池 / settings）绝不在这里清。 */
+		function cleanupStepPresentationSession(sessionKey) {
+			legacyStepOpenBySession.delete(sessionKey);
+			clearLegacyStepRulesForSession(sessionKey);
+			cleanupCompletedStepSession(sessionKey);
+		}
+		/** 统一 scheduler（**唯一** pending Set + 微任务复核）：无论最后消失的是
+		 *  Legacy surface 还是 StepCardBridge，只要两个 registry 都清空就统一清理——
+		 *  谁最后退出不影响结果。清理延迟到微任务：React（StrictMode 的 effect replay、
+		 *  同一 commit 内的结构性重挂载）会先 cleanup 再重新 mount——mount 路径会
+		 *  delete pending 取消清理，同步清会把刚分配的状态误清掉。 */
+		function scheduleStepPresentationSessionCleanup(sessionKey) {
+			stepPresentationPendingCleanup.add(sessionKey);
 			var run = function () {
-				if (!stepCardPendingCleanup.has(sessionKey)) return;
-				stepCardPendingCleanup.delete(sessionKey);
-				// Modern 桥与 Legacy Step 面共享同一份 per-session 牌面分配/bag——任何一面
-				// 仍然在场都不得清理（否则 hybrid 宿主上 modern 桥先卸载会误清 legacy 的牌面）。
-				if (stepCardBridgeSessions.has(sessionKey)) return;   // 又被挂载 → 不清理
-				if (legacyStepSurfaces.has(sessionKey)) return;       // legacy 面仍在场 → 不清理
-				cleanupCompletedStepSession(sessionKey);
+				if (!stepPresentationPendingCleanup.has(sessionKey)) return;
+				stepPresentationPendingCleanup.delete(sessionKey);
+				if (stepPresentationSessionActive(sessionKey)) return;   // 任一面又被挂载 → 不清理
+				cleanupStepPresentationSession(sessionKey);
 			};
 			if (typeof Promise === "function") Promise.resolve().then(run);
 			else run();
@@ -1185,7 +1197,7 @@ window.__ModuleLoader__.load({
 		var stepCardBridgeSessions = new Map();  // "<sessionKey>" → { instances: Map<id, {id, onLeader}>, leaderId }
 		var stepCardBridgeSeq = 0;
 		var stepCardRulesBySession = new Map();  // "<sessionKey>" → 该 session 的规则块
-		var stepCardPendingCleanup = new Set();  // sessionKey（卸载触发的缓存清理，微任务里确认）
+		var stepPresentationPendingCleanup = new Set();  // sessionKey（统一卸载清理待办：microtask 里复核双 registry）
 		/** 注册一个已挂载的 bridge 实例；若该 session 还没有 leader → 立即晋升它。 */
 		function registerStepCardBridge(sessionKey, instance) {
 			var session = stepCardBridgeSessions.get(sessionKey);
@@ -1195,7 +1207,7 @@ window.__ModuleLoader__.load({
 			}
 			if (session.instances.has(instance.id)) return;   // 幂等（StrictMode effect replay）
 			session.instances.set(instance.id, instance);
-			stepCardPendingCleanup.delete(sessionKey);        // 同 commit 内重挂载 → 取消待清理
+			stepPresentationPendingCleanup.delete(sessionKey);   // 同 commit 内重挂载 → 取消待清理
 			promoteStepCardLeader(sessionKey);
 			// 活跃会话数是输出策略的输入（tree-only 多会话 → 撤下 session-specific 覆盖），
 			// 挂载/卸载都要重算一次合并输出（内容比较幂等，无变化不写）。
@@ -1233,7 +1245,7 @@ window.__ModuleLoader__.load({
 			var hadChunk = stepCardRulesBySession.has(sessionKey);
 			clearStepCardRulesForSession(sessionKey);
 			if (!hadChunk) writeStepCardRulesMerged();
-			scheduleCompletedStepSessionCleanup(sessionKey);
+			scheduleStepPresentationSessionCleanup(sessionKey);   // 统一路径：与 legacy 面共用同一 gate
 		}
 		/** 某个 session 已挂载的 bridge 实例数（诊断/测试）。 */
 		function getStepCardBridgeInstanceCount(sessionId) {
@@ -1590,10 +1602,10 @@ window.__ModuleLoader__.load({
 
 		// ---- session 表面 registry（§49：最后一面卸载才清 session 状态） ----
 		var legacyStepSurfaces = new Map();      // sessionKey → 已挂载 legacy 面计数
-		var legacyStepPendingCleanup = new Set();
 		function legacyStepSurfaceMounted(sessionKey) {
 			legacyStepSurfaces.set(sessionKey, (legacyStepSurfaces.get(sessionKey) || 0) + 1);
-			legacyStepPendingCleanup.delete(sessionKey);   // 同 commit 内重挂载 → 取消待清理
+			// 同 commit 内重挂载 → 取消待清理（统一 pending Set，与 modern 桥同一来源）
+			stepPresentationPendingCleanup.delete(sessionKey);
 		}
 		function legacyStepSurfaceUnmounted(sessionKey) {
 			var n = (legacyStepSurfaces.get(sessionKey) || 0) - 1;
@@ -1602,18 +1614,9 @@ window.__ModuleLoader__.load({
 				return;
 			}
 			legacyStepSurfaces.delete(sessionKey);
-			// 清理延迟到微任务：StrictMode 的 effect replay 会 cleanup→再 mount，
-			// 同步清会误清（与 completed face 清理同款防护）。
-			legacyStepPendingCleanup.add(sessionKey);
-			var run = function () {
-				if (!legacyStepPendingCleanup.has(sessionKey)) return;
-				legacyStepPendingCleanup.delete(sessionKey);
-				if (legacyStepSurfaces.has(sessionKey) || stepCardBridgeSessions.has(sessionKey)) return;
-				legacyStepOpenBySession.delete(sessionKey);
-				cleanupCompletedStepSession(sessionKey);   // 共享 bag/分配（内部跨面门已由上方双查保证）
-			};
-			if (typeof Promise === "function") Promise.resolve().then(run);
-			else run();
+			// 统一路径：不在此直接清任何状态——交给统一 scheduler 在双 registry 都空时
+			// 一次性清理（谁最后退出不影响结果；StrictMode replay 由 pending 取消保护）。
+			scheduleStepPresentationSessionCleanup(sessionKey);
 		}
 
 		// ---- 委托渲染：官方 builtin renderer（安装期 preflight 捕获，render 零扫描）----
@@ -1647,33 +1650,51 @@ window.__ModuleLoader__.load({
 			}
 			return null;
 		}
-		/** shadow 槽位可用性 preflight：priority -1 未被任何条目占用（第三方插件优先）。 */
-		function legacyShadowSlotFree(slots, kind) {
+		/** 条目 priority 的统一读取（缺省 0；负数 = 比官方更高优先）。 */
+		function slotPriorityOf(entry) {
+			var p = entry && entry.options && entry.options.priority;
+			return typeof p === "number" ? p : 0;
+		}
+		/** ownership preflight（**lower priority wins** 语义）：本插件以 priority -1 注册，
+		 *  只有当该 cell **不存在任何 priority < 0 的既有条目** 时才可能成为 winner。
+		 *  仅检查"是否已有 -1"是不够的：第三方 -2/-3/-10 会赢过 -1，而 register 不会抛
+		 *  （priority 不同）→ 会注册出一个永远不渲染的 shadow。任何同 key 负 priority →
+		 *  整体让位（backend 不安装，官方/第三方现有 owner 保持不动）。 */
+		function legacyShadowOwnershipAvailable(slots, kind) {
 			if (!slots || typeof slots.entries !== "function") return false;
 			var entries = null;
 			try { entries = slots.entries("conversation.chat.node"); } catch (e) { return false; }
 			for (var i = 0; entries && i < entries.length; i++) {
 				var e = entries[i];
-				if (e && e.options && e.options.key === kind && (e.options.priority || 0) === -1) return false;
+				if (!e || !e.options || e.options.key !== kind) continue;
+				if (slotPriorityOf(e) < 0) return false;   // 任意负 priority 已占 → 本插件 -1 不可能赢
 			}
 			return true;
 		}
-		/** 原子校验：两个 shadow 是否都已真正成为各自 cell 的 active occupant
-		 *  （entriesOfSlot = 每个 cell 的最低优先级条目；无法验证的宿主回退信任 register 未抛）。 */
-		function legacyShadowsActive(slots) {
-			try {
-				if (!slots || typeof slots.entriesOfSlot !== "function") return true;
-				var winners = slots.entriesOfSlot("conversation.chat.node");
-				var seen = {};
-				for (var i = 0; winners && i < winners.length; i++) {
-					var e = winners[i];
-					if (!e || !e.options) continue;
-					if ((e.options.key === "assistant-step" || e.options.key === "tool-call") && (e.options.priority || 0) < 0) {
-						seen[e.options.key] = true;
-					}
+		/** post-register 原子校验：两个 cell 的 winning entry 必须**就是本次事务注册的**
+		 *  assistant/tool renderer——逐条要求 key 命中、priority **恰好 -1**、component
+		 *  === 本次事务的组件（宿主把 options 规范化为新对象，对象身份不可用——逐 tag 审计：
+	 *  SlotCore.register 以 spread 复制 options；因此用 key + priority + component 三元组，
+	 *  并已由 ownership preflight 保证不存在其他负 priority）。
+		 *  仅判断"negative winner"是不够的：第三方 -2 同样满足。
+		 *  entriesOfSlot 缺失 / 抛错 → 校验**失败**（目标宿主均提供该 API；原子 ownership
+		 *  的安全性优先于"尽量安装"→ FAIL OPEN 回滚）。 */
+		function legacyShadowsOwned(slots, records) {
+			if (!slots || typeof slots.entriesOfSlot !== "function") return false;
+			var winners = null;
+			try { winners = slots.entriesOfSlot("conversation.chat.node"); } catch (e) { return false; }
+			for (var i = 0; i < records.length; i++) {
+				var rec = records[i];
+				var match = null;
+				for (var j = 0; winners && j < winners.length; j++) {
+					var e = winners[j];
+					if (e && e.options && e.options.key === rec.options.key) { match = e; break; }
 				}
-				return !!seen["assistant-step"] && !!seen["tool-call"];
-			} catch (e) { return true; }
+				if (!match) return false;
+				if (slotPriorityOf(match) !== -1) return false;        // 必须恰好 -1（-2 的第三方 winner 必然失败）
+				if (match.component !== rec.component) return false;   // 必须是本次事务注册的 renderer
+			}
+			return true;
 		}
 		/** think-only / text-only 派生节点（旧 main 已验证的最小构造，非官方 UI 复制）：
 		 *  think+text 成员 → think 部分入段（可隐藏）、text 部分段外恒可见。 */
@@ -1956,10 +1977,10 @@ window.__ModuleLoader__.load({
 		// 保持 owner、内容原样显示，代价只是 Step 不折叠；绝不出现"内容消失 / 半套折叠"。
 		var legacyStepRegistration = null;   // { disposers: [], keys: [] } | null（仅 COMMIT 后非 null）
 		var legacyStepEngineInstalls = 0;    // 成功安装次数（activation attempts 之外的独立计数）
-		var legacyStepInstallStats = { attempts: 0, successes: 0, preflightFailures: 0, rollbacks: 0 };
+		var legacyStepInstallStats = { attempts: 0, successes: 0, preflightFailures: 0, rollbacks: 0, ownershipConflicts: 0, ownershipVerificationFailures: 0 };
 		/** 注册单个 shadow（priority 固定 -1，不参与让位；冲突由 preflight 整体让位）。
 		 *  返回 { ok, dispose }：ok 表示 register 未抛且回调同步执行（slot 已声明）；
-		 *  真正"成为 active occupant"由调用方 legacyShadowsActive 统一校验。
+		 *  真正"成为 active occupant"由调用方 legacyShadowsOwned 统一校验。
 		 *  （真机审计：ui-renderer 的 slots.inject 在 slot 已声明时同步执行回调、
 		 *  setup 失败同步抛出并停止该 injection——注册成败可同步观测。） */
 		function legacyRegisterShadow(key, component) {
@@ -1979,10 +2000,10 @@ window.__ModuleLoader__.load({
 						throw err;   // slot 已声明时：同步抛出 → inject 同步 rethrow → 外层统一 note + 事务捕获
 					}
 				});
-				return { ok: true, dispose: typeof dispose === "function" ? dispose : null };
+				return { ok: true, dispose: typeof dispose === "function" ? dispose : null, options: options, component: component };
 			} catch (err) {
 				noteSlotDegradation(options.name, key, err);
-				return { ok: false, dispose: null };
+				return { ok: false, dispose: null, options: options, component: component };
 			}
 		}
 		/** Legacy Step backend 安装（同步事务）：
@@ -2005,15 +2026,16 @@ window.__ModuleLoader__.load({
 				legacyWarnOnce("builtin-missing", "Legacy Step disabled: official builtin renderer not capturable (content stays on the original owner)");
 				return false;
 			}
-			// 2) shadow 槽位 preflight（第三方占 -1 → 整体让位，绝不半套）
-			if (!legacyShadowSlotFree(slots, "assistant-step") || !legacyShadowSlotFree(slots, "tool-call")) {
+			// 2) ownership preflight（**任意同 key priority < 0** → 本插件 -1 不可能成为
+			//    winner → 整体让位，绝不半套；官方/第三方现有 owner 保持不动）
+			if (!legacyShadowOwnershipAvailable(slots, "assistant-step") || !legacyShadowOwnershipAvailable(slots, "tool-call")) {
 				legacyStepInstallStats.preflightFailures += 1;
-				legacyWarnOnce("priority-conflict", "Legacy Step disabled: required shadow priority occupied by another plugin");
+				legacyStepInstallStats.ownershipConflicts += 1;
+				legacyWarnOnce("cell-owned", "Legacy Step disabled: required shadow cell already owned by another plugin");
 				return false;
 			}
 			// 3) 注册事务（任一失败 → 回滚全部）
-			var disposers = [];
-			var keys = [];
+			var records = [];
 			var defs = [
 				["assistant-step", LegacyStepAssistantView],
 				["tool-call", LegacyStepToolCallView],
@@ -2022,27 +2044,40 @@ window.__ModuleLoader__.load({
 			for (var i = 0; i < defs.length; i++) {
 				var res = legacyRegisterShadow(defs[i][0], defs[i][1]);
 				if (res && res.ok && res.dispose) {
-					disposers.push(res.dispose);
-					keys.push(defs[i][0]);
+					records.push(res);
 				} else {
 					failed = true;
 					break;
 				}
 			}
-			if (!failed && !legacyShadowsActive(slots)) failed = true;   // occupant 校验（延迟注册 → 同步不可证实 → 回滚）
-			if (failed) {
-				for (var d = 0; d < disposers.length; d++) {
-					try { disposers[d](); } catch (e) { /* 回滚失败不阻塞其余 */ }
+			// 4) winner 身份验证：两个 cell 的 winning entry 必须就是本次事务的条目
+			//    （key + priority 恰好 -1 + component 一致；entriesOfSlot 不可用 = 失败）
+			var ownershipVerified = false;
+			if (!failed) {
+				ownershipVerified = legacyShadowsOwned(slots, records);
+				if (!ownershipVerified) {
+					legacyStepInstallStats.ownershipVerificationFailures += 1;
+				}
+			}
+			if (failed || !ownershipVerified) {
+				for (var d = 0; d < records.length; d++) {
+					try { if (records[d].dispose) records[d].dispose(); } catch (e) { /* 回滚失败不阻塞其余 */ }
 				}
 				legacyStepInstallStats.rollbacks += 1;
 				legacyStepBuiltinRenderers = null;
 				legacyStepRegistration = null;   // 中途绝不让 registration 非 null 表示成功
-				legacyWarnOnce("partial-registration", "Legacy Step disabled: shadow registration failed (rolled back, official UI untouched)");
+				legacyWarnOnce("ownership-verify", "Legacy Step disabled: shadow ownership verification failed; rolled back");
 				return false;
 			}
-			// 4) COMMIT（builtin 引用与 registration 一起落定）
+			var disposers = [];
+			var keys = [];
+			for (var r = 0; r < records.length; r++) {
+				disposers.push(records[r].dispose);
+				keys.push(records[r].options.key);
+			}
+			// 5) COMMIT（builtin 引用与 registration 一起落定；ownershipVerified 由事务保证）
 			legacyStepBuiltinRenderers = { assistantStep: assistantBuiltin, toolCall: toolBuiltin };
-			legacyStepRegistration = { disposers: disposers, keys: keys };
+			legacyStepRegistration = { disposers: disposers, keys: keys, ownershipVerified: true };
 			legacyStepEngineInstalls += 1;
 			legacyStepInstallStats.successes += 1;
 			return true;
@@ -2071,6 +2106,8 @@ window.__ModuleLoader__.load({
 				builtinsCaptured: !!(legacyStepBuiltinRenderers
 					&& legacyStepBuiltinRenderers.assistantStep != null
 					&& legacyStepBuiltinRenderers.toolCall != null),
+				// installed ⇒ 两个 cell 的 winner 都经过身份验证确认是本插件的条目
+				ownershipVerified: legacyStepRegistration !== null && legacyStepRegistration.ownershipVerified === true,
 			};
 		}
 		/** 诊断/测试：安装期捕获的 builtin renderer 引用（primitive/var 导出会被快照，必须经 getter）。 */
@@ -2082,6 +2119,8 @@ window.__ModuleLoader__.load({
 				successes: legacyStepInstallStats.successes,
 				preflightFailures: legacyStepInstallStats.preflightFailures,
 				rollbacks: legacyStepInstallStats.rollbacks,
+				ownershipConflicts: legacyStepInstallStats.ownershipConflicts,
+				ownershipVerificationFailures: legacyStepInstallStats.ownershipVerificationFailures,
 				activationAttempts: legacyStepEngineActivations,
 				installs: legacyStepEngineInstalls,
 			};

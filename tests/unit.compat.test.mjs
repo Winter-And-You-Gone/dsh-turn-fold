@@ -131,7 +131,7 @@ describe('架构守卫（源码扫描）', () => {
     // 官方 renderer 代理 / slot 扫描 plumbing
     //（注：entriesOfSlot 曾属本列表——旧 main 用它自建 keyed 分发。现在的唯一合法
     //  用途是 Legacy Step **安装事务**的一次性 occupant 原子校验（见下方专属守卫：
-    //  只允许出现在 legacyShadowsActive 函数体内），render 路径仍被本列表与
+    //  只允许出现在 legacyShadowsOwned 函数体内），render 路径仍被本列表与
     //  「renderer 不得触碰 slots 注册表」守卫双重禁止。）
     'builtinComponent',
     'specDynamic',

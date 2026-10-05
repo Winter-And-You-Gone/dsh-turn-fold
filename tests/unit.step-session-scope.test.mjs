@@ -248,11 +248,11 @@ describe('Session 作用域 F/G/H：零回归', () => {
   })
   it('H：pending cleanup 是 Set（特殊 key 不会打到原型上）', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-    assert.ok(src.includes('var stepCardPendingCleanup = new Set()'), 'pending cleanup 必须是 Set')
+    assert.ok(src.includes('var stepPresentationPendingCleanup = new Set()'), 'pending cleanup 必须是 Set')
     assert.ok(!/stepCardPendingCleanup\[/.test(src), '不得再用对象下标访问')
-    assert.equal(typeof T.stepCardPendingCleanup.add, 'function', '导出的是 Set 实例')
-    T.scheduleCompletedStepSessionCleanup('__proto__')
-    assert.equal(T.stepCardPendingCleanup.has('__proto__'), true)
+    assert.equal(typeof T.stepPresentationPendingCleanup.add, 'function', '导出的是 Set 实例')
+    T.scheduleStepPresentationSessionCleanup('__proto__')
+    assert.equal(T.stepPresentationPendingCleanup.has('__proto__'), true)
   })
   it('I：StrictMode 下同名 key 双 session 的作用域规则与 leader 都正常', () => {
     seedBag('sess-A', ['spade'])

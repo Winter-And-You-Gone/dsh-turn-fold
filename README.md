@@ -488,16 +488,31 @@ LegacyStepHeader 是两种不同的 DOM，共用同一套 Poker 资产**——0.
 安装是**同步事务**——① 在注册 shadow **之前** preflight 捕获两个官方 builtin
 renderer（`entries()` 的 priority-0 条目；真机审计确认 0.1.2/0.1.5/0.1.6/0.2.0 的
 `StoredEntry` 都直接暴露 `component`；ui-renderer 的 `slots.inject` 在 slot 已声明时
-**同步执行回调并同步抛出 setup 失败**——注册成败可同步观测）；② preflight 两个 shadow
-槽位（priority -1 任一被第三方占用 → **整体让位**，绝不半套）；③ 依次注册，任一失败或
-occupant 校验不通过 → **回滚已注册的全部**；④ 全部成功才 COMMIT（builtin 引用与
-registration 一起落定，`installed === true` 必然意味着 keys 恰好两个）。因此：
-**"无法安全捕获两个 builtin / 无法同时取得两个 shadow 槽位 → 整个 backend 不安装，
-官方 priority-0 renderer 保持 owner、内容原样显示，代价只是 Step 不折叠"**——绝不出现
-"内容消失 / 半套折叠 / 返回 null"。render 路径只读**安装期捕获的 builtin 引用**，
-**不再扫描 slots.entries()**（源码守卫 + 调用计数测试锁死）；安装期降级只警告一次
-（builtin 缺失 / 优先级冲突 / 半套回滚），激活计数（attempts）与安装成功数
-（`getLegacyStepInstallStats().installs/successes`）分开记账。
+**同步执行回调并同步抛出 setup 失败**——注册成败可同步观测）；② **ownership preflight**：
+插件的 shadow 固定以 `priority: -1` 注册，而官方 keyed slot 是 **lower priority wins**
+（条目按 priority 升序，每个 cell 的首个 live 条目渲染）——因此只有当该 cell
+**不存在任何 `priority < 0` 的既有条目**时才可能成为 winner。preflight 检查的是
+**任意负 priority**（不是"是否已有 -1"）：第三方 `-2/-3/-10` 会赢过 `-1`、且 register
+不会抛（priority 不同）——只查 -1 会注册出一个永远不渲染的 shadow 并错误 COMMIT 成
+半套。任何同 key 负 priority → **整个 backend 让位**（绝不改成 -100/-999 去抢；也不
+走"让位到 +1"——+1 赢不过官方 0，只会造成半套）；③ 依次注册两个 shadow；④ **winner
+身份验证**：`entriesOfSlot()`（每个 cell 的 winning entry）中 assistant-step 与
+tool-call 的 winner 必须**就是本次事务注册的条目**——`key` 命中 + `priority` **恰好
+-1** + `component === 本次事务的组件`（宿主把 `options` 规范化为新对象、对象身份不可用，
+故用三元组；仅判断"negative winner"不够——第三方 -2 同样满足）；`entriesOfSlot`
+缺失/抛错 → 验证失败（目标宿主 0.1.2/0.1.5/0.1.6 均有该 API；不可验证 = 不安装）。
+任一步失败（含验证失败）→ **回滚已注册的全部**、registration/builtins 清空；全部通过
+才 COMMIT（builtin 引用与 registration 一起落定，`getLegacyStepRegistrationState()`
+保证 `installed === true` ⇒ `ownershipVerified === true` ⇒ keys 恰好两个）。
+因此：**"无法安全捕获两个 builtin / 无法同时取得两个 shadow cell 的 ownership → 整个
+backend 不安装，官方（或第三方）现有 owner 保持不动、内容原样显示，代价只是 Step 不
+折叠"**——绝不出现"内容消失 / 半套折叠 / 返回 null"。**BOTH CELLS OWNED BY THIS
+PLUGIN, OR ZERO LEGACY SHADOWS REMAIN**——不是"both registered"，而是"both actually
+winning"。render 路径只读**安装期捕获的 builtin 引用**，**不再扫描 slots.entries()**
+（源码守卫 + 调用计数测试锁死）；安装期降级警告各恰一次且区分类型（builtin 缺失 /
+cell 已被占用 / ownership 验证失败回滚），counters 分开记账
+（`getLegacyStepInstallStats()`：attempts / successes / preflightFailures /
+ownershipConflicts / ownershipVerificationFailures / rollbacks + installs）。
 
 **Hook lifecycle（架构约束）**：Legacy member surface 的挂载登记由**无条件 Hook**
 `useLegacyStepSurface(sessionKey, active)` 管理——两个 renderer 在每一次 render 里都
@@ -505,6 +520,19 @@ registration 一起落定，`installed === true` 必然意味着 keys 恰好两�
 从空到 reasoning、工具的排除/恢复）**绝不改变 Hook 顺序**；渲染路径内不再有任何直写
 `useEffect`（源码守卫锁死）。surface registry 计数与真实挂载的成员数严格一致
 （StrictMode effect replay 后恰好 1，卸载回 0，无重复 mount / 负计数 / zombie session）。
+
+**Unified session cleanup（单一 gate）**：Modern 牌数桥（`stepCardBridgeSessions`）与
+Legacy Step 面（`legacyStepSurfaces`）共享**一个** session presentation cleanup gate：
+`stepPresentationSessionActive(sessionKey)` = 任一 registry 仍在场即活跃；两条卸载路径
+（`unregisterStepCardBridge` 与 `legacyStepSurfaceUnmounted`）都只调用**同一个**
+`scheduleStepPresentationSessionCleanup`（唯一的 `stepPresentationPendingCleanup` Set +
+微任务复核；mount 路径 delete pending 取消清理，StrictMode/同 commit 重挂载不误清）。
+两个 registry 都清空后，**唯一**的 `cleanupStepPresentationSession(sessionKey)` 一次性
+清干净：Legacy open store、Legacy 逐组 CSS（含 `__css__` chunk）、per-session
+completed 牌面分配/bag——**谁最后退出不影响结果**（此前 legacy 先退、bridge 后退时
+modern 清理只清 face/bag，Legacy open state 会残留）。全局共享资产（completedFaceSets /
+变体样式元素 / Poker 池 / settings）绝不在这里清。现代 `stepCardRulesBySession` 仍由
+bridge 的卸载路径负责（统一 helper 不重复清）。
 
 Legacy 层的语义最小化：rich title（编辑 diff 文案 / 文件名 / failure 聚合 / 自动跟随
 think）与旧 Turn 折叠算法（含旧 metrics）**明确不移植**；Legacy 层不计算任何指标
