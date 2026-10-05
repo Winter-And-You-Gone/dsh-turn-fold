@@ -438,6 +438,41 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 | 0.1.7-rc.2 | modern | 新形状 | modern | reactive | official（`data-conversation-session`，commit b7ac0ade10） |
 | 0.2.0-rc.2 | modern | 新形状 | modern | reactive | official |
 
+### Live-host acceptance 记录（2026-10-05，engines 未放开的依据）
+
+本轮把矩阵从"契约 harness"推进到**真实宿主**：用各 tag 的真实 runtime（官方 tag 源码构建，
+或官方 npm 发布包）在隔离 `DSH_HOME` 里启动 Web 宿主、用官方插件机制装入本插件、跑真实
+turn 并读插件自身的内部状态。结论（**证据等级逐项标注**）：
+
+| 版本 | 宿主启动 | 插件装载 | 关键实测 | 证据等级 |
+| --- | --- | --- | --- | --- |
+| 0.1.1-rc.2 | ✅ 官方 tag 源码自建（`git archive` + 该 tag 的 pnpm 11.7.0/lockfile；npm 发布包**无法**启动 web，见下） | ✅（`/plugins/@winteries/dsh-turn-fold/client.js` 被真实加载） | 能力定论实测为 `turn=legacy, step=legacy, metrics=fallback`（真机 console 实证）；3 键 backend 安装成功后**自行 teardown**（`degraded=ownership-lost`），折叠未生效 | **LIVE-HOST VERIFIED（失败）** |
+| 0.1.2-rc.1 / 0.1.5-rc.3 | ⛔ npm 发布包 `app-boot` 仍调用 `hmr.registerConfig`，而 npm 的 `cordis-plugin-hmr@1.0.19` 无此 API → `dsh web` 启动即崩（源码自建可绕开，未跑完整矩阵） | — | 官方 tool-call 入口形态与 0.1.1 相同（`children: {tool.call.toolview}` + `inject: hostDescription`）→ 同一条 blocker 适用 | **HOST BOOT BLOCKED（npm）+ 源码审计** |
+| 0.1.6-alpha.2 / 0.1.7-rc.1 / 0.1.7-rc.2 | 发布包 `app-boot` 已不再调用该 API（源码核实），未跑完整真机 | — | 0.1.6 仍是 hybrid（Legacy Step → 同一 blocker）；0.1.7+ 是纯现代路径 | **SOURCE-AUDITED ONLY**（本轮未真机） |
+| 0.2.0-rc.2 | ✅ 官方 npm 发布包真机启动（隔离 home + 官方 `dsh plugin add` 装载） | ✅ 客户端 bundle 被加载、插件 apply 生效（三个插件样式表在 head） | 本轮未能完成 Turn Bar 接管观测：调试过程中 profile 状态被改动后宿主不再提供插件 client 模块（`/plugins/...` 404），未及在干净 profile 上复跑 → **不作通过结论** | **LIVE-HOST VERIFIED（启动+装载）/ Turn 接管 INCONCLUSIVE** |
+
+**本轮发现的阻塞项（plugin bug，已在真机定位到具体 API 语义）**：
+
+1. **官方 `tool-call` 渲染器不可被 shadow 委托**：官方入口注册时带了
+   `children: { 'tool.call.toolview': … }`（子槽声明**按 key 全局唯一**，同一 key 二次声明直接抛错）
+   与 `inject: () => ({ hooks: { hostDescription } })`（entry 级注入面）。插件 shadow 既无法
+   复制 `children`（会与官方条目撞声明），也无法拿到该子槽的授权绑定
+   （`renderSlot` 绑定按 entry 生成，调用未声明 key 抛 `SlotOwnershipError`），于是委托渲染官方
+   `ToolCallTree` 时官方组件拿不到 `useHostDescription` / `renderSlot` → 组件抛错 → 宿主把
+   **本插件的** shadow 条目 abdicate → 插件的同步 backstop 按设计整体 teardown
+   （真机日志：`slot entry crashed in 'conversation.chat.node': TypeError: useHostDescription is not a function`
+   → `[dsh-turn-fold] Legacy Step disabled: runtime shadow ownership was lost; backend torn down`）。
+   该形态在 0.1.1 ~ 0.2.0 的官方源码里一致存在 → **Legacy Step / Full Legacy 的"3 键委托"方案在
+   真实旧宿主上不成立**，需要重新设计（详见下轮待办）。
+2. **npm 发布包 0.1.1-rc.2 / 0.1.2-rc.1 / 0.1.5-rc.3 不能启动 web profile**：官方 `dsh-app-boot`
+   在这三代里通过 `hmr.registerConfig` 监听用户 patch 层，而 npm 上 `@deepseek-ai/cordis-plugin-hmr@1.0.19`
+   无该 API（tag 内是 `vendor/hmr` 工作区包，未随 npm 发布）→ 现象为
+   `TypeError: hmr.registerConfig is not a function`。这属于**宿主自举阻塞**，不是插件问题；
+   以真实 tag 源码自建（沿用该 tag 的 lockfile + pnpm 11.7.0）可正常运行。
+
+因此本轮**不放开 `engines.dsh`**：0.1.1 的 live 结论是失败，0.1.2/0.1.5 连官方 runtime 都起不来，
+0.1.6+ 未真机验证。当前区间保持 `>=0.1.7-rc.1 <=0.2.0-rc.2`。
+
 ### 诊断输出：probing → resolved 两行制
 
 注册期**不下最终结论**（modern + unknown 不是 mixed）：
