@@ -1655,21 +1655,27 @@ window.__ModuleLoader__.load({
 			var p = entry && entry.options && entry.options.priority;
 			return typeof p === "number" ? p : 0;
 		}
-		/** ownership preflight（**lower priority wins** 语义）：本插件以 priority -1 注册，
-		 *  只有当该 cell **不存在任何 priority < 0 的既有条目** 时才可能成为 winner。
-		 *  仅检查"是否已有 -1"是不够的：第三方 -2/-3/-10 会赢过 -1，而 register 不会抛
-		 *  （priority 不同）→ 会注册出一个永远不渲染的 shadow。任何同 key 负 priority →
-		 *  整体让位（backend 不安装，官方/第三方现有 owner 保持不动）。 */
+		/** ownership preflight（**lower priority wins** 语义，以 **live winner 投影**为准）：
+		 *  本插件以 priority -1 注册，只有该 cell 的**当前 live winner** 之 priority >= 0
+		 *  （官方 0 / 更低优先的第三方）时才可能成为新 winner。
+		 *  · 只看"是否已有 -1"不够：第三方 -2/-3/-10 会赢过 -1 且 register 不抛 → 注册出
+		 *    一个永不渲染的 shadow（上一轮修复）；
+		 *  · 只看 raw entries 也不够（本轮修复）：abdicated 的 stale 条目仍留在 raw ledger
+		 *    但已退出 winner 投影——按 raw 判断会把"其实可以安全接管"的情况错误拒绝。
+		 *  因此以 entriesOfSlot（每个 cell 的 live winner、排除 abdicated）判定：
+		 *    winner 缺席（异常形状）→ 允许尝试（post-register 身份验证兜底）；
+		 *    winner priority >= 0 → 可成 owner；winner priority < 0 → 整体让位。
+		 *  entriesOfSlot 不可用/抛错 → 不可判定 → 不安装（FAIL OPEN，与验证口径一致）。 */
 		function legacyShadowOwnershipAvailable(slots, kind) {
-			if (!slots || typeof slots.entries !== "function") return false;
-			var entries = null;
-			try { entries = slots.entries("conversation.chat.node"); } catch (e) { return false; }
-			for (var i = 0; entries && i < entries.length; i++) {
-				var e = entries[i];
+			if (!slots || typeof slots.entriesOfSlot !== "function") return false;
+			var winners = null;
+			try { winners = slots.entriesOfSlot("conversation.chat.node"); } catch (e) { return false; }
+			for (var i = 0; winners && i < winners.length; i++) {
+				var e = winners[i];
 				if (!e || !e.options || e.options.key !== kind) continue;
-				if (slotPriorityOf(e) < 0) return false;   // 任意负 priority 已占 → 本插件 -1 不可能赢
+				return slotPriorityOf(e) >= 0;   // live winner 非负 → 本插件 -1 可赢
 			}
-			return true;
+			return true;   // 该 cell 当前无 live winner → 允许尝试
 		}
 		/** post-register 原子校验：两个 cell 的 winning entry 必须**就是本次事务注册的**
 		 *  assistant/tool renderer——逐条要求 key 命中、priority **恰好 -1**、component
@@ -1693,6 +1699,86 @@ window.__ModuleLoader__.load({
 				if (!match) return false;
 				if (slotPriorityOf(match) !== -1) return false;        // 必须恰好 -1（-2 的第三方 winner 必然失败）
 				if (match.component !== rec.component) return false;   // 必须是本次事务注册的 renderer
+			}
+			return true;
+		}
+		// ---- runtime ownership liveness（安装成功后持续持有 both cells 的保证） ----
+		// 官方语义（逐 tag 源码审计 0.1.2/0.1.5/0.1.6）：
+		//  · slots.subscribe(key, fn)：**microtask-batched**（markDirty → queueMicrotask flush）；
+		//  · slots.onEntryError(fn)：**同步**触发，且在 abdicating crash 的
+		//    abdication mutation（abdicated.add + markDirty）**之后**——callback 内重读
+		//    entriesOfSlot 已能看到新 winner（可做同步 fast-path teardown）；
+		//  · abdicated entry 仍留在 raw entries()（registration 未撤销），但不再出现在
+		//    entriesOfSlot() 的 winner 投影中 ⇒ **当前 ownership 只以 entriesOfSlot 为准**。
+		var legacyStepOwnershipTeardownInProgress = false;   // 防 teardown 重入（dispose 自身会 mutation registry）
+		var legacyStepDegradedReason = null;                 // 运行期降级原因（ownership-lost 后不再自动安装）
+		/** 当前注册的 registration 是否仍在运行时保持两个 cell 的 ownership
+		 *  （与 install 时同一套严格三元组判据；未安装时视为有效）。 */
+		function legacyStepOwnershipStillValid() {
+			var reg = legacyStepRegistration;
+			if (!reg) return true;
+			return legacyShadowsOwned(legacyStepSlotsRef, reg.records);
+		}
+		/** runtime liveness 检查（subscribe 微任务批次 / onEntryError 同步 fast-path 共用）。 */
+		function legacyStepOwnershipCheck() {
+			if (!legacyStepRegistration) return;                 // 未安装（含已 teardown）→ no-op（天然去重）
+			if (legacyStepOwnershipTeardownInProgress) return;   // dispose 自身引发的 mutation → 不重入
+			if (legacyStepOwnershipStillValid()) return;         // 无关 key / 非 winner 变化 → 保持
+			teardownLegacyStepEngine("ownership-lost");
+		}
+		/** 安装 ownership monitor（只能属于 successful Legacy backend；
+		 *  Modern 宿主 / preflight 失败路径永不注册，见源码守卫）。
+		 *  返回 disposers 数组；任一步不可用/抛错 → 返回 null（调用方回滚 shadows → FAIL OPEN）。 */
+		function installLegacyStepOwnershipMonitor(slots) {
+			var disposers = [];
+			try {
+				if (typeof slots.subscribe !== "function" || typeof slots.onEntryError !== "function") return null;
+				var sub = slots.subscribe("conversation.chat.node", legacyStepOwnershipCheck);
+				if (typeof sub !== "function") return null;
+				disposers.push(sub);
+				var errSub = slots.onEntryError(function (key) {
+					if (key !== "conversation.chat.node") return;
+					legacyStepOwnershipCheck();   // 同步 fast-path：abdication mutation 已完成
+				});
+				if (typeof errSub !== "function") {
+					for (var i = 0; i < disposers.length; i++) { try { disposers[i](); } catch (e) { /* 忽略 */ } }
+					return null;
+				}
+				disposers.push(errSub);
+				return disposers;
+			} catch (e) {
+				for (var j = 0; j < disposers.length; j++) { try { disposers[j](); } catch (e2) { /* 忽略 */ } }
+				return null;
+			}
+		}
+		/** **统一** teardown（唯一底层入口）：插件 dispose 与运行期 ownership 丢失走同一条路径。
+		 *  顺序：capture registration → 置重入 guard → **先注销 monitor**（否则 dispose shadow
+		 *  引发的 registry mutation 会在 teardown 中再进入）→ dispose shadows → 清
+		 *  registration / builtins → 清 guard。**不动**任何 session presentation state
+		 *  （open store / face / CSS）——那是统一 session cleanup 的职责；运行期丢失后
+		 *  当前插件生命周期内**不自动重新安装**（避免 ownership oscillation）。 */
+		function teardownLegacyStepEngine(reason) {
+			if (legacyStepOwnershipTeardownInProgress) return false;   // 防重入
+			var reg = legacyStepRegistration;
+			if (!reg) return false;                                    // 幂等 no-op
+			legacyStepOwnershipTeardownInProgress = true;
+			try {
+				for (var m = 0; m < reg.monitorDisposers.length; m++) {
+					try { reg.monitorDisposers[m](); } catch (e) { /* 单个注销失败不影响其余 */ }
+				}
+				for (var i = 0; i < reg.disposers.length; i++) {
+					try { reg.disposers[i](); } catch (e) { /* 单个注销失败不影响其余 */ }
+				}
+				legacyStepRegistration = null;
+				legacyStepBuiltinRenderers = null;
+				if (reason === "ownership-lost") {
+					legacyStepInstallStats.runtimeOwnershipLosses += 1;
+					legacyStepInstallStats.runtimeTeardowns += 1;
+					legacyStepDegradedReason = "ownership-lost";
+					legacyWarnOnce("ownership-lost", "Legacy Step disabled: runtime shadow ownership was lost; backend torn down");
+				}
+			} finally {
+				legacyStepOwnershipTeardownInProgress = false;
 			}
 			return true;
 		}
@@ -1977,7 +2063,7 @@ window.__ModuleLoader__.load({
 		// 保持 owner、内容原样显示，代价只是 Step 不折叠；绝不出现"内容消失 / 半套折叠"。
 		var legacyStepRegistration = null;   // { disposers: [], keys: [] } | null（仅 COMMIT 后非 null）
 		var legacyStepEngineInstalls = 0;    // 成功安装次数（activation attempts 之外的独立计数）
-		var legacyStepInstallStats = { attempts: 0, successes: 0, preflightFailures: 0, rollbacks: 0, ownershipConflicts: 0, ownershipVerificationFailures: 0 };
+		var legacyStepInstallStats = { attempts: 0, successes: 0, preflightFailures: 0, rollbacks: 0, ownershipConflicts: 0, ownershipVerificationFailures: 0, runtimeOwnershipLosses: 0, runtimeTeardowns: 0 };
 		/** 注册单个 shadow（priority 固定 -1，不参与让位；冲突由 preflight 整体让位）。
 		 *  返回 { ok, dispose }：ok 表示 register 未抛且回调同步执行（slot 已声明）；
 		 *  真正"成为 active occupant"由调用方 legacyShadowsOwned 统一校验。
@@ -2069,30 +2155,44 @@ window.__ModuleLoader__.load({
 				legacyWarnOnce("ownership-verify", "Legacy Step disabled: shadow ownership verification failed; rolled back");
 				return false;
 			}
+			// 5) 安装 ownership monitor（在 COMMIT 之前；不可用/抛错 → 回滚 shadows）
+			var monitorDisposers = installLegacyStepOwnershipMonitor(slots);
+			if (!monitorDisposers) {
+				for (var md = 0; md < records.length; md++) {
+					try { if (records[md].dispose) records[md].dispose(); } catch (e) { /* 回滚失败不阻塞其余 */ }
+				}
+				legacyStepInstallStats.rollbacks += 1;
+				legacyStepBuiltinRenderers = null;
+				legacyStepRegistration = null;
+				legacyWarnOnce("monitor-unavailable", "Legacy Step disabled: ownership monitor unavailable (subscription API missing); rolled back");
+				return false;
+			}
 			var disposers = [];
 			var keys = [];
+			var ownershipRecords = [];
 			for (var r = 0; r < records.length; r++) {
 				disposers.push(records[r].dispose);
 				keys.push(records[r].options.key);
+				ownershipRecords.push({ options: records[r].options, component: records[r].component });
 			}
-			// 5) COMMIT（builtin 引用与 registration 一起落定；ownershipVerified 由事务保证）
+			// 6) COMMIT（builtin 引用 + registration + monitor 一起落定；
+			//    installed ⇒ ownershipVerified ⇒ monitorInstalled ⇒ keys 恰好两个）
 			legacyStepBuiltinRenderers = { assistantStep: assistantBuiltin, toolCall: toolBuiltin };
-			legacyStepRegistration = { disposers: disposers, keys: keys, ownershipVerified: true };
+			legacyStepRegistration = {
+				disposers: disposers,
+				monitorDisposers: monitorDisposers,
+				keys: keys,
+				records: ownershipRecords,
+				ownershipVerified: true,
+			};
 			legacyStepEngineInstalls += 1;
 			legacyStepInstallStats.successes += 1;
 			return true;
 		}
-		/** 注销全部 Legacy Step shadow 条目（插件卸载/热重载；不留 zombie registration）。
-		 *  同时清安装期 builtin 捕获引用；**不动** completedFaceSets / 共享 Poker 资产。
-		 *  返回是否真的注销了一套。 */
+		/** 插件卸载/热重载：走统一 teardown（monitor 先注销、再 shadows、清引用）。
+		 *  运行期 ownership 已丢失时安全 no-op（registration 已 null）。 */
 		function disposeLegacyStepEngine() {
-			if (!legacyStepRegistration) return false;
-			for (var i = 0; i < legacyStepRegistration.disposers.length; i++) {
-				try { legacyStepRegistration.disposers[i](); } catch (e) { /* 单个注销失败不影响其余 */ }
-			}
-			legacyStepRegistration = null;
-			legacyStepBuiltinRenderers = null;
-			return true;
+			return teardownLegacyStepEngine("plugin-dispose");
 		}
 		/** 诊断/测试：当前已安装的 legacy shadow keys（Modern 宿主必须为空）。 */
 		function getLegacyStepRegistrationKeys() {
@@ -2108,6 +2208,11 @@ window.__ModuleLoader__.load({
 					&& legacyStepBuiltinRenderers.toolCall != null),
 				// installed ⇒ 两个 cell 的 winner 都经过身份验证确认是本插件的条目
 				ownershipVerified: legacyStepRegistration !== null && legacyStepRegistration.ownershipVerified === true,
+				// 运行期 monitor（subscribe + onEntryError）随 successful install 一起存在
+				monitorInstalled: legacyStepRegistration !== null && legacyStepRegistration.monitorDisposers.length === 2,
+				// 运行期 ownership 丢失后的降级状态（backend 关闭、capability 仍是 legacy）
+				degraded: legacyStepDegradedReason !== null,
+				degradedReason: legacyStepDegradedReason,
 			};
 		}
 		/** 诊断/测试：安装期捕获的 builtin renderer 引用（primitive/var 导出会被快照，必须经 getter）。 */
@@ -2121,6 +2226,8 @@ window.__ModuleLoader__.load({
 				rollbacks: legacyStepInstallStats.rollbacks,
 				ownershipConflicts: legacyStepInstallStats.ownershipConflicts,
 				ownershipVerificationFailures: legacyStepInstallStats.ownershipVerificationFailures,
+				runtimeOwnershipLosses: legacyStepInstallStats.runtimeOwnershipLosses,
+				runtimeTeardowns: legacyStepInstallStats.runtimeTeardowns,
 				activationAttempts: legacyStepEngineActivations,
 				installs: legacyStepEngineInstalls,
 			};

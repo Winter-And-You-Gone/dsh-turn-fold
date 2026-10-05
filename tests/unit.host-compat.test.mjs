@@ -40,6 +40,9 @@ function makeSlots(probe) {
   return {
     registered,
     entries: (slotName) => (slotName === 'conversation.view' ? entriesOfView(slotName) : entriesFor(slotName)),
+    // Legacy backend 的 runtime ownership monitor 需要这两个 API（目标宿主 0.1.2+ 均有）
+    subscribe: (_key, fn) => { void fn; return () => {} },
+    onEntryError: (fn) => { void fn; return () => {} },
     inject: (_slot, fn) => { fn(); return () => {} },
     register: (options, component) => { registered.push({ options, component }); return () => {}; },
   }

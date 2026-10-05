@@ -49,6 +49,8 @@ function makeSlotsService() {
       for (const e of sorted) { if (seen[e.options.key]) continue; seen[e.options.key] = true; winners.push(e) }
       return winners
     },
+    subscribe: (_key, fn) => { void fn; return () => {} },
+    onEntryError: (fn) => { void fn; return () => {} },
     inject: (_slot, fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
     register: (options, component) => {
       registered.push({ options, component })
@@ -481,6 +483,8 @@ describe('Legacy Step E：原子安装事务', () => {
         entriesCalls += 1
         return official.concat(registered)
       },
+      subscribe: (_key, fn) => { void fn; return () => {} },
+      onEntryError: (fn) => { void fn; return () => {} },
       inject: (_slot, fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
       register: (options, component) => {
         registerCalls.push(options.key)
@@ -502,7 +506,7 @@ describe('Legacy Step E：原子安装事务', () => {
     const statsBefore = T.getLegacyStepInstallStats()
     assert.equal(T.activateLegacyStepEngine(), true)
     const st = T.getLegacyStepRegistrationState()
-    assert.deepEqual(st, { installed: true, keys: ['assistant-step', 'tool-call'], builtinsCaptured: true, ownershipVerified: true })
+    assert.deepEqual(st, { installed: true, keys: ['assistant-step', 'tool-call'], builtinsCaptured: true, ownershipVerified: true, monitorInstalled: true, degraded: false, degradedReason: null })
     assert.equal(slots.registered.length, 2)
     const stats = T.getLegacyStepInstallStats()
     assert.equal(stats.attempts - statsBefore.attempts, 1)
@@ -514,7 +518,7 @@ describe('Legacy Step E：原子安装事务', () => {
     applyWith(slots)
     const before = T.getLegacyStepInstallStats()
     assert.equal(T.activateLegacyStepEngine(), false)
-    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false })
+    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false, monitorInstalled: false, degraded: false, degradedReason: null })
     assert.equal(slots.registered.length, 0, '一个 shadow 都不注册（含 tool-call）')
     assert.equal(T.getLegacyStepInstallStats().preflightFailures - before.preflightFailures, 1)
   })
@@ -547,7 +551,7 @@ describe('Legacy Step E：原子安装事务', () => {
     assert.equal(T.activateLegacyStepEngine(), false)
     assert.deepEqual(slots.registerCalls, ['assistant-step', 'tool-call'], '先 assistant 后 tool，tool 失败')
     assert.equal(slots.registered.length, 0, 'assistant 已被回滚（无半套）')
-    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false })
+    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false, monitorInstalled: false, degraded: false, degradedReason: null })
     assert.equal(T.getLegacyStepInstallStats().rollbacks - before.rollbacks, 1)
     assert.equal(slots.entries('conversation.chat.node').filter((e) => (e.options.priority || 0) === 0).length, 2, '官方 builtin entries 原样')
   })
@@ -564,7 +568,7 @@ describe('Legacy Step E：原子安装事务', () => {
     applyWith(slots)
     assert.equal(T.activateLegacyStepEngine(), true)
     assert.equal(T.disposeLegacyStepEngine(), true)
-    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false })
+    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false, monitorInstalled: false, degraded: false, degradedReason: null })
     assert.equal(slots.registered.length, 0)
     assert.equal(T.activateLegacyStepEngine(), true, '重新安装成功')
     assert.equal(T.getLegacyStepRegistrationState().builtinsCaptured, true)
@@ -661,6 +665,8 @@ describe('Legacy Step F：Hook 生命周期', () => {
         for (const e of sorted) { if (seen[e.options.key]) continue; seen[e.options.key] = true; winners.push(e) }
         return winners
       },
+      subscribe: (_key, fn) => { void fn; return () => {} },
+      onEntryError: (fn) => { void fn; return () => {} },
       inject: (_slot, fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
       register: (options, component) => {
         slots.registered.push({ options, component })
@@ -844,21 +850,30 @@ describe('Legacy Step F：Hook 生命周期', () => {
       assert.equal(T.legacyStepOpenBySession.has(SESSION), false, '微任务后 open store 清理')
     } finally { c.remove(); dispose() }
   })
-  it('F8 源码守卫：entriesOfSlot 只允许出现在安装事务校验（legacyShadowsOwned）内', () => {
+  it('F8 源码守卫：entriesOfSlot 只允许出现在 ownership 判定族（preflight/verifier）内，render 路径零扫描', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-    // 只统计代码（剥离块注释与行注释）：文档注释里提到旧标识符是允许的
     const stripComments = (text) => text
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .split('\n').map((l) => l.split('//')[0]).join('\n')
     const code = stripComments(src)
-    const fnStart = code.indexOf('function legacyShadowsOwned(')
-    assert.ok(fnStart > 0, 'legacyShadowsOwned 必须在')
-    let fnEnd = code.indexOf('\n\t\tfunction ', fnStart + 1)
-    if (fnEnd < 0) fnEnd = code.length
+    const preStart = code.indexOf('function legacyShadowOwnershipAvailable(')
+    const verStart = code.indexOf('function legacyShadowsOwned(')
+    assert.ok(preStart > 0 && verStart > preStart, 'ownership 判定族必须在')
+    let verEnd = code.indexOf('\n\t\t// ---- runtime ownership liveness', verStart)
+    if (verEnd < 0) verEnd = code.indexOf('\n\t\tfunction legacyThinkOnlyNode(', verStart)
+    const ownershipFamily = code.slice(preStart, verEnd)
     const total = code.split('entriesOfSlot').length - 1
-    const inside = code.slice(fnStart, fnEnd).split('entriesOfSlot').length - 1
-    assert.equal(total, inside, 'entriesOfSlot 只允许出现在 legacyShadowsOwned 内（render 路径零扫描）')
-    assert.ok(inside >= 1, '安装事务必须做 occupant 校验')
+    const inside = ownershipFamily.split('entriesOfSlot').length - 1
+    assert.equal(total, inside, 'entriesOfSlot 只允许出现在 ownership 判定族内（render/preflight 之外零扫描）')
+    assert.ok(inside >= 2, 'preflight 与 verifier 都必须使用 entriesOfSlot')
+    // 两个 renderer 体内不得触碰 slots 注册表（既有守卫的强化）
+    for (const name of ['LegacyStepToolCallView', 'LegacyStepAssistantView']) {
+      const start = code.indexOf('function ' + name + '(props)')
+      let end = code.indexOf('\n\t\tfunction ', start + 1)
+      if (end < 0) end = code.length
+      const body = code.slice(start, end)
+      assert.ok(!body.includes('entriesOfSlot') && !body.includes('slots.entries'), name + ' render 路径零 slots 扫描')
+    }
   })
   it('F7 源码守卫：renderer 无条件调用 surface Hook、early return 后不得再有 Hook、render 不触 slots 扫描', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
@@ -904,6 +919,8 @@ describe('Legacy Step G：原子 ownership', () => {
       registered, registerCalls, official,
       withEntriesOfSlot: opts.withEntriesOfSlot !== false,
       entries: (name) => (name === 'conversation.chat.node' ? official.concat(registered) : []),
+      subscribe: (_key, fn) => { void fn; return () => {} },
+      onEntryError: (fn) => { void fn; return () => {} },
       inject: (_slot, fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
       register: (options, component) => {
         registerCalls.push(options.key)
@@ -939,7 +956,7 @@ describe('Legacy Step G：原子 ownership', () => {
         const dispose = applyWith(slots)
         const before = T.getLegacyStepInstallStats()
         assert.equal(T.activateLegacyStepEngine(), false, prio + '/' + side + ' 必须整体让位')
-        assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false })
+        assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false, monitorInstalled: false, degraded: false, degradedReason: null })
         assert.deepEqual(slots.registerCalls, [], prio + '/' + side + '：preflight 即失败，根本不注册')
         assert.equal(slots.registered.length, 0)
         const stats = T.getLegacyStepInstallStats()
@@ -976,7 +993,7 @@ describe('Legacy Step G：原子 ownership', () => {
     assert.equal(T.activateLegacyStepEngine(), false, 'preflight 通过但 winner 被篡位 → 必须回滚')
     assert.deepEqual(slots.registerCalls, ['assistant-step', 'tool-call'], '注册尝试过两个（tool 注册成功后被回滚）')
     assert.equal(slots.registered.length, 0, '两个 shadow 都已回滚')
-    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false })
+    assert.deepEqual(T.getLegacyStepRegistrationState(), { installed: false, keys: [], builtinsCaptured: false, ownershipVerified: false, monitorInstalled: false, degraded: false, degradedReason: null })
     const stats = T.getLegacyStepInstallStats()
     assert.equal(stats.ownershipVerificationFailures - before.ownershipVerificationFailures, 1)
     assert.equal(stats.rollbacks - before.rollbacks, 1)
@@ -995,7 +1012,7 @@ describe('Legacy Step G：原子 ownership', () => {
     const before = T.getLegacyStepInstallStats()
     assert.equal(T.activateLegacyStepEngine(), false, '不可验证 ownership → 不安装')
     assert.equal(slots.registered.length, 0, '注册的两个已回滚')
-    assert.equal(T.getLegacyStepInstallStats().ownershipVerificationFailures - before.ownershipVerificationFailures, 1)
+    assert.equal(T.getLegacyStepInstallStats().ownershipConflicts - before.ownershipConflicts, 1, 'preflight 不可判定 live winner → 归因 ownershipConflicts')
     dispose()
   })
   it('G6 verifier 三元组：component 不同 / priority 非 -1 / key 缺失都判 false', () => {
@@ -1011,14 +1028,36 @@ describe('Legacy Step G：原子 ownership', () => {
     assert.equal(T.legacyShadowsOwned({}, [rec]), false, 'entriesOfSlot 缺失 → false')
     assert.equal(T.legacyShadowsOwned({ entriesOfSlot: () => { throw new Error('boom') } }, [rec]), false, 'entriesOfSlot 抛错 → false')
   })
-  it('G7 源码守卫：ownership preflight 用"任意负 priority"语义；verifier 校验 component 与恰好 -1', () => {
+  it('G7 源码守卫：preflight 以 live winner 判定；verifier 三元组；monitor 只在成功安装后注册', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
     const pre = src.slice(src.indexOf('function legacyShadowOwnershipAvailable('), src.indexOf('function legacyShadowsOwned('))
-    assert.ok(pre.includes('slotPriorityOf(e) < 0'), 'preflight 必须是 priority < 0 语义（不是 === -1）')
-    assert.ok(!pre.includes('=== -1'), 'preflight 不得只检查 -1')
-    const ver = src.slice(src.indexOf('function legacyShadowsOwned('), src.indexOf('function LegacyStepHeader('))
+    assert.ok(pre.includes('entriesOfSlot'), 'preflight 必须基于 entriesOfSlot（live winner）')
+    assert.ok(!pre.includes('slots.entries('), 'preflight 不得扫描 raw entries 判断 live conflict（abdicated stale 条目会误阻）')
+    assert.ok(pre.includes('slotPriorityOf(e) >= 0'), 'preflight 判定：live winner priority >= 0 → 可接管')
+    const ver = src.slice(src.indexOf('function legacyShadowsOwned('), src.indexOf('// ---- runtime ownership liveness'))
+    assert.ok(ver.includes('entriesOfSlot'), 'verifier 必须用 entriesOfSlot')
     assert.ok(ver.includes('slotPriorityOf(match) !== -1'), 'verifier 必须要求 winner priority 恰好 -1')
     assert.ok(ver.includes('match.component !== rec.component'), 'verifier 必须校验 component 身份')
+    // monitor 安装面只允许出现在 installLegacyStepOwnershipMonitor helper 内
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n')
+    const monStart = code.indexOf('function installLegacyStepOwnershipMonitor(')
+    assert.ok(monStart > 0, 'monitor helper 必须在')
+    let monEnd = code.indexOf('\n\t\tfunction ', monStart + 1)
+    if (monEnd < 0) monEnd = code.length
+    const mon = code.slice(monStart, monEnd)
+    assert.ok(mon.includes('slots.subscribe("conversation.chat.node"'), 'monitor 订阅 registry 变化')
+    assert.ok(mon.includes('slots.onEntryError('), 'monitor 挂 onEntryError 同步 fast-path')
+    const totalSub = code.split('slots.subscribe("conversation.chat.node"').length - 1
+    const totalErr = code.split('slots.onEntryError(').length - 1
+    assert.equal(totalSub, 1, 'slots.subscribe 只允许出现在 monitor helper 内（Modern apply 路径零注册）')
+    assert.equal(totalErr, 1, 'slots.onEntryError 只允许出现在 monitor helper 内')
+    // apply 路径不得直接注册 monitor
+    const applyBody = code.slice(code.indexOf('exports.apply = function'), code.indexOf('function applyIconStyle') > 0 ? code.indexOf('exports.apply = function') + 4000 : code.length)
+    assert.ok(!applyBody.includes('slots.subscribe(') && !applyBody.includes('onEntryError('), 'apply 路径不得注册 ownership monitor')
+    // runtime 校验也只读 live winner（不扫 raw）
+    const rtStart = code.indexOf('function legacyStepOwnershipStillValid(')
+    const rt = code.slice(rtStart, code.indexOf('function legacyStepOwnershipCheck('))
+    assert.ok(!rt.includes('slots.entries('), 'runtime liveness 不得扫描 raw entries')
   })
 })
 
@@ -1150,5 +1189,296 @@ describe('Legacy Step H：统一 session cleanup', () => {
     assert.ok(!legacyUnmount.includes('legacyStepOpenBySession.delete'), 'legacy 卸载不得直接清 open store')
     const bridgeUnmount = code.slice(code.indexOf('function unregisterStepCardBridge('), code.indexOf('function unregisterStepCardBridge(') + 1200)
     assert.ok(bridgeUnmount.includes('scheduleStepPresentationSessionCleanup('), 'bridge 卸载走统一 scheduler')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// I. Runtime ownership liveness（安装成功后两 cell 必须持续由本插件持有；
+//    漂移 → 整体 teardown → FAIL OPEN；不自动重抢）
+// ══════════════════════════════════════════════════════════════════════
+describe('Legacy Step I：runtime ownership liveness', () => {
+  /** 富 fake：建模官方 SlotCore 语义——
+   *  subscribe（真实为 microtask-batched，这里**同步**通知 = 最坏重入情形）、
+   *  onEntryError（同步、且在 abdication mutation 之后）、abdicated 条目仍留在 raw
+   *  entries 但退出 entriesOfSlot winner 投影、register/dispose 均触发 registry 通知。 */
+  function makeSlotCoreFake(opts = {}) {
+    const st = { entries: [], abdicated: new Set(), listeners: new Set(), errorListeners: new Set(), disposeOrder: [] }
+    st.entries.push({ options: { key: 'assistant-step', priority: 0 }, component: FakeAssistant })
+    st.entries.push({ options: { key: 'tool-call', priority: 0 }, component: FakeToolCall })
+    const notify = () => { for (const fn of [...st.listeners]) fn() }
+    const api = {
+      st,
+      entries: (name) => (name === 'conversation.chat.node' ? st.entries.slice() : []),
+      entriesOfSlot: (name) => {
+        if (name !== 'conversation.chat.node') return []
+        const live = st.entries.filter((e) => e && !st.abdicated.has(e))
+        const sorted = live.slice().sort((a, b) => ((a.options.priority === undefined ? 0 : a.options.priority) - (b.options.priority === undefined ? 0 : b.options.priority)))
+        const seen = {}
+        const winners = []
+        for (const e of sorted) { if (seen[e.options.key]) continue; seen[e.options.key] = true; winners.push(e) }
+        return winners
+      },
+      subscribe: (_k, fn) => {
+        if (opts.subscribeThrows) throw new Error('subscribe unavailable')
+        st.listeners.add(fn)
+        return () => { st.disposeOrder.push('monitor:subscribe'); st.listeners.delete(fn) }
+      },
+      onEntryError: (fn) => { st.errorListeners.add(fn); return () => { st.disposeOrder.push('monitor:onEntryError'); st.errorListeners.delete(fn) } },
+      inject: (_slot, fn) => { const d = fn(); return () => { if (typeof d === 'function') d() } },
+      register: (options, component) => {
+        const entry = { options, component }
+        st.entries.push(entry)
+        notify()
+        return () => { const i = st.entries.indexOf(entry); if (i >= 0) st.entries.splice(i, 1); st.disposeOrder.push('shadow:' + options.key); notify() }
+      },
+      addThirdParty: (key, priority, component) => {
+        const entry = { options: { key, priority }, component: component || (() => null) }
+        st.entries.push(entry)
+        notify()
+        return { entry, remove: () => { const i = st.entries.indexOf(entry); if (i >= 0) st.entries.splice(i, 1); notify() } }
+      },
+      reportEntryError: (entry, abdicate) => {
+        if (abdicate) {
+          if (st.abdicated.has(entry)) return
+          st.abdicated.add(entry)
+        }
+        for (const fn of [...st.errorListeners]) fn('conversation.chat.node', entry, new Error('renderer crash'), { abdicated: !!abdicate })
+      },
+      pluginEntryOf: (key) => st.entries.find((e) => e.options.key === key && e.component === (key === 'assistant-step' ? T.LegacyStepAssistantView : T.LegacyStepToolCallView)),
+      winnerOf: (key) => api.entriesOfSlot('conversation.chat.node').find((e) => e.options.key === key),
+    }
+    return api
+  }
+  function applyWith(slots) {
+    return T.exports.apply({ inject: (deps, fn) => { fn({ slots }); return () => {} } })
+  }
+  const flush = () => new Promise((r) => setTimeout(r, 0))
+
+  it('I1 late third-party -2 抢 assistant → 整体 teardown、FAIL OPEN、ownershipLosses+1', async () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      assert.equal(T.activateLegacyStepEngine(), true)
+      assert.equal(T.getLegacyStepRegistrationState().monitorInstalled, true, 'monitor 随成功安装存在')
+      const before = T.getLegacyStepInstallStats()
+      const third = slots.addThirdParty('assistant-step', -2)
+      await flush()
+      assert.equal(T.getLegacyStepRegistrationState().installed, false, '后端整体 teardown')
+      assert.equal(T.getLegacyStepRegistrationState().monitorInstalled, false)
+      assert.equal(slots.pluginEntryOf('assistant-step'), undefined, '插件 assistant shadow 已移除')
+      assert.equal(slots.pluginEntryOf('tool-call'), undefined, '插件 tool shadow 也已移除（无半套）')
+      assert.equal(T.getLegacyStepRegistrationState().builtinsCaptured, false, 'builtin 引用已清')
+      assert.equal(T.slotPriorityOf(slots.winnerOf('assistant-step')), -2, 'assistant winner = 第三方')
+      assert.equal(T.slotPriorityOf(slots.winnerOf('tool-call')), 0, 'tool winner = 官方')
+      const stats = T.getLegacyStepInstallStats()
+      assert.equal(stats.runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1)
+      assert.equal(stats.runtimeTeardowns - before.runtimeTeardowns, 1)
+      assert.equal(T.hostCapabilityState.stepFold, 'legacy', 'capability 仍 legacy（drift ≠ modern）')
+      assert.equal(T.getLegacyStepRegistrationState().degraded, true)
+      assert.equal(T.getLegacyStepRegistrationState().degradedReason, 'ownership-lost')
+      // 第三方随后退出：不自动重抢
+      third.remove()
+      await flush()
+      assert.equal(T.getLegacyStepRegistrationState().installed, false, '不自动 reacquire')
+      assert.equal(slots.pluginEntryOf('assistant-step'), undefined)
+      assert.equal(T.activateLegacyStepEngine(), true, '显式重新初始化仍可安装')
+      T.disposeLegacyStepEngine()
+    } finally { dispose() }
+  })
+  it('I2 late third-party -2 抢 tool → 对称整体 teardown', async () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      slots.addThirdParty('tool-call', -2)
+      await flush()
+      assert.equal(T.getLegacyStepRegistrationState().installed, false)
+      assert.equal(slots.pluginEntryOf('assistant-step'), undefined, 'assistant shadow 也拆除')
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1)
+    } finally { dispose() }
+  })
+  it('I3 late +1 不影响：ownership 未变 → 保持 installed', async () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      slots.addThirdParty('assistant-step', 1)
+      slots.addThirdParty('tool-call', 1)
+      await flush()
+      assert.equal(T.getLegacyStepRegistrationState().installed, true)
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 0)
+      assert.equal(T.slotPriorityOf(slots.winnerOf('assistant-step')), -1)
+      T.disposeLegacyStepEngine()
+    } finally { dispose() }
+  })
+  it('I4 无关 key / 非 winner 变化不 teardown', async () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      slots.addThirdParty('context', -5)
+      slots.addThirdParty('user', -5)
+      slots.addThirdParty('assistant-step', 2)
+      await flush()
+      assert.equal(T.getLegacyStepRegistrationState().installed, true, 'required cells 仍由本插件持有')
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 0)
+      T.disposeLegacyStepEngine()
+    } finally { dispose() }
+  })
+  it('I5 assistant shadow abdicate → onEntryError 同步整体 teardown（不等微任务）', () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      const entry = slots.pluginEntryOf('assistant-step')
+      assert.ok(entry, '拿到插件 assistant 条目')
+      slots.reportEntryError(entry, true)   // 官方语义：abdication mutation 完成 → 同步通知
+      // 同步断言：尚未 flush 微任务
+      assert.equal(T.getLegacyStepRegistrationState().installed, false, '同步 teardown（fast-path）')
+      assert.equal(slots.pluginEntryOf('tool-call'), undefined, '另一半同步拆除')
+      assert.equal(T.slotPriorityOf(slots.winnerOf('assistant-step')), 0, 'assistant winner 回落官方')
+      assert.equal(T.slotPriorityOf(slots.winnerOf('tool-call')), 0, 'tool winner 回落官方')
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1)
+    } finally { dispose() }
+  })
+  it('I6 tool shadow abdicate → 对称同步 teardown', () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      const entry = slots.pluginEntryOf('tool-call')
+      slots.reportEntryError(entry, true)
+      assert.equal(T.getLegacyStepRegistrationState().installed, false)
+      assert.equal(slots.pluginEntryOf('assistant-step'), undefined)
+      assert.equal(T.slotPriorityOf(slots.winnerOf('tool-call')), 0)
+    } finally { dispose() }
+  })
+  it('I7 非本插件 entry crash（官方条目 abdicate / 无关 key）不误拆', () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      const official = slots.st.entries.find((e) => e.options.key === 'assistant-step' && T.slotPriorityOf(e) === 0)
+      slots.reportEntryError(official, true)   // 官方 assistant builtin 崩溃 abdicate
+      assert.equal(T.getLegacyStepRegistrationState().installed, true, '本插件 -1 仍是 winner → 保持')
+      T.disposeLegacyStepEngine()
+    } finally { dispose() }
+  })
+  it('I8 stale abdicated -2 不阻止安装（preflight 以 live winner 为准）', () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      const third = slots.addThirdParty('assistant-step', -2)
+      slots.reportEntryError(third.entry, true)   // 第三方 -2 崩溃 abdicate：raw 仍留 stale
+      assert.ok(slots.entries('conversation.chat.node').some((e) => e === third.entry), 'raw ledger 仍含 stale -2')
+      assert.equal(T.slotPriorityOf(slots.winnerOf('assistant-step')), 0, 'live winner 回落官方 0')
+      assert.equal(T.activateLegacyStepEngine(), true, 'preflight 放行（live winner 非负）')
+      assert.equal(T.getLegacyStepRegistrationState().installed, true)
+      assert.equal(T.slotPriorityOf(slots.winnerOf('assistant-step')), -1, '本插件成为 winner')
+      T.disposeLegacyStepEngine()
+    } finally { dispose() }
+  })
+  it('I9 直接单测：raw 有 -2 但 live winner 官方 → available；live winner -2 → 不可用', () => {
+    const slots = makeSlotCoreFake()
+    const stale = { options: { key: 'assistant-step', priority: -2 }, component: () => null }
+    slots.st.entries.push({ options: { key: 'assistant-step', priority: 0 }, component: FakeAssistant })
+    slots.st.entries.push(stale)
+    slots.st.abdicated.add(stale)   // stale：raw 在、live 不在
+    assert.equal(T.legacyShadowOwnershipAvailable(slots, 'assistant-step'), true, 'stale -2 不阻止')
+    slots.st.abdicated.delete(stale)
+    assert.equal(T.legacyShadowOwnershipAvailable(slots, 'assistant-step'), false, 'live -2 仍阻止（安全修复不倒退）')
+  })
+  it('I10 去重：abdication fast-path 后 microtask 批通知不再重复 teardown/警告/计数', async () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      slots.reportEntryError(slots.pluginEntryOf('assistant-step'), true)
+      await flush()   // 后续 subscribe 批通知（fake 同步已发过；再跑一拍确认无重复）
+      await flush()
+      const stats = T.getLegacyStepInstallStats()
+      assert.equal(stats.runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1, '只记一次')
+      assert.equal(stats.runtimeTeardowns - before.runtimeTeardowns, 1)
+    } finally { dispose() }
+  })
+  it('I11 monitor 安装失败（subscribe 抛错）→ 回滚两个 shadow、FAIL OPEN', () => {
+    const slots = makeSlotCoreFake({ subscribeThrows: true })
+    const dispose = applyWith(slots)
+    try {
+      const before = T.getLegacyStepInstallStats()
+      assert.equal(T.activateLegacyStepEngine(), false, 'monitor 不可用 → 不安装')
+      assert.equal(T.getLegacyStepRegistrationState().installed, false)
+      assert.equal(slots.pluginEntryOf('assistant-step'), undefined)
+      assert.equal(slots.pluginEntryOf('tool-call'), undefined)
+      assert.equal(T.getLegacyStepInstallStats().rollbacks - before.rollbacks, 1)
+    } finally { dispose() }
+  })
+  it('I12 dispose 顺序：monitor 先注销、shadow 后拆；dispose 后 mutation 不再触发 verifier', async () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      const order = []
+      const origPush = slots.st.disposeOrder.push.bind(slots.st.disposeOrder)
+      slots.st.disposeOrder.push = (...a) => { order.push('real'); return origPush(...a) }
+      assert.equal(T.disposeLegacyStepEngine(), true)
+      const seq = slots.st.disposeOrder
+      assert.equal(seq[0], 'monitor:subscribe', 'monitor 最先注销：' + JSON.stringify(seq))
+      assert.ok(seq.indexOf('shadow:assistant-step') > 0 && seq.indexOf('shadow:tool-call') > 0, 'shadows 在 monitor 之后')
+      void order
+      slots.addThirdParty('assistant-step', -2)
+      await flush()
+      assert.equal(T.getLegacyStepInstallStats().runtimeOwnershipLosses - before.runtimeOwnershipLosses, 0, 'dispose 后 mutation 不触发 ownership teardown 统计')
+    } finally { dispose() }
+  })
+  it('I13 double dispose 安全；ownership-loss 后再 dispose 安全 no-op', async () => {
+    const slots = makeSlotCoreFake()
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      assert.equal(T.disposeLegacyStepEngine(), true)
+      assert.equal(T.disposeLegacyStepEngine(), false, '第二次 no-op')
+      // ownership-loss 场景后再 dispose
+      assert.equal(T.activateLegacyStepEngine(), true)
+      const before = T.getLegacyStepInstallStats()
+      slots.addThirdParty('tool-call', -2)
+      await flush()
+      assert.equal(T.getLegacyStepRegistrationState().installed, false)
+      assert.equal(T.disposeLegacyStepEngine(), false, 'runtime teardown 后 dispose 安全 no-op')
+      const stats = T.getLegacyStepInstallStats()
+      assert.equal(stats.runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1, '统计不重复')
+      assert.equal(stats.runtimeTeardowns - before.runtimeTeardowns, 1)
+    } finally { dispose() }
+  })
+  it('I14 重入防护：dispose shadow 引发的同步 registry 通知不会递归 teardown', async () => {
+    const slots = makeSlotCoreFake()   // fake 的 register disposer 同步 notify（最坏情形）
+    const dispose = applyWith(slots)
+    try {
+      T.activateLegacyStepEngine()
+      const before = T.getLegacyStepInstallStats()
+      slots.addThirdParty('assistant-step', -2)   // 同步 notify → 触发 teardown；期间 dispose shadow 又同步 notify
+      await flush()
+      const stats = T.getLegacyStepInstallStats()
+      assert.equal(stats.runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1, '恰一次（无递归/双拆）')
+      assert.equal(stats.runtimeTeardowns - before.runtimeTeardowns, 1)
+      assert.equal(slots.pluginEntryOf('assistant-step'), undefined)
+      assert.equal(slots.pluginEntryOf('tool-call'), undefined)
+    } finally { dispose() }
+  })
+  it('I15 源码守卫：teardown 顺序（monitor 先）与 monitor 仅由 activate 调用', () => {
+    const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n')
+    const td = code.slice(code.indexOf('function teardownLegacyStepEngine('), code.indexOf('function legacyThinkOnlyNode('))
+    assert.ok(td.indexOf('reg.monitorDisposers') < td.indexOf('reg.disposers'), 'teardown 必须先注销 monitor 再拆 shadow')
+    assert.ok(td.includes('legacyStepOwnershipTeardownInProgress'), 'teardown 必须有重入 guard')
+    assert.ok(td.includes('runtimeOwnershipLosses'), 'ownership-lost 归因统计')
+    const calls = code.split('installLegacyStepOwnershipMonitor(').length - 1
+    assert.equal(calls, 2, 'monitor helper：定义 1 + activate 调用 1（无其它注册点）')
   })
 })

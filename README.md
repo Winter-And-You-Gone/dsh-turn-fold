@@ -514,6 +514,41 @@ cell 已被占用 / ownership 验证失败回滚），counters 分开记账
 （`getLegacyStepInstallStats()`：attempts / successes / preflightFailures /
 ownershipConflicts / ownershipVerificationFailures / rollbacks + installs）。
 
+**Runtime ownership liveness（WHILE INSTALLED: BOTH CELLS MUST CONTINUE TO BE
+OWNED）**：安装事务只保证 COMMIT 那一刻成立；slot registry 是动态的——第三方插件
+可以后加载 `-2` 抢走某个 cell，官方也可能把崩溃的 renderer **abdicate**（从 winner
+投影中退休）。因此成功 COMMIT 后安装 **ownership monitor**（`activate` 事务的最后一
+步，失败即回滚 FAIL OPEN）：
+- `slots.subscribe("conversation.chat.node", …)` 持续观察 registry 变化
+  （**microtask-batched**——官方语义；任何 mutation 后重新验证两个 required cells）；
+- `slots.onEntryError(…)` 作为**同步 fast-path**：官方在 abdicating crash 时先完成
+  abdication mutation（`abdicated.add` + 版本 bump）**再同步通知**，callback 内重读
+  `entriesOfSlot` 已能看到新 winner——本插件 shadow 被 abdicate 时**立刻**（不等微任务）
+  拆掉另一半。
+
+漂移处置（与 install 时同一套严格判据：`entriesOfSlot` 的 winner 必须 = 本次事务的
+renderer、priority 恰好 -1、component 一致）：任一 required cell 丢失 → **整体
+teardown**（`teardownLegacyStepEngine("ownership-lost")`：重入 guard → **先注销
+monitor** → 再 dispose 两个 shadow → 清 registration/builtins）→ **FAIL OPEN 到宿主
+当前 winners**（官方或第三方继续正常渲染），绝不半套运行、绝不 `return null`。
+**不自动重抢**：运行期 ownership 一旦丢失，本插件当前生命周期内不会重新争抢该 slot
+（即使冲突插件随后退出）——backend 保持 fail-open disabled（`stepFold` 能力仍为
+`legacy`；`getLegacyStepRegistrationState()` 给出 `degraded/degradedReason`），直到
+插件/宿主重新初始化（显式重新 activate 才会重新 preflight）。这是稳定共存策略，避免
+ownership oscillation 与重复 shadow mount/unmount。ownership-lost 只记
+`runtimeOwnershipLosses`/`runtimeTeardowns`（与 preflight/verification 计数分开），
+警告恰一次；**不动**任何 session presentation state（open/face/CSS 由统一 session
+cleanup 收尾）。
+
+**raw entries vs live winners（审计边界）**：`slots.entries()` 是 **raw registration
+ledger**——abdicated 条目仍会列出（registration 未撤销、disposer 仍有效）；它只用于
+**捕获官方 priority-0 builtin 引用**。`slots.entriesOfSlot()` 是**当前 live winners**
+（每个 cell 的首个非 abdicated 条目）——**ownership preflight、post-register 验证、
+runtime liveness 全部以它为准**。上一轮的 preflight 曾用 raw entries 检查负 priority：
+一个"曾存在但已 abdicate"的第三方 `-2` 会永远错误阻止安装（stale 误阻）；现在 preflight
+按 live winner 判定（winner priority >= 0 即可接管），同时"live winner 为负 priority"
+仍然整体让位（安全语义不倒退，测试双向锁死）。
+
 **Hook lifecycle（架构约束）**：Legacy member surface 的挂载登记由**无条件 Hook**
 `useLegacyStepSurface(sessionKey, active)` 管理——两个 renderer 在每一次 render 里都
 先调用它（早于任何 return），non-member ↔ member 的流式转换（assistant-step 的 blocks
