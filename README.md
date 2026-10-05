@@ -438,7 +438,35 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 | 0.1.7-rc.2 | modern | 新形状 | modern | reactive | official（`data-conversation-session`，commit b7ac0ade10） |
 | 0.2.0-rc.2 | modern | 新形状 | modern | reactive | official |
 
-### Live-host acceptance 记录（2026-10-05，engines 未放开的依据）
+### Live-host acceptance：当前支持区间（2026-10-06，RELEASE GATE PASSED）
+
+对**当前 `engines.dsh` 声明的三个版本**做真机验收：官方 npm 发布包 + 隔离 `DSH_HOME`/profile +
+官方 `dsh plugin --profile web add <path>` 装载（profile `dsh.profile.bundles` + link），
+真实 provider、真实模型会话（含工具调用的 Turn 与纯问答 Turn 各一条），并用插桩副本读取插件内部
+状态（同一份 `client.js` + 只读 console/`__test` 桥，不改变插件行为）。
+
+| 版本 | 宿主启动 | 插件装载 | capability 最终值 | Turn Bar 接管 | running/completed | Step Bar + Poker | 折叠切换 | 纯问答 | reload/历史 | React 警告 | 未捕获异常 | ownership loss | 证据等级 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.1.7-rc.1 | ✅ npm 发布包 | ✅ | modern / modern / reactive | ✅（running 实时指标 + completed 默认收起） | ✅ | ✅（Step Bar + 图标锚点，折叠正交） | ✅（展开 12→1 隐藏，再收起复原） | ✅（静态栏 + 真实指标） | ✅（重载后 3 根栏重建、零重复注册） | 0 | 0 | 0 | **LIVE-HOST VERIFIED** |
+| 0.1.7-rc.2 | ✅ npm 发布包 | ✅ | modern / modern / reactive（sessionScope=official） | ✅ | ✅ | ✅（3 个 Step Bar） | ✅（16→3→16 隐藏成员） | ✅ | ✅（2 根栏重建） | 0 | 0 | 0 | **LIVE-HOST VERIFIED** |
+| 0.2.0-rc.2 | ✅ npm 发布包 | ✅ | modern / modern / reactive | ✅ | ✅ | ✅（4 个 Step Bar + Poker 图标） | ✅（10→0→10 隐藏成员） | ✅ | ✅（3 根栏重建） | 0 | 0 | 0 | **LIVE-HOST VERIFIED** |
+
+**验收期间发现并修复的真机缺陷（bundle 装载时序竞态）**：本插件以 bundle 方式装载时只注入
+`slots`，cordis 会在服务就绪时立即 apply——可能**早于**官方 conversation 层声明
+`conversation.chat.node`。此时注册期探测把「没有 turn-process 条目」误判成 legacy →
+在现代宿主上装出 3 键 legacy backend 且**永不注册 Turn 渲染器**（表现为官方 Turn Bar 保留、
+Step 层退化）。用户自有 profile 经 patch-insert 层装载（apply 最后）恰好绕开该竞态。
+修复（commit `abc375c`）：`hostCapabilitiesOf` 的 turnFold 映射三态化
+（undefined=unknown，绝不猜 legacy）；注册期探测新增官方只读检查面 `slots.snapshot(root)`
+判定槽位是否已声明；unknown 时经 `ctx.on("slots/changed")` **事件驱动**等待，在同一同步突变批
+（声明 + 官方 inject 回调注册条目）落地后的**一个微任务**里复判——有 turn-process → modern 并
+注册 Turn 渲染器；声明且条目非空、无 turn-process → legacy（0.1.1 形态）；零条目 → 继续等。
+无轮询、无定时器；无 `snapshot` 检查面的极简宿主保持既有语义。
+
+### 历史验收记录：0.1.1 ~ 0.1.6（2026-10-05，非当前支持区间）
+
+> 以下四个版本**不在当前 `engines.dsh` 声明范围内**，仅作历史记录；它们各自有独立的
+> 兼容阻塞项（详见下文），不构成当前支持区间的发布阻塞。
 
 本轮把矩阵从"契约 harness"推进到**真实宿主**：用各 tag 的真实 runtime（官方 tag 源码构建，
 或官方 npm 发布包）在隔离 `DSH_HOME` 里启动 Web 宿主、用官方插件机制装入本插件、跑真实
