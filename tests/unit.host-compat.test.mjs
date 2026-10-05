@@ -650,3 +650,50 @@ describe('兼容架构 I：resolveLegacyStepCapability 契约（0.1.1 下轮接�
     T.hostCapabilityState.stepFold = 'unknown'
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════
+// K. 最终支持契约矩阵（fixture / documentation contract）
+//    只表达"哪个宿主应当落入哪个 feature-level 模式"这一份事实，
+//    不测试版本判断逻辑（生产代码里没有任何版本号分支）。
+// ══════════════════════════════════════════════════════════════════════
+describe('最终支持契约矩阵（supported-host-matrix contract）', () => {
+  /** 目标版本的 feature-level 契约（turn / step / metrics）。 */
+  const CONTRACT = [
+    ['0.1.1-rc.2', 'legacy', 'legacy', 'fallback'],
+    ['0.1.2-rc.1', 'modern', 'legacy', 'fallback'],
+    ['0.1.5-rc.3', 'modern', 'legacy', 'fallback'],
+    ['0.1.6-alpha.2', 'modern', 'legacy', 'fallback'],
+    ['0.1.7-rc.1', 'modern', 'modern', 'reactive'],
+    ['0.1.7-rc.2', 'modern', 'modern', 'reactive'],
+    ['0.2.0-rc.2', 'modern', 'modern', 'reactive'],
+  ]
+  it('K1 每个目标版本的 fixture expect 与最终契约一致（capability 三态各自独立）', () => {
+    for (const [version, turn, step, metrics] of CONTRACT) {
+      const f = HOST_VERSION_FIXTURES.find((x) => x.version === version)
+      assert.ok(f, version + ' fixture 必须在（不得因正式支持而删档）')
+      assert.equal(f.expect.turnFold, turn, version + ' turnFold')
+      assert.equal(f.expect.stepFold, step, version + ' stepFold')
+      assert.equal(f.expect.metrics, metrics, version + ' metrics')
+    }
+  })
+  it('K2 契约由探针算出（fixture 探针 → hostCapabilitiesOf），与 expect 自洽', () => {
+    for (const fixture of HOST_VERSION_FIXTURES) {
+      const caps = T.hostCapabilitiesOf(capabilitiesFromFixture(fixture))
+      assert.equal(caps.turnFold, fixture.expect.turnFold, fixture.version + ' turnFold（探针驱动）')
+      assert.equal(caps.stepFold, fixture.expect.stepFold, fixture.version + ' stepFold（探针驱动）')
+      assert.equal(caps.metrics, fixture.expect.metrics, fixture.version + ' metrics（探针驱动）')
+    }
+  })
+  it('K3 每个 fixture 都带真实 tag 与审计 note（可回溯到官方源码）', () => {
+    for (const fixture of HOST_VERSION_FIXTURES) {
+      assert.match(fixture.tag, /^dsh-v/, fixture.version + ' tag')
+      assert.ok(fixture.note && fixture.note.length > 10, fixture.version + ' note')
+      assert.equal(fixture.tag, 'dsh-v' + fixture.version, fixture.version + ' tag 与版本一致')
+    }
+  })
+  it('K4 engines.dsh 是审计结论的唯一载体：当前区间只声明已真机/契约覆盖的版本段', () => {
+    const pkg = JSON.parse(require('node:fs').readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    assert.equal(pkg.engines.dsh, '>=0.1.7-rc.1 <=0.2.0-rc.2',
+      'engines.dsh 只能在真实宿主矩阵通过后修改；本轮（0.1.1 live 失败）不得放开')
+  })
+})
