@@ -944,7 +944,7 @@ describe('Legacy Step F：Hook 生命周期', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
     const stripComments = (text) => text
       .replace(/\/\*[\s\S]*?\*\//g, '')
-      .split('\n').map((l) => l.split('//')[0]).join('\n')
+      .split('\n').map((l) => l.split('//')[0]).join('\n').replace(/\r/g, '').replace(/\r/g, '')
     const code = stripComments(src)
     const preStart = code.indexOf('function legacyShadowOwnershipAvailable(')
     const verStart = code.indexOf('function legacyShadowsOwned(')
@@ -1134,7 +1134,7 @@ describe('Legacy Step G：原子 ownership', () => {
     assert.ok(ver.includes('slotPriorityOf(match) !== -1'), 'verifier 必须要求 winner priority 恰好 -1')
     assert.ok(ver.includes('match.component !== rec.component'), 'verifier 必须校验 component 身份')
     // monitor 安装面只允许出现在 installLegacyStepOwnershipMonitor helper 内
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n').replace(/\r/g, '')
     const monStart = code.indexOf('function installLegacyStepOwnershipMonitor(')
     assert.ok(monStart > 0, 'monitor helper 必须在')
     let monEnd = code.indexOf('\n\t\tfunction ', monStart + 1)
@@ -1272,7 +1272,7 @@ describe('Legacy Step H：统一 session cleanup', () => {
   })
   it('H8 源码守卫：唯一 final cleanup helper + 唯一 gate + 唯一 pending Set；两条卸载路径都走统一 scheduler', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n').replace(/\r/g, '')
     assert.equal(code.split('function cleanupStepPresentationSession(').length - 1, 1, '唯一 final cleanup helper')
     assert.equal(code.split('function stepPresentationSessionActive(').length - 1, 1, '唯一 activity gate')
     assert.equal(code.split('var stepPresentationPendingCleanup = new Set()').length - 1, 1, '唯一 pending Set')
@@ -1529,7 +1529,7 @@ describe('Legacy Step I：runtime ownership liveness', () => {
   })
   it('I15 源码守卫：teardown 顺序（monitor 先）与 monitor 仅由 activate 调用', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n').replace(/\r/g, '')
     const td = code.slice(code.indexOf('function teardownLegacyStepEngine('), code.indexOf('function legacyThinkOnlyNode('))
     assert.ok(td.indexOf('reg.monitorDisposers') < td.indexOf('reg.disposers'), 'teardown 必须先注销 monitor 再拆 shadow')
     assert.ok(td.includes('legacyStepOwnershipTeardownInProgress'), 'teardown 必须有重入 guard')
@@ -1694,7 +1694,7 @@ describe('Legacy Step J：同步 ownership 封口', () => {
   })
   it('J9 源码守卫：slots/changed listener 唯一注册点在 monitor helper；COMMIT 后才清 degraded', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n').replace(/\r/g, '')
     const total = code.split('ctxRef.on("slots/changed"').length - 1
     // ctx.on("slots/changed") 只允许出现在两个 ownership 相关 helper：runtime monitor 与 full-legacy bootstrap
     assert.equal(total, 2, 'ctx.on("slots/changed") 恰好两处（monitor + bootstrap）')
