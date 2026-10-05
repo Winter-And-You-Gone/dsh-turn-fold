@@ -978,17 +978,22 @@ describe('Legacy Step F：Hook 生命周期', () => {
       const surfaceIdx = body.indexOf('useLegacyStepSurface(')
       const firstReturn = body.indexOf('\n\t\t\treturn ')
       assert.ok(firstReturn === -1 || surfaceIdx < firstReturn, name + ' 的 surface Hook 必须早于任何 return')
-      assert.ok(body.indexOf('react.useEffect') === -1, name + ' 内不得再有直写 useEffect（条件 Hook 风险）')
+      // 恰好一处 react.useEffect（0.1.1 runtime capability 探针）——且必须早于任何 return
+      const effects = body.split('react.useEffect').length - 1
+      assert.ok(effects === 1, name + ' 恰好一处 react.useEffect（capability 探针）：' + effects)
+      assert.ok(body.indexOf('react.useEffect') < firstReturn, name + ' 的 capability effect 必须早于任何 return')
       assert.ok(body.indexOf('findLegacyBuiltinRenderer') === -1, name + ' 不得做 builtin lookup')
       assert.ok(body.indexOf('slots.entries') === -1 && body.indexOf('legacyStepSlotsRef') === -1, name + ' 不得触碰 slots 注册表')
     }
     // builtin lookup 只允许发生在安装/preflight
     const lookups = src.split('findLegacyBuiltinRenderer(').length - 1
     assert.ok(lookups >= 1, 'preflight 必须调用 findLegacyBuiltinRenderer')
-    const installerStart = src.indexOf('function activateLegacyStepEngine()')
+    const installerStart = src.indexOf('function activateLegacyNodeBackend(mode)')
     const installerEnd = src.indexOf('function disposeLegacyStepEngine()')
     const installer = src.slice(installerStart, installerEnd)
-    assert.equal(installer.split('findLegacyBuiltinRenderer(').length - 1, 2, '安装器恰好捕获两个 builtin')
+    assert.equal(installer.split('findLegacyBuiltinRenderer(').length - 1, 1, '安装器在 required-entries 循环内统一捕获 builtin')
+    assert.ok(installer.includes('legacyBackendEntriesFor(mode)'), 'required entries 由 mode 决定（step-only 2 键 / full-legacy 3 键）')
+    assert.ok(src.includes('function legacyBackendEntriesFor(mode)'), 'entriesFor 必须存在')
   })
 })
 
@@ -1691,7 +1696,11 @@ describe('Legacy Step J：同步 ownership 封口', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').map((l) => l.split('//')[0]).join('\n')
     const total = code.split('ctxRef.on("slots/changed"').length - 1
-    assert.equal(total, 1, 'ctx.on("slots/changed") 只允许出现在 monitor helper 内')
+    // ctx.on("slots/changed") 只允许出现在两个 ownership 相关 helper：runtime monitor 与 full-legacy bootstrap
+    assert.equal(total, 2, 'ctx.on("slots/changed") 恰好两处（monitor + bootstrap）')
+    const bsStart = code.indexOf('function startLegacyTurnBootstrap(')
+    const bsEnd = code.indexOf('\n\t\tfunction ', bsStart + 1)
+    assert.ok(code.slice(bsStart, bsEnd).includes('ctxRef.on("slots/changed"'), 'bootstrap 内注册（0.1.1 依赖就绪等待）')
     const monStart = code.indexOf('function installLegacyStepOwnershipMonitor(')
     const monEnd = code.indexOf('\n\t\tfunction ', monStart + 1)
     assert.ok(code.slice(monStart, monEnd).includes('ctxRef.on("slots/changed"'), 'monitor helper 内是唯一注册点')

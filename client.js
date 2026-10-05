@@ -901,7 +901,8 @@ window.__ModuleLoader__.load({
 		/** 统一 session 活跃 gate：该 session 是否仍存在任何 Step presentation surface
 		 *  （modern 牌数桥 或 Legacy Step 面）。**唯一**的最终 cleanup 判据。 */
 		function stepPresentationSessionActive(sessionKey) {
-			return stepCardBridgeSessions.has(sessionKey) || legacyStepSurfaces.has(sessionKey);
+			return stepCardBridgeSessions.has(sessionKey) || legacyStepSurfaces.has(sessionKey)
+				|| legacyTurnSurfaces.has(sessionKey);   // 0.1.1 Full Legacy 的 Turn surface 也是 presentation 面
 		}
 		/** 统一 session 最终清理（**唯一入口**）：两个 registry 都空时一次性清干净全部
 		 *  per-session Step presentation state——Legacy open store、Legacy 逐组 CSS、
@@ -909,6 +910,7 @@ window.__ModuleLoader__.load({
 		 *  Poker 池 / settings）绝不在这里清。 */
 		function cleanupStepPresentationSession(sessionKey) {
 			legacyStepOpenBySession.delete(sessionKey);
+			legacyTurnOpenBySession.delete(sessionKey);
 			clearLegacyStepRulesForSession(sessionKey);
 			cleanupCompletedStepSession(sessionKey);
 		}
@@ -1550,11 +1552,20 @@ window.__ModuleLoader__.load({
 		function selectLegacyChatSnapshot(s) {
 			return s;
 		}
-		/** Legacy shadow 共享快照订阅（hook 无条件调用；useChat 是标准 kit 成员、
-		 *  hybrid 宿主进程内恒定）。 */
+		/** 0.1.1 专用 selector：ConversationSnapshot → snapshot.chat（**identity 原样返回，
+		 *  不复制**——ChatSnapshot/ChatNodeStore/locations 身份保持 → 既有 WeakMap memo 全部有效）。 */
+		function selectLegacySessionChatSnapshot(session) {
+			return session && typeof session === "object" ? session.chat : undefined;
+		}
+		/** Legacy shadow 共享快照订阅（hook 无条件调用一次；宿主形态进程内恒定——
+		 *  0.1.2~0.1.6 经标准 kit 的 useChat；0.1.1 经标准 kit 的 useSession(s => s.chat)。
+		 *  两种形态不会在组件生命周期内互相切换（props 由宿主决定），Hook 数量恒定。 */
 		function useLegacyChatSnapshot(props) {
 			var useChat = props.useChat;
-			return typeof useChat === "function" ? useChat(selectLegacyChatSnapshot) : undefined;
+			if (typeof useChat === "function") return useChat(selectLegacyChatSnapshot);
+			var useSession = props.useSession;
+			if (typeof useSession === "function") return useSession(selectLegacySessionChatSnapshot);
+			return undefined;
 		}
 
 		// ---- open store（插件自有；sessionKey+leaderKey 隔离；不与 turnProcess.open 混用） ----
@@ -1601,11 +1612,318 @@ window.__ModuleLoader__.load({
 		}
 
 		// ---- session 表面 registry（§49：最后一面卸载才清 session 状态） ----
-		var legacyStepSurfaces = new Map();      // sessionKey → 已挂载 legacy 面计数
+		var legacyStepSurfaces = new Map();      // sessionKey → 已挂载 legacy Step 面计数
+		var legacyTurnSurfaces = new Map();      // sessionKey → 已挂载 legacy Turn 面计数（0.1.1 Full Legacy）
 		function legacyStepSurfaceMounted(sessionKey) {
 			legacyStepSurfaces.set(sessionKey, (legacyStepSurfaces.get(sessionKey) || 0) + 1);
 			// 同 commit 内重挂载 → 取消待清理（统一 pending Set，与 modern 桥同一来源）
 			stepPresentationPendingCleanup.delete(sessionKey);
+		}
+		function legacyTurnSurfaceMounted(sessionKey) {
+			legacyTurnSurfaces.set(sessionKey, (legacyTurnSurfaces.get(sessionKey) || 0) + 1);
+			stepPresentationPendingCleanup.delete(sessionKey);
+		}
+		function legacyTurnSurfaceUnmounted(sessionKey) {
+			var n = (legacyTurnSurfaces.get(sessionKey) || 0) - 1;
+			if (n > 0) {
+				legacyTurnSurfaces.set(sessionKey, n);
+				return;
+			}
+			legacyTurnSurfaces.delete(sessionKey);
+			scheduleStepPresentationSessionCleanup(sessionKey);
+		}
+		// ══════════════════════════════════════════════════════════════════════
+		// Legacy Turn engine（仅 0.1.1：官方没有 turn-process / TurnProcessOwnerProps，
+		// 插件拥有 Turn Fold。0.1.2+ 的 Modern Turn 路径绝不调用本区块任何函数——
+		// 源码守卫锁死）。数据面 = 官方 ConversationSnapshot.chat（与 0.1.2+ 同形）。
+		// ══════════════════════════════════════════════════════════════════════
+
+		/** Turn index：每 snapshot 身份最多构建一次（WeakMap memo），节点查询 O(1)。 */
+		var legacyTurnIndexCache = new WeakMap();
+		var legacyTurnComputations = 0;
+		function getLegacyTurnComputations() { return legacyTurnComputations; }
+		/** 纯数据算法（旧 main 的整回合折叠算法语义重写；无 DOM/文字匹配/轮询）：
+		 *   · keys = locations.getTurn(turn)（含隐藏节点 → 分页/截断下不漏 membership）；
+		 *   · 作用域边界 =「回合内首条 assistant/tool 证据之前」的最后一个 user 锚点——
+		 *     context 注入可能排在用户消息之前、mid-turn steering 的 anchorSeq 可能大于
+		 *     全部中间节点，直接取"回合内最大 user seq"会让 header 恒 null 且不自愈；
+		 *   · finalAssistantKey = closed ? 回合内最后一条 assistant-step : null
+		 *     （running 时当前流式消息仍是 header 候选；closed 后它成为最终答案、永不隐藏）；
+		 *   · headerKey = 作用域内第一条 (tool-call|assistant-step|context)、跳过 final；
+		 *     纯问答 fallback 到 finalAssistantKey（Turn Bar 在最终答案上方、正文仍可见）；
+		 *   · hideKeys = 作用域内成员（不含 final）——为空（纯问答/无中间内容）→
+		 *     canCollapse=false（静态栏；不硬造可折叠）；
+		 *   · reason 取 timeline.turns(turn).end.data.reason.kind；aborted|error → alwaysOpen
+		 *     （对齐 Modern semantics 不可折叠）；max-tokens/blocked 按普通 completed 处理；
+		 *   · 数据不完整/异常 → FAIL OPEN（canCollapse=false、hideKeys 为空、内容全可见）。 */
+		function legacyBuildTurnIndex(snapshot) {
+			legacyTurnComputations += 1;
+			var safe = snapshot && typeof snapshot === "object" ? snapshot : {};
+			var order = Array.isArray(safe.order) ? safe.order : [];
+			var nodes = safe.nodes;
+			var locations = safe.locations;
+			var getNode = function (key) {
+				try { return nodes && typeof nodes.get === "function" ? nodes.get(key) : undefined; } catch (e) { return undefined; }
+			};
+			var legacy = safe.legacy && typeof safe.legacy === "object" ? safe.legacy : {};
+			var turnEnds = legacy.turnEnds && typeof legacy.turnEnds.has === "function" ? legacy.turnEnds : null;
+			var turnTimings = legacy.turnTimings && typeof legacy.turnTimings.get === "function" ? legacy.turnTimings : null;
+			var timeline = safe.timeline && typeof safe.timeline === "object" ? safe.timeline : null;
+			var turnNumbers = [];
+			var seenTurn = {};
+			for (var i = 0; i < order.length; i++) {
+				var n = getNode(order[i]);
+				if (!n || !n.location) continue;
+				var loc = n.location;
+				if (loc.kind !== "turn" && loc.kind !== "step") continue;
+				var t = loc.turn && typeof loc.turn === "object" ? loc.turn.turn : undefined;
+				if (typeof t !== "number" || seenTurn[t]) continue;
+				seenTurn[t] = true;
+				turnNumbers.push(t);
+			}
+			var groupsByTurn = new Map();
+			var byNode = new Map();
+			for (var ti = 0; ti < turnNumbers.length; ti++) {
+				var turn = turnNumbers[ti];
+				var keys = [];
+				try {
+					var fromIndex = locations && typeof locations.getTurn === "function" ? locations.getTurn(turn) : null;
+					if (fromIndex && typeof fromIndex.length === "number") {
+						for (var k = 0; k < fromIndex.length; k++) keys.push(fromIndex[k]);
+					}
+				} catch (e) { keys = []; }
+				if (keys.length === 0) {
+					for (var oi = 0; oi < order.length; oi++) {
+						var n0 = getNode(order[oi]);
+						if (n0 && n0.location && n0.location.kind === "step" && n0.location.turn && n0.location.turn.turn === turn) keys.push(order[oi]);
+					}
+				}
+				var closed = false;
+				try { closed = !!(turnEnds && turnEnds.has(turn)); } catch (e2) { closed = false; }
+				var finalAssistantKey = null;
+				var toolCount = 0;
+				for (var fi = 0; fi < keys.length; fi++) {
+					var fn0 = getNode(keys[fi]);
+					if (!fn0) continue;
+					if (fn0.kind === "assistant-step") finalAssistantKey = keys[fi];
+					else if (fn0.kind === "tool-call") toolCount += 1;
+				}
+				if (!closed) finalAssistantKey = null;
+				var firstEvidenceSeq = Infinity;
+				for (var e = 0; e < keys.length; e++) {
+					var en = getNode(keys[e]);
+					if (!en || (en.kind !== "tool-call" && en.kind !== "assistant-step")) continue;
+					if (typeof en.anchorSeq === "number" && en.anchorSeq < firstEvidenceSeq) firstEvidenceSeq = en.anchorSeq;
+				}
+				var lastUserSeq = -1;
+				for (var u = 0; u < keys.length; u++) {
+					var un = getNode(keys[u]);
+					if (!un || un.kind !== "user" || typeof un.anchorSeq !== "number") continue;
+					if (un.anchorSeq > lastUserSeq && un.anchorSeq < firstEvidenceSeq) lastUserSeq = un.anchorSeq;
+				}
+				var inScope = function (node) {
+					if (!node) return false;
+					if (lastUserSeq < 0) return true;   // 无 user 锚点（异常形状）→ 不设边界（FAIL OPEN）
+					return typeof node.anchorSeq === "number" ? node.anchorSeq > lastUserSeq : true;
+				};
+				var hideKeys = [];
+				var memberKeys = {};
+				var headerKey = null;
+				for (var m = 0; m < keys.length; m++) {
+					var mKey = keys[m];
+					var mn = getNode(mKey);
+					if (!mn) continue;
+					if (mn.kind !== "tool-call" && mn.kind !== "assistant-step" && mn.kind !== "context") continue;
+					if (mKey === finalAssistantKey) continue;
+					if (!inScope(mn)) continue;   // context-before-user / 作用域外 → 永不隐藏
+					memberKeys[mKey] = true;
+					hideKeys.push(mKey);
+					if (headerKey === null) headerKey = mKey;
+				}
+				if (headerKey === null && finalAssistantKey !== null) headerKey = finalAssistantKey;
+				var reason = null;
+				try {
+					if (timeline && timeline.turns && typeof timeline.turns.get === "function") {
+						var tl = timeline.turns.get(turn);
+						if (tl && tl.end && tl.end.data && tl.end.data.reason && typeof tl.end.data.reason.kind === "string") reason = tl.end.data.reason.kind;
+					}
+				} catch (e3) { reason = null; }
+				var timing = null;
+				try { timing = turnTimings ? turnTimings.get(turn) : null; } catch (e4) { timing = null; }
+				var alwaysOpen = !closed || reason === "aborted" || reason === "error";
+				var canCollapse = closed && !alwaysOpen && hideKeys.length > 0 && finalAssistantKey !== null;
+				var group = {
+					turn: turn, keys: keys, memberKeys: memberKeys, hideKeys: hideKeys,
+					headerKey: headerKey, finalAssistantKey: finalAssistantKey,
+					toolCount: toolCount, running: !closed, closed: closed, reason: reason,
+					alwaysOpen: alwaysOpen, canCollapse: canCollapse,
+					startMs: timing && typeof timing.startTime === "number" ? timing.startTime : undefined,
+					endMs: timing && typeof timing.endTime === "number" ? timing.endTime : undefined,
+				};
+				groupsByTurn.set(turn, group);
+				for (var b = 0; b < keys.length; b++) if (!byNode.has(keys[b])) byNode.set(keys[b], group);
+			}
+			return { groupsByTurn: groupsByTurn, byNode: byNode, turnNumbers: turnNumbers };
+		}
+		function legacyTurnIndexOf(snapshot) {
+			if (!snapshot || typeof snapshot !== "object") return null;
+			var cached = legacyTurnIndexCache.get(snapshot);
+			if (cached) return cached;
+			var index = legacyBuildTurnIndex(snapshot);
+			legacyTurnIndexCache.set(snapshot, index);
+			return index;
+		}
+		function legacyTurnGroupForNode(snapshot, node) {
+			if (!node) return null;
+			var index = legacyTurnIndexOf(snapshot);
+			if (!index) return null;
+			return index.byNode.get(node.key) || null;
+		}
+
+		// ---- Legacy Turn open store（仅 0.1.1；sessionKey+turn 隔离，与 Step open 完全正交） ----
+		var legacyTurnOpenBySession = new Map();   // sessionKey → Map<turn, true|false>
+		var legacyTurnOpenListeners = new Set();
+		function subscribeLegacyTurnOpen(fn) {
+			legacyTurnOpenListeners.add(fn);
+			return function () { legacyTurnOpenListeners.delete(fn); };
+		}
+		function legacyNotifyTurnOpen() {
+			var fns = [];
+			legacyTurnOpenListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) { try { fns[i](); } catch (e) { /* 单个订阅者异常不带走 store */ } }
+		}
+		function legacyReadTurnOpen(sessionKey, turn) {
+			var bucket = legacyTurnOpenBySession.get(sessionKey);
+			var v = bucket ? bucket.get(turn) : undefined;
+			return v === undefined ? null : v;
+		}
+		function legacySetTurnOpen(sessionKey, turn, open) {
+			var bucket = legacyTurnOpenBySession.get(sessionKey);
+			if (!bucket) { bucket = new Map(); legacyTurnOpenBySession.set(sessionKey, bucket); }
+			if (bucket.get(turn) === open) return;
+			bucket.set(turn, open);
+			legacyNotifyTurnOpen();
+		}
+		/** 有效展开态：running 恒展开（Turn Bar 是状态面不是折叠开关）；不可折叠（纯问答 /
+		 *  aborted / error）恒展开（静态栏、内容常显）；completed+可折叠 → 默认 closed。 */
+		function legacyTurnEffectiveOpen(group, manual) {
+			if (!group) return true;
+			if (group.running || !group.canCollapse) return true;
+			return manual === true;
+		}
+		function useLegacyTurnOpen(sessionKey, turn, active) {
+			return useSyncExternalStore(
+				active ? subscribeLegacyTurnOpen : subscribeNothing,
+				active ? function () { return legacyReadTurnOpen(sessionKey, turn); } : getUndefinedSnapshot
+			);
+		}
+		/** Turn surface 生命周期 Hook：**无条件调用**（non-member ↔ member 不改变 Hook 顺序）。 */
+		function useLegacyTurnSurface(sessionKey, active) {
+			react.useEffect(function () {
+				if (!active) return undefined;
+				legacyTurnSurfaceMounted(sessionKey);
+				return function () { legacyTurnSurfaceUnmounted(sessionKey); };
+			}, [sessionKey, active]);
+		}
+		/** Step 逻辑是否生效：step-only backend 恒生效；full-legacy backend 需 attach 后生效。 */
+		function legacyStepLogicActive() {
+			var reg = legacyStepRegistration;
+			if (!reg) return false;
+			return reg.mode !== "full-legacy" || legacyStepAttached;
+		}
+		/** 0.1.1 运行时能力定论（committed effect；每条独立证据，绝不互相推导）：
+		 *  · Step：标准 kit 无 useConversation / 快照无 views.grouped → nativeStepGroups=false；
+		 *  · Metrics：snapshot.nodes.turnDataSource 不存在 → metrics=fallback。 */
+		function resolveLegacyRuntimeCapabilities(props, snapshot) {
+			try {
+				if (!snapshot || typeof snapshot !== "object") return;
+				if (typeof props.useConversation !== "function") {
+					if (!snapshot.views || typeof snapshot.views.grouped !== "function") {
+						resolveLegacyStepCapability({ nativeStepGroups: false });
+					}
+				}
+				if (snapshot.nodes && typeof snapshot.nodes === "object" && typeof snapshot.nodes.turnDataSource !== "function") {
+					resolveHostFeature("metrics", "fallback");
+				}
+			} catch (e) { /* 探测失败不影响运行 */ }
+		}
+		/** TurnBar 文案/指标适配（复用当前 helper；真实数据，取不到的字段显示 —）：
+		 *  · clock = Turn 级计时/状态；stepDataList = 本 Turn 的 assistant-step 数据（usage/timing）；
+		 *  · durable = turn-tail 节点的官方 ttftMs（0.1.1 TurnTailChatData 自带）——仅 TTFT，
+		 *    decode 仍从 step 证据聚合；绝不伪造任何字段。 */
+		function legacyTurnClockFrom(group, snapshot) {
+			return {
+				number: group.turn,
+				startMs: group.startMs,
+				endMs: group.endMs,
+				status: group.closed ? "closed" : "open",
+				reason: group.reason === "aborted" ? "aborted" : (group.reason === "error" ? "error" : undefined),
+				data: null,
+				steps: [],
+			};
+		}
+		function legacyTurnStepDataList(group, snapshot) {
+			var list = [];
+			var nodes = snapshot && snapshot.nodes;
+			if (!nodes || typeof nodes.get !== "function" || !group) return list;
+			for (var i = 0; i < group.keys.length; i++) {
+				var n = null;
+				try { n = nodes.get(group.keys[i]); } catch (e) { n = null; }
+				if (n && n.kind === "assistant-step" && n.data) list.push(n.data);
+			}
+			return list;
+		}
+		function legacyTurnTailData(group, snapshot) {
+			var nodes = snapshot && snapshot.nodes;
+			if (!nodes || typeof nodes.get !== "function" || !group) return undefined;
+			for (var i = group.keys.length - 1; i >= 0; i--) {
+				var n = null;
+				try { n = nodes.get(group.keys[i]); } catch (e) { n = null; }
+				if (n && n.kind === "turn-tail" && n.data) return n.data;
+			}
+			return undefined;
+		}
+		function legacyTurnDurable(group, snapshot) {
+			var tail = legacyTurnTailData(group, snapshot);
+			if (!tail || typeof tail.ttftMs !== "number" || !isFinite(tail.ttftMs)) return undefined;
+			return { ttftMs: Math.max(0, tail.ttftMs) };
+		}
+
+		// ---- feature 版本信号（Step logical attach / capability 定论后驱动 Full Legacy renderer 重渲染） ----
+		var legacyFeatureVersion = 0;
+		var legacyFeatureListeners = new Set();
+		function subscribeLegacyFeature(fn) {
+			legacyFeatureListeners.add(fn);
+			return function () { legacyFeatureListeners.delete(fn); };
+		}
+		function getLegacyFeatureVersion() { return legacyFeatureVersion; }
+		function legacyNotifyFeature() {
+			legacyFeatureVersion += 1;
+			var fns = [];
+			legacyFeatureListeners.forEach(function (fn) { fns.push(fn); });
+			for (var i = 0; i < fns.length; i++) { try { fns[i](); } catch (e) { /* 单个订阅者异常不带走 store */ } }
+		}
+		/** Full Legacy renderer 无条件调用（attach / capability 定论后重渲染）。 */
+		function useLegacyFeatureVersion() {
+			return useSyncExternalStore(subscribeLegacyFeature, getLegacyFeatureVersion);
+		}
+		/** Step feature 是否已 attach 到 Full Legacy backend（0.1.1：不新增 slot 注册，
+		 *  仅启用已持有 assistant/tool surface 上的 Step 逻辑）。 */
+		var legacyStepAttached = false;
+		function legacyAttachStepFeature() {
+			if (legacyStepAttached) return false;
+			legacyStepAttached = true;
+			legacyNotifyFeature();
+			return true;
+		}
+		function legacyResetStepAttach() {
+			if (!legacyStepAttached) return;
+			legacyStepAttached = false;
+			legacyNotifyFeature();
+		}
+		/** Full Legacy node backend 当前是否在役（0.1.1 Turn 语义的唯一开关）。 */
+		function legacyTurnBackendActive() {
+			return !!(legacyStepRegistration && legacyStepRegistration.mode === "full-legacy");
 		}
 		function legacyStepSurfaceUnmounted(sessionKey) {
 			var n = (legacyStepSurfaces.get(sessionKey) || 0) - 1;
@@ -1703,6 +2021,64 @@ window.__ModuleLoader__.load({
 			}
 			return true;
 		}
+		// ---- Full Legacy bootstrap（0.1.1：等待官方 builtin 就绪后原子安装；无轮询） ----
+		var legacyTurnBootstrapDisposer = null;
+		var legacyTurnBootstrapWaiting = false;
+		var legacyTurnBackendBlocked = false;   // 稳定冲突（第三方占位）→ 当前生命周期不再尝试
+		/** 安装事务进行中（逐条注册会同步 emit slots/changed）→ bootstrap 判定必须让路：
+		 *  否则本插件刚注册的 -1 条目会被当成"第三方占位"→ 自伤 blocked（首次安装后
+		 *  当前生命周期再也无法安装/重装）。 */
+		var legacyStepInstallInProgress = false;
+		function legacyTurnBootstrapCheck() {
+			if (legacyStepInstallInProgress) return;   // 安装事务进行中：由事务自己收尾（避免误判自伤）
+			if (legacyStepRegistration) { stopLegacyTurnBootstrap(); return; }   // 已安装
+			if (legacyTurnBackendBlocked) { stopLegacyTurnBootstrap(); return; }
+			var slots = legacyStepSlotsRef;
+			if (!slots) return;
+			var defs = legacyBackendEntriesFor("full-legacy");
+			// 依赖就绪：三 builtin 全部可捕获才尝试安装（官方尚未注册完 → 继续等，不是失败）
+			for (var i = 0; i < defs.length; i++) {
+				if (!findLegacyBuiltinRenderer(slots, defs[i][0])) return;
+			}
+			// 稳定冲突：任一 cell 已被负 priority 占用 → degraded，停止 bootstrap（不抢）
+			for (var j = 0; j < defs.length; j++) {
+				if (!legacyShadowOwnershipAvailable(slots, defs[j][0])) {
+					legacyTurnBackendBlocked = true;
+					stopLegacyTurnBootstrap();
+					return;
+				}
+			}
+			activateLegacyNodeBackend("full-legacy");
+			if (legacyStepRegistration) stopLegacyTurnBootstrap();
+		}
+		function startLegacyTurnBootstrap() {
+			var ctxRef = legacyStepContextRef;
+			if (!legacyTurnBootstrapDisposer && ctxRef && typeof ctxRef.on === "function") {
+				try {
+					var dispose = ctxRef.on("slots/changed", function (key) {
+						if (key !== "conversation.chat.node") return;
+						legacyTurnBootstrapCheck();
+					});
+					if (typeof dispose === "function") legacyTurnBootstrapDisposer = dispose;
+				} catch (e) { /* bootstrap 监听不可用 → 只依赖同步首查 */ }
+			}
+			legacyTurnBootstrapWaiting = true;
+			legacyTurnBootstrapCheck();   // 同步首查（builtin 已就绪的宿主立即安装）
+		}
+		/** 诊断/测试：重置 bootstrap 状态（blocked 旗标在生产里随插件生命周期保持——当前生命周期绝不自动重抢）。 */
+		function resetLegacyTurnBootstrapState() {
+			stopLegacyTurnBootstrap();
+			legacyTurnBackendBlocked = false;
+			legacyStepInstallInProgress = false;
+		}
+		function stopLegacyTurnBootstrap() {
+			if (legacyTurnBootstrapDisposer) {
+				try { legacyTurnBootstrapDisposer(); } catch (e) { /* 忽略 */ }
+				legacyTurnBootstrapDisposer = null;
+			}
+			legacyTurnBootstrapWaiting = false;
+		}
+
 		// ---- runtime ownership liveness（安装成功后持续持有 both cells 的保证） ----
 		// 官方语义（逐 tag 源码审计 0.1.2/0.1.5/0.1.6）：
 		//  · slots.subscribe(key, fn)：**microtask-batched**（markDirty → queueMicrotask flush）；
@@ -1794,6 +2170,8 @@ window.__ModuleLoader__.load({
 				}
 				legacyStepRegistration = null;
 				legacyStepBuiltinRenderers = null;
+				legacyResetStepAttach();          // 物理 backend 没了 → Step 逻辑随之失效（capability 仍 legacy）
+				stopLegacyTurnBootstrap();        // bootstrap 只服务于"尚未安装"；teardown 后不再自动重抢
 				if (reason === "ownership-lost") {
 					legacyStepInstallStats.runtimeOwnershipLosses += 1;
 					legacyStepInstallStats.runtimeTeardowns += 1;
@@ -1872,6 +2250,85 @@ window.__ModuleLoader__.load({
 					react.createElement("span", { "data-tf-legacy-title": "" }, title)
 				)
 			);
+		}
+
+		/** Legacy Turn Bar（0.1.1 的 Turn Fold 头）：完全复用 Shared Turn UI——TurnBarView /
+		 *  turnPokerIcon / turnRoundLabel / turnStatusLabel / 字段显隐 / iconStyle / 齿轮。
+		 *  折叠语义只来自 legacyTurnOpenBySession（与 turnProcess 无关、也与 Step open 正交）。 */
+		function LegacyTurnBar(props) {
+			var group = props.group;
+			var snapshot = props.snapshot;
+			var sessionKey = props.sessionKey;
+			var open = props.open;
+			var iconStyle = useIconStyle();          // 无条件一次（本组件无条件渲染路径）
+			var fieldVisibility = useFieldVisibility();
+			var running = group.running;
+			var liveNow = useLiveNow(running);
+			var clock = legacyTurnClockFrom(group, snapshot);
+			var stepDataList = legacyTurnStepDataList(group, snapshot);
+			var durable = legacyTurnDurable(group, snapshot);
+			var metrics = computeTurnMetrics(clock, stepDataList, undefined, running ? liveNow : undefined, durable, sessionKey);
+			var filtered = filterVisibleMetrics(metrics);
+			var visibleGeneration = running && assistantVisibleGenerationActive(stepDataList);
+			var displayTokens = useDisplayTokenAnimation(running, metrics ? metrics.tokens : undefined, visibleGeneration, fieldVisibility.tokens !== false);
+			var canonicalLabel = turnHeaderLabel(filtered);
+			var label = turnHeaderLabel(withDisplayTokens(filtered, running, displayTokens));
+			return react.createElement(TurnBarView, {
+				running: running,
+				open: open,
+				canToggle: group.canCollapse,
+				turnNumber: group.turn,
+				label: label,
+				srLabel: canonicalLabel,
+				statusText: turnStatusLabel(group.reason),
+				statusFailed: group.reason === "error",
+				poker: turnPokerIcon(iconStyle, group.toolCount, running, open, group.turn, group.canCollapse, props.sessionId),
+				round: turnRoundLabel(group.turn),
+				onToggle: function () { legacySetTurnOpen(sessionKey, group.turn, !open); },
+			});
+		}
+		/** 插件自有 Turn 可见性 wrapper（绝不改官方 DOM）：done 语义同 Step——
+		 *  hidden="until-found" + beforematch（经 ref 直挂 DOM property）；reveal 打开 Turn。 */
+		function legacyTurnHiddenProps(sessionKey, group, hidden) {
+			return {
+				"data-tf-legacy-turn-hidden": hidden ? "true" : undefined,
+				ref: function (el) {
+					if (!el || typeof el.setAttribute !== "function") return;
+					el.onbeforematch = function () { legacySetTurnOpen(sessionKey, group.turn, true); };
+					if (hidden) {
+						try { el.setAttribute("hidden", "until-found"); } catch (e) { el.setAttribute("hidden", ""); }
+					} else {
+						el.removeAttribute("hidden");
+					}
+				},
+			};
+		}
+		/** Turn 组合层（assistant/tool/context 共用）：把内容包进插件自有 Turn wrapper。
+		 *  `member` = 本节点是否是**可折叠成员**：false 时（header 锚点落在 final answer 上，
+		 *  纯问答 turn / 无可折叠成员）只渲染 Turn Bar 本身，内容裸露不隐藏——静态栏语义
+		 *  （canCollapse=false，点击无效果），绝不因为"没有可折叠成员"而整轮不显示栏。 */
+		function legacyTurnWrap(kids, sessionKey, group, open, headerKey, nodeKey, sessionId, snapshot, member) {
+			var out = [];
+			if (group.headerKey === nodeKey) {
+				out.push(react.createElement("div", {
+					key: "turnbar",
+					"data-tf-legacy-turn": "header",
+					"data-tf-legacy-session": sessionKey,
+					"data-tf-legacy-turn-number": String(group.turn),
+				}, react.createElement(LegacyTurnBar, {
+					group: group, snapshot: snapshot, sessionKey: sessionKey,
+					sessionId: sessionId, open: open,
+				})));
+			}
+			if (member === false) return out.concat(kids);   // 非成员：无可见性 wrapper（内容恒可见）
+			out.push(react.createElement("div", Object.assign({
+				key: "turnbody",
+				"data-tf-legacy-turn": "member",
+				"data-tf-legacy-session": sessionKey,
+				"data-tf-legacy-turn-number": String(group.turn),
+			}, legacyTurnHiddenProps(sessionKey, group, !open)), kids));
+			void headerKey;
+			return out;
 		}
 
 		// ---- legacy 逐组牌面规则（独立样式元素；插件属性天然隔离，无降级策略） ----
@@ -1971,38 +2428,64 @@ window.__ModuleLoader__.load({
 			var node = props.node;
 			var sessionKey = sessionKeyOf(props.sessionId);
 			var snapshot = useLegacyChatSnapshot(props);
-			var group = legacyGroupForNode(snapshot, node && node.key);
-			var openManual = useLegacyStepOpen(sessionKey, group ? group.leaderKey : "", !!group);
-			var member = !!(group && node && group.memberKeys[node.key]);
-			// surface 生命周期 Hook **无条件调用**（早于任何 return）：non-member ↔ member
-			// 的流式转换绝不改变 Hook 顺序（旧条件 useEffect 会触发 "Rendered more hooks"）。
-			useLegacyStepSurface(sessionKey, member);
+			var stepGroup = legacyGroupForNode(snapshot, node && node.key);
+			var stepLogic = legacyStepLogicActive();
+			var stepMember = !!(stepLogic && stepGroup && node && stepGroup.memberKeys[node.key]);
+			var turnActive = legacyTurnBackendActive();
+			var turnGroup = turnActive ? legacyTurnGroupForNode(snapshot, node) : null;
+			var turnMember = !!(turnGroup && node && turnGroup.memberKeys[node.key]);
+			// header 锚点可能是**非成员**（纯问答 turn：无中间成员 → header 落到 final answer）：
+			// 此时仍要渲染 Turn Bar（静态栏），但内容绝不隐藏。
+			var turnAnchor = !!(turnGroup && node && turnGroup.headerKey === node.key);
+			var turnSurface = turnMember || turnAnchor;
+			var openManual = useLegacyStepOpen(sessionKey, stepGroup ? stepGroup.leaderKey : "", stepMember);
+			var turnManual = useLegacyTurnOpen(sessionKey, turnGroup ? turnGroup.turn : -1, turnSurface);
+			useLegacyStepSurface(sessionKey, stepMember);
+			useLegacyTurnSurface(sessionKey, turnSurface);
+			useLegacyFeatureVersion();   // attach / capability 定论后重渲染
+			react.useEffect(function () {
+				if (turnActive) resolveLegacyRuntimeCapabilities(props, snapshot);
+			}, [turnActive, snapshot]);
 			var Builtin = legacyStepBuiltinRenderers ? legacyStepBuiltinRenderers.toolCall : null;
 			if (!Builtin) {
 				// 不可能状态（安装事务保证 builtin 已捕获）：shadow 已占位，只能降级告警。
 				legacyWarnOnce("builtin-lost-tool", "legacy step tool-call builtin reference lost unexpectedly");
 				return null;
 			}
-			if (!member) {
-				// 非成员（排除工具/无组）→ 原样直通，绝不隐藏（FAIL OPEN）
+			if (!stepMember && !turnSurface) {
+				// 非任何层的成员（排除工具 / 无组）→ 原样直通，绝不隐藏（FAIL OPEN）
 				return react.createElement(Builtin, props);
 			}
-			var open = legacyStepEffectiveOpen(group, openManual);
-			var hidden = !open;
 			var kids = [];
-			if (group.leaderKey === node.key) {
-				kids.push(react.createElement(LegacyStepHeader, {
-					key: "h", group: group, sessionKey: sessionKey, open: open,
-					onToggle: function () { legacySetStepOpen(sessionKey, group.leaderKey, !open); },
-				}));
+			if (stepMember) {
+				var open = legacyStepEffectiveOpen(stepGroup, openManual);
+				var stepKids = [];
+				if (stepGroup.leaderKey === node.key) {
+					stepKids.push(react.createElement(LegacyStepHeader, {
+						key: "h", group: stepGroup, sessionKey: sessionKey, open: open,
+						onToggle: function () { legacySetStepOpen(sessionKey, stepGroup.leaderKey, !open); },
+					}));
+				}
+				var reveal = function () { legacySetStepOpen(sessionKey, stepGroup.leaderKey, true); };
+				stepKids.push(react.createElement("div", Object.assign({
+					key: "m",
+					"data-tf-legacy-step": "member",
+					"data-tf-legacy-session": sessionKey,
+					"data-tf-legacy-group": stepGroup.leaderKey,
+				}, legacyHiddenProps(!open, reveal)), react.createElement(Builtin, props)));
+				kids.push(react.createElement("div", {
+					key: "step",
+					"data-tf-legacy-step": "node",
+					"data-tf-legacy-session": sessionKey,
+				}, stepKids));
+			} else {
+				kids.push(react.createElement("div", { key: "raw", "data-tf-legacy-step": "node", "data-tf-legacy-session": sessionKey },
+					react.createElement(Builtin, props)));
 			}
-			var reveal = function () { legacySetStepOpen(sessionKey, group.leaderKey, true); };
-			kids.push(react.createElement("div", Object.assign({
-				key: "m",
-				"data-tf-legacy-step": "member",
-				"data-tf-legacy-session": sessionKey,
-				"data-tf-legacy-group": group.leaderKey,
-			}, legacyHiddenProps(hidden, reveal)), react.createElement(Builtin, props)));
+			if (turnSurface) {
+				var turnOpen = legacyTurnEffectiveOpen(turnGroup, turnManual);
+				kids = legacyTurnWrap(kids, sessionKey, turnGroup, turnOpen, turnGroup.headerKey, node.key, props.sessionId, snapshot, turnMember);
+			}
 			return react.createElement("div", {
 				"data-tf-legacy-step": "node",
 				"data-tf-legacy-session": sessionKey,
@@ -2012,55 +2495,118 @@ window.__ModuleLoader__.load({
 			var node = props.node;
 			var sessionKey = sessionKeyOf(props.sessionId);
 			var snapshot = useLegacyChatSnapshot(props);
-			var group = legacyGroupForNode(snapshot, node && node.key);
-			var openManual = useLegacyStepOpen(sessionKey, group ? group.leaderKey : "", !!group);
-			var member = !!(group && node && group.memberKeys[node.key]);
+			var stepGroup = legacyGroupForNode(snapshot, node && node.key);
+			var stepLogic = legacyStepLogicActive();
+			var stepMember = !!(stepLogic && stepGroup && node && stepGroup.memberKeys[node.key]);
+			var turnActive = legacyTurnBackendActive();
+			var turnGroup = turnActive ? legacyTurnGroupForNode(snapshot, node) : null;
+			var turnMember = !!(turnGroup && node && turnGroup.memberKeys[node.key]);
+			var turnAnchor = !!(turnGroup && node && turnGroup.headerKey === node.key);
+			var turnSurface = turnMember || turnAnchor;
+			var openManual = useLegacyStepOpen(sessionKey, stepGroup ? stepGroup.leaderKey : "", stepMember);
+			var turnManual = useLegacyTurnOpen(sessionKey, turnGroup ? turnGroup.turn : -1, turnSurface);
 			// surface 生命周期 Hook **无条件调用**（早于任何 return）：assistant-step 的
 			// blocks 从空 → reasoning 的流式转换会让 non-member → member，Hook 顺序必须恒定。
-			useLegacyStepSurface(sessionKey, member);
+			useLegacyStepSurface(sessionKey, stepMember);
+			useLegacyTurnSurface(sessionKey, turnSurface);
+			useLegacyFeatureVersion();   // attach / capability 定论后重渲染
+			react.useEffect(function () {
+				if (turnActive) resolveLegacyRuntimeCapabilities(props, snapshot);
+			}, [turnActive, snapshot]);
 			var Builtin = legacyStepBuiltinRenderers ? legacyStepBuiltinRenderers.assistantStep : null;
 			if (!Builtin) {
 				legacyWarnOnce("builtin-lost-assistant", "legacy step assistant-step builtin reference lost unexpectedly");
 				return null;
 			}
-			if (!member) {
-				// 非成员（最终答案/纯 text 节点）→ 原样直通，绝不隐藏（最终答案永在 Fold 外）
+			if (!stepMember && !turnSurface) {
+				// 非任何层的成员（最终答案 / 纯 text 节点）→ 原样直通，绝不隐藏
+				// （最终答案永在 Turn Fold 与 Step Fold 之外）
 				return react.createElement(Builtin, props);
 			}
-			var open = legacyStepEffectiveOpen(group, openManual);
-			var hidden = !open;
-			var kids = [];
-			if (group.leaderKey === node.key) {
-				kids.push(react.createElement(LegacyStepHeader, {
-					key: "h", group: group, sessionKey: sessionKey, open: open,
-					onToggle: function () { legacySetStepOpen(sessionKey, group.leaderKey, !open); },
-				}));
-			}
-			if (legacyHasText(node)) {
-				// think+text 成员：think 部分入段（可隐藏）；text 正文段外恒可见（不折叠）
-				var reveal = function () { legacySetStepOpen(sessionKey, group.leaderKey, true); };
-				kids.push(react.createElement("div", Object.assign({
-					key: "t",
-					"data-tf-legacy-step": "member",
-					"data-tf-legacy-session": sessionKey,
-					"data-tf-legacy-group": group.leaderKey,
-				}, legacyHiddenProps(hidden, reveal)), react.createElement(Builtin, Object.assign({}, props, { node: legacyThinkOnlyNode(node) }))));
-				kids.push(react.createElement("div", {
-					key: "x",
-					"data-tf-legacy-step": "text",
-					"data-tf-legacy-session": sessionKey,
-				}, react.createElement(Builtin, Object.assign({}, props, { node: legacyTextOnlyNode(node) }))));
+			var stepKids = [];
+			if (stepMember) {
+				var open = legacyStepEffectiveOpen(stepGroup, openManual);
+				var hidden = !open;
+				if (stepGroup.leaderKey === node.key) {
+					stepKids.push(react.createElement(LegacyStepHeader, {
+						key: "h", group: stepGroup, sessionKey: sessionKey, open: open,
+						onToggle: function () { legacySetStepOpen(sessionKey, stepGroup.leaderKey, !open); },
+					}));
+				}
+				var reveal = function () { legacySetStepOpen(sessionKey, stepGroup.leaderKey, true); };
+				if (legacyHasText(node)) {
+					// think+text 成员：think 入段（可隐藏）；text 正文段外恒可见（Step 层不折叠）
+					stepKids.push(react.createElement("div", Object.assign({
+						key: "t",
+						"data-tf-legacy-step": "member",
+						"data-tf-legacy-session": sessionKey,
+						"data-tf-legacy-group": stepGroup.leaderKey,
+					}, legacyHiddenProps(hidden, reveal)), react.createElement(Builtin, Object.assign({}, props, { node: legacyThinkOnlyNode(node) }))));
+					stepKids.push(react.createElement("div", {
+						key: "x",
+						"data-tf-legacy-step": "text",
+						"data-tf-legacy-session": sessionKey,
+					}, react.createElement(Builtin, Object.assign({}, props, { node: legacyTextOnlyNode(node) }))));
+				} else {
+					stepKids.push(react.createElement("div", Object.assign({
+						key: "m",
+						"data-tf-legacy-step": "member",
+						"data-tf-legacy-session": sessionKey,
+						"data-tf-legacy-group": stepGroup.leaderKey,
+					}, legacyHiddenProps(hidden, reveal)), react.createElement(Builtin, props)));
+				}
 			} else {
-				var reveal = function () { legacySetStepOpen(sessionKey, group.leaderKey, true); };
-				kids.push(react.createElement("div", Object.assign({
-					key: "m",
-					"data-tf-legacy-step": "member",
-					"data-tf-legacy-session": sessionKey,
-					"data-tf-legacy-group": group.leaderKey,
-				}, legacyHiddenProps(hidden, reveal)), react.createElement(Builtin, props)));
+				// Turn-only 成员（Step 未 attach / 非 Step 成员）：内容裸露，仅受 Turn 层控制
+				stepKids.push(react.createElement("div", { key: "raw" }, react.createElement(Builtin, props)));
+			}
+			var kids = [react.createElement("div", {
+				key: "step",
+				"data-tf-legacy-step": stepMember ? "node" : "raw-node",
+				"data-tf-legacy-session": sessionKey,
+			}, stepKids)];
+			if (turnSurface) {
+				var turnOpen = legacyTurnEffectiveOpen(turnGroup, turnManual);
+				kids = legacyTurnWrap(kids, sessionKey, turnGroup, turnOpen, turnGroup.headerKey, node.key, props.sessionId, snapshot, turnMember);
 			}
 			return react.createElement("div", {
 				"data-tf-legacy-step": "node",
+				"data-tf-legacy-session": sessionKey,
+			}, kids);
+		}
+
+		/** Turn-only 的 context 渲染器（只在 Full Legacy backend 注册）：委托官方 context
+		 *  builtin；只应用 Turn 层（header 锚点 / Turn 可见性）；不参与 Step 分组、无 Step Header。 */
+		function LegacyTurnContextView(props) {
+			var node = props.node;
+			var sessionKey = sessionKeyOf(props.sessionId);
+			var snapshot = useLegacyChatSnapshot(props);
+			var turnActive = legacyTurnBackendActive();
+			var turnGroup = turnActive ? legacyTurnGroupForNode(snapshot, node) : null;
+			// context 既可能被排在用户消息之前（Turn 作用域外）也可能是回合内合法中间节点——
+			// 只有作用域内的 context 是 Turn 成员（memberKeys 由 index 决定，含边界逻辑）。
+			var turnMember = !!(turnGroup && node && turnGroup.memberKeys[node.key]);
+			var turnAnchor = !!(turnGroup && node && turnGroup.headerKey === node.key);
+			var turnSurface = turnMember || turnAnchor;
+			var turnManual = useLegacyTurnOpen(sessionKey, turnGroup ? turnGroup.turn : -1, turnSurface);
+			useLegacyTurnSurface(sessionKey, turnSurface);
+			useLegacyFeatureVersion();
+			react.useEffect(function () {
+				if (turnActive) resolveLegacyRuntimeCapabilities(props, snapshot);
+			}, [turnActive, snapshot]);
+			var Builtin = legacyStepBuiltinRenderers ? legacyStepBuiltinRenderers.context : null;
+			if (!Builtin) {
+				legacyWarnOnce("builtin-lost-context", "legacy turn context builtin reference lost unexpectedly");
+				return null;
+			}
+			if (!turnSurface) {
+				// 作用域外（context-before-user）→ 原样直通，永不隐藏
+				return react.createElement(Builtin, props);
+			}
+			var turnOpen = legacyTurnEffectiveOpen(turnGroup, turnManual);
+			var kids = legacyTurnWrap([react.createElement("div", { key: "raw" }, react.createElement(Builtin, props))],
+				sessionKey, turnGroup, turnOpen, turnGroup.headerKey, node.key, props.sessionId, snapshot, turnMember);
+			return react.createElement("div", {
+				"data-tf-legacy-step": "context-node",
 				"data-tf-legacy-session": sessionKey,
 			}, kids);
 		}
@@ -2121,34 +2667,70 @@ window.__ModuleLoader__.load({
 		 *   3) 依次注册两个 shadow；任一失败/未成为 active occupant → 回滚已注册的全部
 		 *   4) 全部成功才 COMMIT（registration + builtin 引用一起落定）
 		 *  返回是否发生了"未安装 → 已安装"的迁移（幂等；重复调用不算 attempt）。 */
-		function activateLegacyStepEngine() {
+		/** backend 模式 → 必需 slot 条目（物理 shadow key set）：
+		 *  · step-only（0.1.2~0.1.6）：assistant-step + tool-call（Step 语义）；
+		 *  · full-legacy（0.1.1）：assistant-step + tool-call + context（Turn 语义 + Step attach）。
+		 *  一个宿主同一时刻只有一个物理 owner backend。 */
+		function legacyBackendEntriesFor(mode) {
+			if (mode === "full-legacy") {
+				return [
+					["assistant-step", LegacyStepAssistantView],
+					["tool-call", LegacyStepToolCallView],
+					["context", LegacyTurnContextView],
+				];
+			}
+			return [
+				["assistant-step", LegacyStepAssistantView],
+				["tool-call", LegacyStepToolCallView],
+			];
+		}
+		/** 通用 node backend 安装事务（step-only / full-legacy 共用；不复制第二份安全机制）：
+		 *  1) builtin preflight（全部 required keys 都必须可捕获——任一缺失整体不装）；
+		 *  2) ownership preflight（live winner 非负；任一负 priority → 整体让位）；
+		 *  3) 注册全部 required shadows；4) winner 身份验证；5) monitor；6) COMMIT。
+		 *  任一失败 → 回滚全部（ALL REQUIRED CELLS OWNED OR ZERO LEGACY SHADOWS）。
+		 *  事务期间屏蔽 bootstrap 判定：逐条注册会同步 emit slots/changed，若此刻重入
+		 *  legacyTurnBootstrapCheck，本插件刚注册的 -1 条目会被当成"第三方占位"→ 自伤
+		 *  blocked（首次安装后永久禁止重装）。事务自己会在成功时停掉 bootstrap。 */
+		function activateLegacyNodeBackend(mode) {
+			if (legacyStepInstallInProgress) return false;   // 重入（同一次事务内的再次调用）→ no-op
+			legacyStepInstallInProgress = true;
+			try {
+				return activateLegacyNodeBackendTransaction(mode);
+			} finally {
+				legacyStepInstallInProgress = false;
+			}
+		}
+		function activateLegacyNodeBackendTransaction(mode) {
 			if (legacyStepRegistration) return false;   // 已安装：StrictMode/重放 no-op（不是 attempt）
 			if (!legacyStepSlotsRef) return false;      // 无 slots 面（防御；apply 未跑过）
 			legacyStepEngineActivations += 1;           // activation attempt（≠ 安装成功）
 			legacyStepInstallStats.attempts += 1;
 			var slots = legacyStepSlotsRef;
+			var defs = legacyBackendEntriesFor(mode);
 			// 1) builtin preflight（捕获必须先于注册）
-			var assistantBuiltin = findLegacyBuiltinRenderer(slots, "assistant-step");
-			var toolBuiltin = findLegacyBuiltinRenderer(slots, "tool-call");
-			if (!assistantBuiltin || !toolBuiltin) {
-				legacyStepInstallStats.preflightFailures += 1;
-				legacyWarnOnce("builtin-missing", "Legacy Step disabled: official builtin renderer not capturable (content stays on the original owner)");
-				return false;
+			var builtins = {};
+			for (var b = 0; b < defs.length; b++) {
+				var builtin = findLegacyBuiltinRenderer(slots, defs[b][0]);
+				if (!builtin) {
+					legacyStepInstallStats.preflightFailures += 1;
+					legacyWarnOnce("builtin-missing", "Legacy Step disabled: official builtin renderer not capturable (content stays on the original owner)");
+					return false;
+				}
+				builtins[defs[b][0]] = builtin;
 			}
 			// 2) ownership preflight（**任意同 key priority < 0** → 本插件 -1 不可能成为
 			//    winner → 整体让位，绝不半套；官方/第三方现有 owner 保持不动）
-			if (!legacyShadowOwnershipAvailable(slots, "assistant-step") || !legacyShadowOwnershipAvailable(slots, "tool-call")) {
-				legacyStepInstallStats.preflightFailures += 1;
-				legacyStepInstallStats.ownershipConflicts += 1;
-				legacyWarnOnce("cell-owned", "Legacy Step disabled: required shadow cell already owned by another plugin");
-				return false;
+			for (var p = 0; p < defs.length; p++) {
+				if (!legacyShadowOwnershipAvailable(slots, defs[p][0])) {
+					legacyStepInstallStats.preflightFailures += 1;
+					legacyStepInstallStats.ownershipConflicts += 1;
+					legacyWarnOnce("cell-owned", "Legacy Step disabled: required shadow cell already owned by another plugin");
+					return false;
+				}
 			}
 			// 3) 注册事务（任一失败 → 回滚全部）
 			var records = [];
-			var defs = [
-				["assistant-step", LegacyStepAssistantView],
-				["tool-call", LegacyStepToolCallView],
-			];
 			var failed = false;
 			for (var i = 0; i < defs.length; i++) {
 				var res = legacyRegisterShadow(defs[i][0], defs[i][1]);
@@ -2159,7 +2741,7 @@ window.__ModuleLoader__.load({
 					break;
 				}
 			}
-			// 4) winner 身份验证：两个 cell 的 winning entry 必须就是本次事务的条目
+			// 4) winner 身份验证：每个 required cell 的 winning entry 必须就是本次事务的条目
 			//    （key + priority 恰好 -1 + component 一致；entriesOfSlot 不可用 = 失败）
 			var ownershipVerified = false;
 			if (!failed) {
@@ -2199,8 +2781,12 @@ window.__ModuleLoader__.load({
 				ownershipRecords.push({ options: records[r].options, component: records[r].component });
 			}
 			// 6) COMMIT（builtin 引用 + registration + monitor 一起落定；
-			//    installed ⇒ ownershipVerified ⇒ monitorInstalled ⇒ keys 恰好两个）
-			legacyStepBuiltinRenderers = { assistantStep: assistantBuiltin, toolCall: toolBuiltin };
+			//    installed ⇒ ownershipVerified ⇒ monitorInstalled ⇒ keys = required 全集）
+			legacyStepBuiltinRenderers = {
+				assistantStep: builtins["assistant-step"],
+				toolCall: builtins["tool-call"],
+				context: builtins.context,
+			};
 			legacyStepRegistration = {
 				disposers: disposers,
 				monitorDisposers: monitor.disposers,
@@ -2208,12 +2794,24 @@ window.__ModuleLoader__.load({
 				keys: keys,
 				records: ownershipRecords,
 				ownershipVerified: true,
+				mode: mode,
 			};
 			// 完整成功安装才清 degraded（显式 retry 失败时保留上一轮的 ownership-lost 事实）
 			legacyStepDegradedReason = null;
 			legacyStepEngineInstalls += 1;
 			legacyStepInstallStats.successes += 1;
 			return true;
+		}
+		/** Step backend 安装入口：
+		 *  · 0.1.2~0.1.6：step-only 两键 backend（原语义一字不变）；
+		 *  · 0.1.1（Full Legacy 已在役）：**logical attach**——assistant/tool surface 已被
+		 *    Full Legacy backend 持有，绝不重复注册；只启用这些 surface 上的 Step 逻辑。 */
+		function activateLegacyStepEngine() {
+			if (legacyStepRegistration && legacyStepRegistration.mode === "full-legacy") {
+				legacyAttachStepFeature();
+				return false;   // 本次调用没有发生物理安装
+			}
+			return activateLegacyNodeBackend("step-only");
 		}
 		/** 插件卸载/热重载：走统一 teardown（monitor 先注销、再 shadows、清引用）。
 		 *  运行期 ownership 已丢失时安全 no-op（registration 已 null）。 */
@@ -2245,6 +2843,27 @@ window.__ModuleLoader__.load({
 				degradedReason: legacyStepDegradedReason,
 			};
 		}
+		/** 诊断/测试：统一 Legacy node backend 状态（mode/installed/keys/ownership/monitor/degraded/stepAttached）。 */
+		function getLegacyNodeBackendState() {
+			var reg = legacyStepRegistration;
+			return {
+				mode: reg ? reg.mode : (legacyTurnBootstrapWaiting ? "full-legacy-pending" : null),
+				installed: reg !== null,
+				keys: reg ? reg.keys.slice() : [],
+				ownershipVerified: !!(reg && reg.ownershipVerified === true),
+				monitorInstalled: !!(reg
+					&& reg.monitorKinds.slotsChanged === true
+					&& reg.monitorKinds.entryError === true
+					&& reg.monitorKinds.subscription === true),
+				degraded: legacyStepDegradedReason !== null,
+				degradedReason: legacyStepDegradedReason,
+				stepAttached: legacyStepAttached,
+				bootstrapWaiting: legacyTurnBootstrapWaiting,
+				turnBackendBlocked: legacyTurnBackendBlocked,
+			};
+		}
+		/** 诊断/测试：运行期降级原因（primitive，必须经 getter）。 */
+		function getLegacyStepDegradedReason() { return legacyStepDegradedReason; }
 		/** 诊断/测试：安装期捕获的 builtin renderer 引用（primitive/var 导出会被快照，必须经 getter）。 */
 		function getLegacyStepBuiltinRenderers() { return legacyStepBuiltinRenderers; }
 		/** 诊断/测试：安装统计（activation attempt ≠ successful install）。 */
@@ -4142,8 +4761,9 @@ window.__ModuleLoader__.load({
 		 *  单独定论（此时 step/metrics 仍如实显示 unknown）。 */
 		function reportResolvedHostMode() {
 			var s = hostCapabilityState;
-			if (s.turnFold === "unknown") return;
-			if (s.turnFold === "modern" && (s.stepFold === "unknown" || s.metrics === "unknown")) return;
+			// 最终结论只在三个 mode 组成 feature 全部定论后输出（0.1.1 上 step/metrics 由
+			// Full Legacy renderer 的 committed probe 定论——注册期绝不下 mode 结论）
+			if (s.turnFold === "unknown" || s.stepFold === "unknown" || s.metrics === "unknown") return;
 			var mode = s.turnFold === "legacy" ? "legacy" : (s.stepFold === "modern" ? "modern" : "mixed");
 			var sig = "mode|" + mode + "|" + s.turnFold + "|" + s.stepFold + "|" + s.metrics;
 			if (hostCapabilityLog === sig) return;
@@ -4159,9 +4779,16 @@ window.__ModuleLoader__.load({
 		 *  turn-process 契约）才会被调用。引擎本体（从 main@356db80 移植的 legacy turn
 		 *  fold）尚未移植——未移植前只记账，绝不注册任何影子渲染器。
 		 *  UNKNOWN 绝不进入本函数。 */
-		function activateLegacyTurnEngine() {
-			legacyTurnEngineActivations += 1;
-			return false;
+		/** 0.1.1：官方没有 turn-process / TurnProcessOwnerProps → 插件拥有 Turn Fold。
+		 *  引擎本体 = Full Legacy node backend（assistant/tool/context 一次注册、Turn + Step
+		 *  双语义）。注册期调用：turnFold 已是能力定论；此时官方 builtin 可能尚未注册完成 →
+		 *  event-driven bootstrap（slots/changed）等待依赖就绪后做**一次**原子安装；
+		 *  稳定冲突（第三方负 priority 占位）→ 停止 bootstrap（不自动重抢）。
+		 *  bootstrap ≠ capability probe：turnFold 恒 legacy，不因等待/失败改写。 */
+			function activateLegacyTurnEngine() {
+				legacyTurnEngineActivations += 1;   // activation attempt（≠ 安装成功）
+				startLegacyTurnBootstrap();
+				return true;
 		}
 		/** 渲染期定论：会话快照就绪（真实可读）且官方 Process Group 契约缺失 → Step
 		 *  legacy 成立，记一次激活。Modern 宿主恒不触发（契约在）。
@@ -4174,12 +4801,13 @@ window.__ModuleLoader__.load({
 		 *  任何引擎**）。为什么需要它：0.1.1 这类宿主没有 turn-process → 现代渲染器不
 		 *  注册 → Modern 的 StepCardRuleWriter 契约探针永远不会跑 → stepFold 停留在
 		 *  unknown。官方 tag 审计（dsh-v0.1.1-rc.2）确认：Process Group 从来不是 slot /
-		 *  service（是 props + 快照形状契约），0.1.1 的 SessionStandardProps 只有
-		 *  useInput/inputActions（连 useConversation/sessionId 都没有）→ **注册期没有
-		 *  稳定的"Step 缺失"证据**，也绝不允许"turn legacy ⇒ step legacy"这种版本历史
-		 *  相关性推断。下一轮 Legacy Compatibility Layer 的 root/session mount surface
-		 *  拿到旧版 props/快照后，必须在 **committed effect**（非 render body）里用
-		 *  本函数提交定论：
+		 *  service（是 props + 快照形状契约）；0.1.1 的 SessionStandardProps 提供
+		 *  sessionId + useSession + useProjection（**没有** useChat / useConversation /
+		 *  turn-process——useChat 自 0.1.2 的 ui-chat 合并进来，useConversation 随
+		 *  ui-conversation 的 Process Group 契约一起出现）。因此旧版**有**稳定的
+		 *  "Step 分组契约缺失"证据（kit 无 useConversation；快照无 views.grouped），
+		 *  但绝不允许"turn legacy ⇒ step legacy"这种版本历史相关性推断：两条证据链
+		 *  各自独立取得，结论各自 commit。
 		 *    probe.nativeStepGroups:
 		 *      true  = 旧快照证明存在官方分组契约（理论兜底，旧宿主不应出现）
 		 *      false = 显式证据：kit 里没有 useConversation，或快照没有 views.grouped

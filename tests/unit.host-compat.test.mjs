@@ -449,7 +449,7 @@ describe('兼容架构 F：诊断两行制（probing → resolved，每有效变
       assert.ok(modeLines[0].includes('host mode: mixed (turn: modern, step: legacy, metrics: fallback)'), modeLines[0])
     } finally { release() }
   })
-  it('F4 legacy 宿主：turn=legacy 单独定论 mode（step/metrics 如实显示 unknown）', () => {
+  it('F4 legacy 宿主：注册期只报 probing；step/metrics 定论后才出最终 legacy mode 行', () => {
     capture()
     try {
       T.resetHostCapabilityDiagnostics()
@@ -458,10 +458,15 @@ describe('兼容架构 F：诊断两行制（probing → resolved，每有效变
       T.hostCapabilityState.metrics = 'unknown'
       const caps = T.hostCapabilitiesOf({ nativeTurnFold: false })
       T.adoptRegistrationCapabilities(caps)
-      const modeLines = lines.filter((l) => l.includes('host mode:'))
       assert.ok(lines.some((l) => l.includes('host capabilities: turn=legacy, step=probing, metrics=probing')), 'probing 行')
-      assert.equal(modeLines.length, 1, 'legacy 宿主现代渲染器不注册 → mode 由 turn 定论')
-      assert.ok(modeLines[0].includes('host mode: legacy (turn: legacy, step: unknown, metrics: unknown)'), modeLines[0])
+      assert.equal(lines.filter((l) => l.includes('host mode:')).length, 0, '注册期不下 mode 结论（step/metrics 仍 unknown）')
+      // runtime committed probe 定论（0.1.1 Full Legacy renderer 的独立证据）
+      T.resolveHostFeature('stepFold', 'legacy')
+      assert.equal(lines.filter((l) => l.includes('host mode:')).length, 0, '三项未齐不出行')
+      T.resolveHostFeature('metrics', 'fallback')
+      const modeLines = lines.filter((l) => l.includes('host mode:'))
+      assert.equal(modeLines.length, 1, '全部定论 → 恰一行')
+      assert.ok(modeLines[0].includes('host mode: legacy (turn: legacy, step: legacy, metrics: fallback)'), modeLines[0])
     } finally { release() }
   })
 })

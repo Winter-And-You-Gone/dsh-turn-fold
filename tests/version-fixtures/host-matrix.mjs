@@ -30,9 +30,16 @@ export const HOST_VERSION_FIXTURES = [
   {
     version: '0.1.1-rc.2',
     tag: 'dsh-v0.1.1-rc.2',
-    probe: { officialTurnProcess: false, officialStandardKit: false, turnDataSource: false, stepGroups: false, sessionDomScope: false, conversationContentAnchor: false, oldShimmer: false, newShimmer: false, transcriptView: false },
+    probe: {
+      officialTurnProcess: false, officialStandardKit: false, turnDataSource: false, stepGroups: false,
+      sessionDomScope: false, conversationContentAnchor: false, oldShimmer: false, newShimmer: false, transcriptView: false,
+      // 0.1.1 session-scope standard kit（runtime/src/client/index.ts:130-138）：
+      // useSession + framework-resolved sessionId + useProjection；ui-conversation 合并 useInput/inputActions。
+      // 没有后来的 useChat / useConversation / turn-process / TurnProcessOwnerProps / Process Group。
+      standardKitSessionId: true, standardKitUseSession: true, standardKitUseChat: false, standardKitUseConversation: false,
+    },
     expect: { turnFold: 'legacy', stepFold: 'legacy', metrics: 'fallback', sessionScope: 'none', mode: 'legacy' },
-    note: '无 turn-process 节点、无 useChat/useConversation、无 Step 分组 —— 纯旧宿主',
+    note: '无 turn-process / TurnProcessOwnerProps、无 useChat/useConversation、无 Step 分组；但 session-scope 标准 kit 提供 sessionId + useSession + useProjection —— Legacy 兼容可在 conversation.chat.node 这一最小 surface 上完成（不替换 ConversationRoot / ChatView）',
   },
   {
     version: '0.1.2-rc.1',

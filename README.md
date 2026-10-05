@@ -316,24 +316,86 @@ Process Group disclosure）；插件只做 UI（Turn 栏 / Poker / 指标 / toke
 
 **Legacy 入口已按 feature 拆分**：`activateLegacyTurnEngine()` 只在
 `turnFold === "legacy"` 时调用（注册期 slot 表证明）；`activateLegacyStepEngine()`
-只在 `stepFold === "legacy"` 时调用（当前唯一现实路径是渲染期快照证明 Process Group
-契约缺失；0.1.1 的路径见下节）。两者各自有激活计数（`getLegacyEngineActivations()` →
-`{ turn, step }`），Modern 宿主必须恒为 0（测试矩阵逐版本锁死）。
+只在 `stepFold === "legacy"` 时调用（渲染期快照证明 Process Group 契约缺失）。
+两者各自有激活计数（`getLegacyEngineActivations()` → `{ turn, step }`），Modern
+宿主必须恒为 0（测试矩阵逐版本锁死）。
 
-**0.1.1 的 Step capability resolution surface（下一轮 Legacy Compatibility Layer 的
-接口契约，本轮只定义不实现）**：0.1.1 没有 turn-process → 现代渲染器不注册 → Modern
-的 `StepCardRuleWriter` 契约探针永远不会跑，stepFold 停在 unknown。官方 tag 审计
-（dsh-v0.1.1-rc.2）确认 Process Group 从来不是 slot / service（是 props + 快照形状
-契约），且 0.1.1 的 `SessionStandardProps` 只有 `useInput`/`inputActions`（连
-useConversation / sessionId 都没有）→ **注册期没有稳定的"Step 缺失"证据**；也绝不
-允许"turn legacy ⇒ step legacy"的版本相关性推断。下一轮的 Legacy root/session mount
-surface 必须在拿到旧版 props/快照后，于 **committed effect** 调用
-`resolveLegacyStepCapability({ nativeStepGroups })` 提交定论（`false` = kit 无
-useConversation 或快照无 views.grouped 的显式证据；`undefined` = 未就绪保持 unknown；
-返回 true 的那次 unknown → legacy 迁移才激活一次 legacy Step backend）。
+**0.1.1 的历史事实（修正）**：`dsh-v0.1.1-rc.2` 无 `turn-process`
+slot 条目、无 `useChat`、无 `useConversation`、无 `turnDataSource`；但它的
+session-scope 标准 kit **提供** `sessionId` + `useSession` + `useProjection`
+（`SessionStandardProps`），`useChat` 是 0.1.2 的 ui-chat 才合并进来的。此前
+README/注释里"0.1.1 连 sessionId / useSession 都没有"的说法是**错的**，已按
+tag 源码纠正。因此 0.1.1 上：
+- **数据面可达**：Legacy 面用 `useSession(s => s.chat)` 拿官方 `ChatSnapshot`
+  （与 0.1.2+ 的 `useChat(selector)` 同形：order / nodes / locations / timeline /
+  legacy），Step 分组算法与 Turn index **零改动复用**；
+- **Step 缺失证据两条独立存在**：kit 里没有 `useConversation`，或快照没有
+  `views.grouped` —— 但**绝不**做"turn legacy ⇒ step legacy"的版本相关性推断：
+  两条证据链各自探、结论各自 commit（`resolveLegacyStepCapability({ nativeStepGroups })`：
+  `false` = 显式缺失证据；`undefined` = 未就绪保持 unknown；返回 true 的那次
+  unknown → legacy 迁移才激活一次 legacy backend）。
 
 **Legacy adapter 在官方等价契约存在时永不运行**：判据全部是能力探针，版本号只出现在
 测试 fixtures、README 与 `engines.dsh` 里。
+
+### 0.1.1 Legacy Turn 兼容层（Full Legacy Node Backend）
+
+0.1.1 没有 `turn-process` / `TurnProcessOwnerProps` → 官方不拥有 Turn Fold →
+**插件在 0.1.1 上拥有 Turn 折叠语义**（PLUGIN OWNS TURN FOLD ONLY ON LEGACY HOSTS）。
+实现方式是**一个物理 backend、两套语义**：
+
+| 宿主 | 物理 shadow 键（恰好这些，一个宿主同一时刻只有一个 backend） | Turn 层 | Step 层 |
+| --- | --- | --- | --- |
+| 0.1.1（turn legacy） | `assistant-step` + `tool-call` + `context`（3 键，full-legacy 模式） | 插件 Turn index + Turn Bar + 可见性 | **logical attach**（同一 backend 上启用，绝不第二次注册） |
+| 0.1.2 ~ 0.1.6（turn modern / step legacy） | `assistant-step` + `tool-call`（2 键，step-only 模式，本轮语义一字未变） | 官方 owner（插件零参与） | 插件 Step 分组 + 折叠 |
+| 0.1.7+（turn/step 全 modern） | 无 | 官方 | 官方 |
+
+**Turn membership（纯算法 + memo）**：`legacyBuildTurnIndex(snapshot)` 是纯函数（唯一
+事实源，`WeakMap` 按 snapshot 身份 memo，一帧只算一次），语义取自旧 main@356db80 的
+A 类算法：
+- 作用域 = (最后一个 user 锚点 anchorSeq, turn] —— 用 `locations.getTurn(turn)` 取**该
+  Turn 的全部节点**（含官方隐藏节点）；`context` 排在 user 之前（审批策略注入）时属于
+  作用域外，**永不隐藏、也不作 header 锚点**；
+- `finalAssistantKey` = 关闭（`legacy.turnEnds` 有该 turn）后的**最后一个**
+  assistant-step —— 最终答案永不在折叠集合内；
+- `headerKey` = 作用域内第一个 member（`tool-call` / `assistant-step` / `context`），
+  没有中间成员时 fallback 到 `finalAssistantKey`；`hideKeys` 为空 → `canCollapse=false`；
+- `reason` 取自 `timeline.turns.get(turn).end.data.reason.kind`：`aborted` / `error`
+  → `alwaysOpen`（永不折叠）；`max-tokens` / `blocked` 按正常完成处理；`running`
+  （turnEnds 无该 turn）→ 恒展开、Turn Bar 是状态面（无 `aria-expanded`、点击不写状态）；
+- **FAIL OPEN**：finalization 竞态（closed 但还没有 assistant-step）、形状异常（无
+  turn / 无 user 锚点）→ 不隐藏任何东西，绝不 `return null`。
+
+**Turn 可见性**：与 Step 完全同构的**插件自有 wrapper**（`hidden="until-found"` +
+`onbeforematch` 自动展开，旧内核回退普通 hidden），官方内容经 priority-0 builtin
+**委托渲染**（原 props、原 node，内容零复制）；`turn-tail` / `user` / `steering` /
+`turn-process` **永不 shadow、永不隐藏**（物理键集合与成员集合双方锁死）。
+
+**Turn open store 与 Step open store 正交**：`legacyTurnOpenBySession`
+（sessionKey+turn）/ `legacyStepOpenBySession`（sessionKey+leaderKey）互相独立，Turn
+折叠/展开**绝不改写** Step 的展开态（反之亦然）；会话状态由统一 session cleanup 在
+两个 registry 都空时一次性清理。
+
+**Bootstrap（无轮询）**：注册期 `turnFold=legacy` → `activateLegacyTurnEngine()` 启动
+**事件驱动** readiness：官方 builtin 可能尚未注册完成，则挂 `ctx.on("slots/changed")`
+等待（同步首查 + 事件补查），三个 builtin 全部可捕获时做**一次**原子安装；稳定冲突
+（任一 cell 已被第三方负 priority 占用）→ 停止 bootstrap、当前生命周期不重抢（FAIL
+OPEN：官方 owner 原样显示，只是不折叠）。安装事务期间 bootstrap 判定被屏蔽（事务自己
+会同步 emit `slots/changed`，否则会把本插件刚注册的 `-1` 条目误判成第三方占位而永久
+自伤为 blocked）。
+
+**Ownership / degraded 复用既有安全机制**：atomic install（builtin 预捕获 → ownership
+preflight → 逐个注册 → winner 身份验证 → monitor → COMMIT → 任一失败整体回滚）、
+runtime monitor（`slots/changed` PRIMARY + `onEntryError` 同步 backstop + `subscribe`
+次级）、运行期 ownership 丢失 → 整体 teardown + `degraded="ownership-lost"`、**不自动
+重抢**——Step 与 Turn 共用同一套代码与同一份不变量（`getLegacyNodeBackendState()` 诊断
+mode / keys / ownershipVerified / monitorInstalled / degraded / stepAttached /
+bootstrapWaiting / turnBackendBlocked）。
+
+**能力独立**：`stepFold`（kit 无 `useConversation` 且快照无 `views.grouped`）与
+`metrics=fallback`（快照 `nodes.turnDataSource` 缺失）在**各自的 committed effect**
+里独立定论，**绝不从 `turnFold` 推导**；0.1.1 上三者的最终值是
+`{ turnFold: legacy, stepFold: legacy, metrics: fallback }`。
 
 ### Turn owner contract evolution（owner 形状归一化）
 
@@ -368,7 +430,7 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 
 | DSH 版本 | Turn backend | Owner 契约 | Step backend | Metrics backend | 会话作用域 |
 | --- | --- | --- | --- | --- |
-| 0.1.1-rc.2 | legacy（无 turn-process 节点、无 useChat/useConversation） | —（无 owner 契约） | legacy（无官方 Process Group） | fallback（无 turnDataSource） | none（无任何锚点） |
+| 0.1.1-rc.2 | **legacy：插件拥有 Turn Fold**（Full Legacy Node Backend：assistant-step + tool-call + context；无 turn-process、无 useChat/useConversation；有 sessionId/useSession） | —（无 owner 契约） | legacy：同一 backend 上 logical attach（无官方 Process Group） | fallback（无 turnDataSource） | none（无任何锚点） |
 | 0.1.2-rc.1 | **modern**（official owner state） | 旧形状（无 hasContent） | **legacy：插件 Legacy Step Adapter**（官方无分组契约） | **fallback**（无 turnDataSource，指标走逐 step 直读） | none（但插件 Legacy Header 自带 session scope） |
 | 0.1.5-rc.3 | modern | 旧形状（无 hasContent） | legacy：插件 Legacy Step Adapter | fallback | none（插件自有 scope） |
 | 0.1.6-alpha.2 | modern | 旧形状（无 hasContent） | legacy：插件 Legacy Step Adapter | fallback | tree-only（首次出现 `data-conversation-content`；插件 Legacy 面用自有 scope） |
@@ -389,11 +451,13 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 ```
 [dsh-turn-fold] host mode: modern (turn: modern, step: modern, metrics: reactive)
 [dsh-turn-fold] host mode: mixed  (turn: modern, step: legacy,  metrics: fallback)
-[dsh-turn-fold] host mode: legacy (turn: legacy, step: unknown, metrics: unknown)
+[dsh-turn-fold] host mode: legacy (turn: legacy, step: legacy,  metrics: fallback)
 ```
 
-`turn=legacy` 的宿主现代渲染器不注册、runtime probe 不会跑，mode 由 turnFold 单独
-定论（step/metrics 如实显示 unknown）。
+`turn=legacy` 的宿主现代渲染器不注册；最终 mode 行**只在三个 feature 全部定论后**
+输出——0.1.1 的 step/metrics 由 Full Legacy renderer 的 committed probe 定论，因此
+这行会晚到（注释面完全就绪之后），注册期绝不提前下结论。`getLegacyNodeBackendState()`
+可随时查询 backend/ownership/bootstrap 的实时事实。
 
 ### 会话作用域四态与 0.1.7-rc.1 安全降级
 
@@ -589,15 +653,19 @@ modern 清理只清 face/bag，Legacy open state 会残留）。全局共享资�
 变体样式元素 / Poker 池 / settings）绝不在这里清。现代 `stepCardRulesBySession` 仍由
 bridge 的卸载路径负责（统一 helper 不重复清）。
 
-Legacy 层的语义最小化：rich title（编辑 diff 文案 / 文件名 / failure 聚合 / 自动跟随
-think）与旧 Turn 折叠算法（含旧 metrics）**明确不移植**；Legacy 层不计算任何指标
-（TTFT/TPS/token/cache 全部仍由 EnhancedTurnProcessView 的 fallback 面负责）。
+Legacy **Step** 层的语义最小化：rich title（编辑 diff 文案 / 文件名 / failure 聚合 /
+自动跟随 think）与旧 metrics **明确不移植**。Legacy **Turn** 层（0.1.1）移植的是旧
+main 的 Turn 折叠**语义**（membership / 边界 / header / final / reason），实现是新写的
+纯索引 + 插件自有 DOM，同样**不计算任何指标**（TTFT/TPS/token/cache 全部由共享的
+TurnBarView fallback 面负责：Turn 级时钟取 `legacy.turnTimings`/`turnEnds`，TTFT 取
+turn-tail 的官方 `ttftMs`，decode 由 assistant-step 证据聚合，取不到的字段显示 "—"）。
 
-当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.0-rc.2"`：0.1.1-rc.2 的 Legacy Turn +
-Legacy Step **均未实现**；0.1.2 ~ 0.1.6 的本轮代码（Official Turn + Legacy Step）
-必须等真实旧宿主矩阵通过后才会放开 `engines.dsh`。0.1.2 / 0.1.5 / 0.1.6 / 0.1.7-rc.1
-均为 source-audited / contract-harness verified（官方 tag 契约 + 真实 DOM/组件形状），
-**not live-host verified**（本机无这些版本的 runtime）。
+当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.0-rc.2"`（**本轮未放开**）：0.1.1-rc.2 的
+Full Legacy Node Backend（Turn + Step 双语义）与 0.1.2 ~ 0.1.6 的 Official Turn +
+Legacy Step 都必须等真实旧宿主矩阵通过后才会放开 `engines.dsh`。0.1.1 / 0.1.2 / 0.1.5 /
+0.1.6 / 0.1.7-rc.1 均为 source-audited / contract-harness verified（官方 tag 契约 +
+真实 DOM/组件形状 + 本机 0.1.1 契约 harness），**not live-host verified**（本机无这些
+版本的 runtime）。
 
 ## 安装
 
