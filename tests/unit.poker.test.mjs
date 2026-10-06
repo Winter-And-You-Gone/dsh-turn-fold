@@ -129,6 +129,66 @@ describe('SVG 生成', () => {
   })
 })
 
+// ── 回合折叠栏运行态 = 牌面翻转·竖直对角线轴（回归守卫） ──
+// 曾经的 bug：CSS 里有一条 `.ccg-poker-icon .ccg-axis-rest-rotation{transform:rotate(0deg)}`
+// 想做过“收起中轴 ⇄ 展开对角线轴”的开合过渡（配套的 data-spin-open 后来没人再挂），
+// 结果 CSS transform 永久覆盖了 SVG transform 属性 → 运行中图标静默退化成纵向中轴。
+// 轴角只认 SVG 属性（数据源 icons/default.json → pokerSpin.restAngle）。
+describe('运行中翻牌轴 = 竖直对角线轴', () => {
+  const spin = T.ICON_DEFAULTS.pokerSpin
+  const cardW = spin.h * spin.pokerRatio
+  const axisDeg = Math.atan(cardW / spin.h) * 180 / Math.PI   // 5:7 卡牌 ≈ 35.5377°
+
+  const axisOf = (svg) => {
+    const m = svg.match(/class="ccg-axis-rest-rotation" transform="rotate\((-?[0-9.]+)\)"/)
+    return m ? Number(m[1]) : null
+  }
+
+  it('buildPokerSpinSVG：轴角 = atan(w/h)，5:7 卡牌 ≈ 35.5377°', () => {
+    const angle = axisOf(T.buildPokerSpinSVG('axis-uid'))
+    assert.notEqual(angle, null, '翻牌 SVG 必须带 ccg-axis-rest-rotation 旋转轴')
+    assert.ok(Math.abs(angle - axisDeg) < 1e-3, '轴角应为 ' + axisDeg.toFixed(4) + '°，实际 ' + angle)
+    assert.ok(Math.abs(angle - 35.5377) < 0.01, '真实扑克牌比例下竖直对角线轴 ≈ 35.5377°，实际 ' + angle)
+  })
+
+  it('几何：绕卡牌中心转该角后，左上→右下对角线竖直（dx≈0 且过中心）', () => {
+    const th = axisDeg * Math.PI / 180
+    const rot = (x, y) => [x * Math.cos(th) - y * Math.sin(th), x * Math.sin(th) + y * Math.cos(th)]
+    const tl = rot(-cardW / 2, -spin.h / 2)
+    const br = rot(cardW / 2, spin.h / 2)
+    assert.ok(Math.abs(tl[0] - br[0]) < 1e-9, '对角线两端必须落在同一条竖直线上')
+    assert.ok(Math.abs(tl[0]) < 1e-9, '这条竖直线必须过卡牌中心')
+  })
+
+  it('结构：squash 在根坐标系（横轴）→ 翻转轴就是这条竖直对角线；原点 = 卡牌中心', () => {
+    const svg = T.buildPokerSpinSVG('axis-uid-2')
+    // ① scaleX 必须包在 rotate 之外（否则翻转轴跟着卡牌一起转，就不是竖直对角线了）
+    assert.ok(svg.indexOf('animateTransform') < svg.indexOf('ccg-axis-rest-rotation'),
+      '共轭结构：translate(8,8) → scaleX(cosθ) → rotate(restAngle) → translate(-8,-8)')
+    assert.ok(svg.includes('<g transform="translate(8 8)">'), '视图中心平移到原点')
+    // ② rotate g 内层是 translate(-8 -8)：卡牌中心落在旋转局部原点（CSS 的 view-box 原点不是它）
+    const tail = svg.slice(svg.indexOf('ccg-axis-rest-rotation'), svg.indexOf('ccg-axis-rest-rotation') + 200)
+    assert.ok(/transform="rotate\(-?[0-9.]+\)"><g transform="translate\(-8 -8\)">/.test(tail),
+      'rotate 必须绕局部原点（= 卡牌中心）旋转：' + tail.slice(0, 160))
+  })
+
+  it('CSS 不得覆盖该轴（回归守卫：CSS transform 会压掉 SVG transform 属性）', () => {
+    const tag = sharedDocument.querySelector('style[data-plugin-css="' + T.CSS_ID + '"]')
+    assert.ok(tag, '基础样式表已注入')
+    assert.ok(!tag.textContent.includes('ccg-axis-rest-rotation'),
+      'CSS 不得出现 .ccg-axis-rest-rotation —— CSS transform 覆盖 attribute 会把竖直对角线轴压回纵向中轴')
+  })
+
+  it('PokerSpinIcon：无 data-spin-open 之类的开合开关（运行态轴角恒定）', () => {
+    mount(react.createElement(T.PokerSpinIcon, null))
+    const icon = container.querySelector('.ccg-poker-icon')
+    assert.ok(icon, '运行中图标已渲染')
+    assert.equal(icon.getAttribute('data-spin-open'), null, '运行态不再有开合角度开关')
+    const rendered = axisOf(container.querySelector('.ccg-poker-svg').innerHTML)
+    assert.ok(Math.abs(rendered - axisDeg) < 1e-3, '渲染出的轴角 = 竖直对角线轴，实际 ' + rendered)
+  })
+})
+
 // ── Turn 顶层牌面：per-session shuffle bag（本轮修复） ──
 describe('Turn 顶层牌面 shuffle bag', () => {
   it('shufflePokerFaces：Fisher–Yates 只做置换（集合/长度不变、不改入参、RNG 决定顺序）', () => {

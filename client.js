@@ -809,11 +809,14 @@ window.__ModuleLoader__.load({
 		//   不定义成员/分组。插件只做 "官方事实 → 视觉表现"。
 		var STEP_CARD_CSS_ID = "dsh-turn-fold/style-step-cards";
 		var STEP_FACE_CSS_ID = "dsh-turn-fold/style-step-faces";
+		var STEP_FILES_CSS_ID = "dsh-turn-fold/style-step-files";
 		var STEP_CARD_SMALL_MAX = 3;
 		var STEP_CARD_COUNT_SMALL = 3;
 		var STEP_CARD_COUNT_LARGE = 5;
 		var stepCardStyleEl = null;
 		var stepCardRulesCache = null;
+		var stepFilesStyleEl = null;
+		var stepFilesRulesCache = null;
 		/** 官方 counts → 本组 tool call 总数（求和，不是 counts.length）。 */
 		function stepCardToolCallCount(counts) {
 			if (!counts || typeof counts.length !== "number") return undefined;
@@ -826,22 +829,185 @@ window.__ModuleLoader__.load({
 			}
 			return total;
 		}
-		/** 官方 group snapshot → { count, closed }；形状异常/缺席 → undefined。
+		/** 官方 group snapshot → { count, closed, filesText }；形状异常/缺席 → undefined。
 		 *  closed 取官方 ProcessGroupData.closed：只有已完成的组才分配牌面
-		 *  （running 组既不消费 top-face bag，也不生成逐组覆盖——它归五牌面轮换）。 */
-		function stepCardGroupState(snapshot) {
+		 *  （running 组既不消费 top-face bag，也不生成逐组覆盖——它归五牌面轮换）。
+		 *  filesText 需要官方 ChatNodeStore（按成员 key 读工具节点）；缺 store（旧宿主/降级）
+		 *  → 空串 = 不产出文件清单规则，牌数语义完全不受影响。 */
+		function stepCardGroupState(snapshot, nodeStore) {
 			if (!snapshot || !snapshot.data || !snapshot.data.summary) return undefined;
 			var total = stepCardToolCallCount(snapshot.data.summary.counts);
 			if (total === undefined) return undefined;
+			var filesText = "";
+			if (nodeStore && typeof nodeStore.get === "function") {
+				filesText = stepFilesText(stepGroupFilePaths(snapshot, function (key) { return nodeStore.get(key); }));
+			}
 			return {
 				count: total <= STEP_CARD_SMALL_MAX ? STEP_CARD_COUNT_SMALL : STEP_CARD_COUNT_LARGE,
 				closed: snapshot.data.closed === true,
+				filesText: filesText,
 			};
 		}
 		/** 官方 group snapshot → 牌数；形状异常/缺席 → undefined（调用方回落 5 张）。 */
 		function stepCardCountOfGroup(snapshot) {
 			var state = stepCardGroupState(snapshot);
 			return state ? state.count : undefined;
+		}
+
+		// ---- 步骤文件清单（本 Process Group 碰过哪些文件） ----
+		// 数据面（全部官方现成 API，纯只读）：
+		//   groupSource(key).getSnapshot().members（NodeReference[]，本组每个成员节点的 key）
+		//   → 官方 ChatNodeStore.get(key)（按 key 直读节点，契约见 ui-chat contract/snapshot.ts）
+		//   → node.data.root（ToolChatData.root = ToolCallBlock：name + argsRaw）
+		//   → JSON.parse(argsRaw) → 抽 file_path / file / target / path
+		// 出口 = 官方组头按钮 [data-process-activity] 的 ::after{content}（纯 CSS 文本）：
+		//   插件不写官方 DOM、不加官方属性、不做 DOM 观察——这是本仓库既定的架构红线
+		//   （见 tests/unit.compat.test.mjs 禁用标识符 + tests/unit.step-cards.test.mjs 桥守卫）。
+		var STEP_FILES_MAX = 3;   // 尾部最多显示几个文件名（完整名，绝不显示半个）
+		var STEP_FILES_BUDGET = 32;   // 显示文本的字符预算（含 " · " 分隔符）；超出整名折进 " +N"
+		// 目录型工具：它们的 path 参数是搜索根不是文件（本步骤"处理"的是命中结果，
+		// 拿根目录冒充文件名会误导）——只对 path 键生效，file_path/file/target 恒采信。
+		var STEP_FILES_DIRECTORY_TOOLS = ["glob", "grep", "find", "ls", "list_directory"];
+		/** 工具的叶子名（去命名空间/下划线前缀：dsh_grep → grep；大小写不敏感）。 */
+		function toolLeafName(name) {
+			var s = String(name === undefined || name === null ? "" : name).toLowerCase();
+			var cut = Math.max(s.lastIndexOf("_"), s.lastIndexOf("."), s.lastIndexOf(":"));
+			return cut >= 0 ? s.slice(cut + 1) : s;
+		}
+		function isDirectoryTool(name) {
+			var leaf = toolLeafName(name);
+			for (var i = 0; i < STEP_FILES_DIRECTORY_TOOLS.length; i++) {
+				if (leaf === STEP_FILES_DIRECTORY_TOOLS[i]) return true;
+			}
+			return false;
+		}
+		/** 已解析的 args → 文件路径（null = 这条调用不针对具体文件）。
+		 *  键优先级 file_path/filePath > file > target > path；目录（以分隔符结尾）不算文件；
+		 *  url 不是文件，显式不取。 */
+		function filePathFromArgs(args, toolName) {
+			if (!args || typeof args !== "object") return null;
+			var keys = ["file_path", "filePath", "file", "target", "path"];
+			for (var i = 0; i < keys.length; i++) {
+				var v = args[keys[i]];
+				if (typeof v !== "string") continue;
+				var s = v.trim();
+				if (s === "" || /[\\/]$/.test(s)) continue;
+				if (keys[i] === "path" && isDirectoryTool(toolName)) continue;
+				return s;
+			}
+			return null;
+		}
+		/** 工具调用节点 → 文件路径（null = 无路径/形状异常/args 未到）。
+		 *  兼容两种官方 payload：已结算 ToolResultNode（call:{name,argsRaw}，窗口截断时为 null）
+		 *  与运行中 StartedToolCall（name/argsRaw 在自身）；preparing 阶段无 args → null。 */
+		function toolCallFilePath(node) {
+			if (!node || node.kind !== "tool-call" || !node.data || !node.data.root) return null;
+			var root = node.data.root;
+			var call = root.call || root;
+			if (!call || typeof call.argsRaw !== "string" || call.argsRaw === "") return null;
+			var args;
+			try { args = JSON.parse(call.argsRaw); } catch (e) { return null; }
+			return filePathFromArgs(args, call.name);
+		}
+		/** 路径 → 显示用 basename（去掉尾分隔符后取最后一段）。 */
+		function stepFileBaseName(path) {
+			var s = String(path).replace(/[\\/]+$/, "");
+			var cut = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
+			return cut >= 0 ? s.slice(cut + 1) : s;
+		}
+		/** 一个 group 碰过的文件路径（按出现顺序去重；分隔符归一后比较）。 */
+		function stepGroupFilePaths(snapshot, readNode) {
+			var out = [];
+			if (!snapshot || !snapshot.members || typeof snapshot.members.length !== "number") return out;
+			if (typeof readNode !== "function") return out;
+			var seen = Object.create(null);
+			for (var i = 0; i < snapshot.members.length; i++) {
+				var member = snapshot.members[i];
+				if (!member || member.kind !== "node" || member.key === undefined || member.key === null) continue;
+				var node;
+				try { node = readNode(member.key); } catch (e) { continue; }
+				var path = toolCallFilePath(node);
+				if (!path) continue;
+				var norm = path.replace(/\\/g, "/");
+				if (seen[norm] === true) continue;
+				seen[norm] = true;
+				out.push(path);
+			}
+			return out;
+		}
+		/** 文件路径 → 步骤栏尾部文本：basename 再去重、最多 STEP_FILES_MAX 个，其余折成 " +N"。
+		 *  **整名策略**：超出字符预算的名字整条折进 "+N"，绝不显示半个文件名——早先靠 CSS
+		 *  ellipsis 兜底，会把 "ChatGroupSeat.tsx" 切成 "ChatGroup…" 这种看不懂的残片。 */
+		function stepFilesText(paths) {
+			if (!paths || typeof paths.length !== "number") return "";
+			var names = [];
+			var seen = Object.create(null);
+			for (var i = 0; i < paths.length; i++) {
+				var base = stepFileBaseName(paths[i]);
+				if (base === "" || seen[base] === true) continue;
+				seen[base] = true;
+				names.push(base);
+			}
+			if (names.length === 0) return "";
+			var shown = [];
+			for (var j = 0; j < names.length && shown.length < STEP_FILES_MAX; j++) {
+				if (shown.length > 0 && shown.concat([names[j]]).join(" \u00b7 ").length > STEP_FILES_BUDGET) break;
+				shown.push(names[j]);
+			}
+			var more = names.length - shown.length;
+			if (more <= 0) return shown.join(" \u00b7 ");
+			// 预算里还要留出 " +N"：从尾部整名挤掉（至少保留一个名字，否则这一段就没信息了）
+			while (shown.length > 1 && shown.join(" \u00b7 ").length + (" +" + more).length > STEP_FILES_BUDGET) {
+				shown.pop();
+				more = names.length - shown.length;
+			}
+			return shown.join(" \u00b7 ") + " +" + more;
+		}
+		/** CSS 字符串字面量转义（content 里的引号/反斜杠/换行）。 */
+		function cssStringContent(text) {
+			return String(text).replace(/[\\"]/g, "\\$&").replace(/[\r\n\t]+/g, " ");
+		}
+		/** 逐组规则的会话作用域前缀（官方锚点 / rc.1 回退 / legacy 面）——牌面覆盖与步骤
+		 *  文件清单两种逐组规则共用同一份作用域事实，避免两份会漂移的拼接逻辑。 */
+		function stepRuleScopePrefixes(sessionId, surface) {
+			var legacySurface = surface === "legacy";
+			var hasSession = sessionId !== undefined && sessionId !== null && String(sessionId) !== "";
+			return {
+				legacySurface: legacySurface,
+				hasSession: hasSession,
+				official: !legacySurface && hasSession ? '[data-conversation-session="' + cssAttrValue(sessionId) + '"] ' : "",
+				fallback: !legacySurface && hasSession ? '[data-conversation-content]:not([data-conversation-session]) ' : "",
+				legacy: legacySurface && hasSession ? '[data-tf-legacy-session="' + cssAttrValue(sessionId) + '"] ' : "",
+			};
+		}
+		/** 步骤文件清单的 ::after 声明块（尾部纯文本；标题用 ellipsis 让位）。
+		 *  max-width 只是兜底（数据层已按 STEP_FILES_BUDGET 整名取舍，正常不会触发），
+		 *  留足余量是因为 ch 是"0"的宽度：名字里混中文时实际占用约 2ch/字。 */
+		var STEP_FILES_DECL = "flex:none;margin-left:2px;max-width:44ch;overflow:hidden;" +
+			"text-overflow:ellipsis;white-space:nowrap;font-size:.92em;opacity:.85";
+		/** groupKey → 步骤文件清单规则（挂官方组头按钮的 ::after）。
+		 *  运行中与已完成都输出：运行中随 counts/members 变化刷新，完成后成为稳定清单。
+		 *  legacy 面（插件自有 LegacyStepHeader，宿主 0.1.2~0.1.6）本轮不产出。 */
+		function buildStepFileRulesCss(map, sessionId, surface) {
+			var scopes = stepRuleScopePrefixes(sessionId, surface);
+			if (scopes.legacySurface) return "";
+			var rules = [];
+			if (map) {
+				for (var key in map) {
+					if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
+					var state = map[key];
+					var text = state && state.filesText;
+					if (typeof text !== "string" || text === "") continue;
+					var sel = '[data-step-process][data-chat-group-key="' + cssAttrValue(key) +
+						'"] button[data-process-activity]::after';
+					var decl = '{content:"' + cssStringContent(text) + '";' + STEP_FILES_DECL + '}';
+					// 两支 = 各自完整的 selector（rc.2+ 官方锚点 / rc.1 回退），与牌面规则同款约定
+					rules.push(scopes.hasSession
+						? scopes.official + sel + ',' + scopes.fallback + sel + decl
+						: sel + decl);
+				}
+			}
+			return rules.join("\n");
 		}
 		// ---- 已完成 Step Group 的牌面分配（presentation state，不持久化） ----
 		// 旧行为：completed 牌堆的牌面是固定序 [diamond, club, spade, heart, deepseek]，
@@ -1030,11 +1196,12 @@ window.__ModuleLoader__.load({
 		 *  DOM 上、天然精确限定，无需官方锚点回退分支，也不受官方 sessionScope 影响）。 */
 		function buildStepCardRulesCss(map, sessionId, surface) {
 			var rules = [];
-			var legacySurface = surface === "legacy";
-			var hasSession = sessionId !== undefined && sessionId !== null && String(sessionId) !== "";
-			var officialScope = !legacySurface && hasSession ? '[data-conversation-session="' + cssAttrValue(sessionId) + '"] ' : "";
-			var fallbackScope = !legacySurface && hasSession ? '[data-conversation-content]:not([data-conversation-session]) ' : "";
-			var legacyScope = legacySurface && hasSession ? '[data-tf-legacy-session="' + cssAttrValue(sessionId) + '"] ' : "";
+			var scopes = stepRuleScopePrefixes(sessionId, surface);
+			var legacySurface = scopes.legacySurface;
+			var hasSession = scopes.hasSession;
+			var officialScope = scopes.official;
+			var fallbackScope = scopes.fallback;
+			var legacyScope = scopes.legacy;
 			if (map) {
 				for (var key in map) {
 					if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
@@ -1083,6 +1250,29 @@ window.__ModuleLoader__.load({
 				writeStepCardRulesMerged();
 			} catch (e) { /* 视觉增强可以坏，官方折叠不受影响 */ }
 		}
+		/** 逐组规则块的会话作用域输出策略（牌面覆盖表与文件清单表**共用同一份判据**，
+		 *  两张表只差"写进哪个样式元素"）。详见下面 writeStepCardRulesMerged 的注释。 */
+		function mergedStepRuleChunks(chunksBySession) {
+			var scoped = [];
+			var plain = [];
+			chunksBySession.forEach(function (chunk, sessionKey) {
+				if (!chunk) return;
+				if (sessionKey === "") plain.push(chunk);
+				else scoped.push(chunk);
+			});
+			// 会话作用域单一事实源 = capability controller；state 仍是 unknown 时才做
+			// 一次性 DOM 契约读取，读完重读 state（probeOfficialSessionScope 返回定论值）。
+			var scope = probeOfficialSessionScope();
+			if (scope === "official") {
+				return scoped.length > 0 ? scoped.join("\n") : (plain.length === 1 ? plain[0] : "");
+			}
+			// tree-only / none / unknown：按**活跃会话数**判断，chunk 数只是输出候选
+			var activeSessions = stepCardBridgeSessions.size;
+			var chunkCount = scoped.length + plain.length;
+			return activeSessions === 1 && chunkCount === 1
+				? (scoped.length > 0 ? scoped[0] : plain[0])
+				: "";
+		}
 		/** 输出规则到样式元素（内容不变不写）。
 		 *  会话作用域输出策略（rc.1 安全降级，详见 README「会话作用域」）：
 		 *  · sessionScope = official（官方 data-conversation-session 在场，0.1.7-rc.2+）→
@@ -1098,30 +1288,33 @@ window.__ModuleLoader__.load({
 		function writeStepCardRulesMerged() {
 			try {
 				if (!stepCardStyleEl) return;
-				var scoped = [];
-				var plain = [];
-				stepCardRulesBySession.forEach(function (chunk, sessionKey) {
-					if (!chunk) return;
-					if (sessionKey === "") plain.push(chunk);
-					else scoped.push(chunk);
-				});
-				// 会话作用域单一事实源 = capability controller；state 仍是 unknown 时才做
-				// 一次性 DOM 契约读取，读完重读 state（probeOfficialSessionScope 返回定论值）。
-				var scope = probeOfficialSessionScope();
-				var out;
-				if (scope === "official") {
-					out = scoped.length > 0 ? scoped.join("\n") : (plain.length === 1 ? plain[0] : "");
-				} else {
-					// tree-only / none / unknown：按**活跃会话数**判断，chunk 数只是输出候选
-					var activeSessions = stepCardBridgeSessions.size;
-					var chunkCount = scoped.length + plain.length;
-					out = activeSessions === 1 && chunkCount === 1
-						? (scoped.length > 0 ? scoped[0] : plain[0])
-						: "";
-				}
+				var out = mergedStepRuleChunks(stepCardRulesBySession);
 				if (out === stepCardRulesCache) return;
 				stepCardRulesCache = out;
 				stepCardStyleEl.textContent = out;
+			} catch (e) { /* 同上 */ }
+		}
+		/** 更新某个 session 的步骤文件清单规则块（幂等：内容不变不写）。
+		 *  与牌面规则同样的分块/作用域策略，只是写进独立样式表——文件清单是"信息"不是
+		 *  "皮肤"，因此在 iconStyle = native 时也照常显示（牌面覆盖表随皮肤启停）。 */
+		function writeStepFilesRules(map, sessionId) {
+			try {
+				if (!stepFilesStyleEl) return;
+				var sessionKey = sessionKeyOf(sessionId);
+				var css = map ? buildStepFileRulesCss(map, sessionId) : "";
+				if ((stepFilesRulesBySession.get(sessionKey) || "") === css) return;
+				stepFilesRulesBySession.set(sessionKey, css);
+				writeStepFilesRulesMerged();
+			} catch (e) { /* 视觉增强可以坏，官方折叠不受影响 */ }
+		}
+		/** 文件清单表输出（与牌面表共用 mergedStepRuleChunks 的作用域判据）。 */
+		function writeStepFilesRulesMerged() {
+			try {
+				if (!stepFilesStyleEl) return;
+				var out = mergedStepRuleChunks(stepFilesRulesBySession);
+				if (out === stepFilesRulesCache) return;
+				stepFilesRulesCache = out;
+				stepFilesStyleEl.textContent = out;
 			} catch (e) { /* 同上 */ }
 		}
 		// ---- 官方会话作用域探针（一次性 DOM 契约读取；结果只落 capability controller） ----
@@ -1156,11 +1349,21 @@ window.__ModuleLoader__.load({
 		function resetOfficialSessionScopeProbe() {
 			hostCapabilityState.sessionScope = "unknown";
 		}
-		/** 某个 session 完全卸载：只撤下它自己的规则块（其它 session 不受影响）。 */
+		/** 某个 session 完全卸载：只撤下它自己的规则块（其它 session 不受影响）。
+		 *  牌面覆盖表与步骤文件清单表成对清理——两张表描述同一个 group 集合。 */
 		function clearStepCardRulesForSession(sessionKey) {
-			if (!stepCardRulesBySession.has(sessionKey)) return;
+			if (!stepCardRulesBySession.has(sessionKey) && !stepFilesRulesBySession.has(sessionKey)) return;
 			stepCardRulesBySession.delete(sessionKey);
+			stepFilesRulesBySession.delete(sessionKey);
 			writeStepCardRulesMerged();
+			writeStepFilesRulesMerged();
+		}
+		/** 官方会话快照 → 官方 ChatNodeStore（按 key 直读节点；步骤文件清单的数据面）。
+		 *  身份稳定原语（store 对象跨快照发布复用），只作为 useChat selector 的最小切片。 */
+		function selectChatNodeStore(chatSnapshot) {
+			try {
+				return chatSnapshot && chatSnapshot.nodes ? chatSnapshot.nodes : undefined;
+			} catch (e) { return undefined; }
 		}
 		/** 官方会话快照 → 分组读端（身份稳定；数据更新不改变它，只改 entries/组快照）。 */
 		function selectChatGroupedView(snapshot) {
@@ -1199,6 +1402,7 @@ window.__ModuleLoader__.load({
 		var stepCardBridgeSessions = new Map();  // "<sessionKey>" → { instances: Map<id, {id, onLeader}>, leaderId }
 		var stepCardBridgeSeq = 0;
 		var stepCardRulesBySession = new Map();  // "<sessionKey>" → 该 session 的规则块
+		var stepFilesRulesBySession = new Map(); // "<sessionKey>" → 该 session 的文件清单规则块
 		var stepPresentationPendingCleanup = new Set();  // sessionKey（统一卸载清理待办：microtask 里复核双 registry）
 		/** 注册一个已挂载的 bridge 实例；若该 session 还没有 leader → 立即晋升它。 */
 		function registerStepCardBridge(sessionKey, instance) {
@@ -1214,6 +1418,7 @@ window.__ModuleLoader__.load({
 			// 活跃会话数是输出策略的输入（tree-only 多会话 → 撤下 session-specific 覆盖），
 			// 挂载/卸载都要重算一次合并输出（内容比较幂等，无变化不写）。
 			writeStepCardRulesMerged();
+			writeStepFilesRulesMerged();
 		}
 		/** 选一个仍挂载的实例当 leader（幂等：已有合法 leader 时不动）。 */
 		function promoteStepCardLeader(sessionKey) {
@@ -1244,9 +1449,12 @@ window.__ModuleLoader__.load({
 			// 会话数变化必须重算输出策略：有规则块的会话由 clearStepCardRulesForSession
 			// 内部触发；没有规则块（还没完成组）的会话也要补一次——否则"最后一个其它会话
 			// 退出"时不会把被降级撤下的规则恢复出来。
-			var hadChunk = stepCardRulesBySession.has(sessionKey);
+			var hadChunk = stepCardRulesBySession.has(sessionKey) || stepFilesRulesBySession.has(sessionKey);
 			clearStepCardRulesForSession(sessionKey);
-			if (!hadChunk) writeStepCardRulesMerged();
+			if (!hadChunk) {
+				writeStepCardRulesMerged();
+				writeStepFilesRulesMerged();
+			}
 			scheduleStepPresentationSessionCleanup(sessionKey);   // 统一路径：与 legacy 面共用同一 gate
 		}
 		/** 某个 session 已挂载的 bridge 实例数（诊断/测试）。 */
@@ -1279,11 +1487,13 @@ window.__ModuleLoader__.load({
 			}, [sessionKey, active]);
 			return isLeader;
 		}
-		/** 一个 group key → 官方组快照 → 牌数（uSES 订阅官方 groupSource；source 身份稳定）。 */
+		/** 一个 group key → 官方组快照 → 牌数 + 步骤文件清单（uSES 订阅官方 groupSource；
+		 *  source 身份稳定）。文件清单另需官方 ChatNodeStore（按成员 key 读工具节点参数）。 */
 		function StepCardGroupProbe(props) {
 			var groupKey = props.groupKey;
 			var report = props.report;
 			var grouped = props.grouped;
+			var nodeStore = props.nodeStore;
 			var source = react.useMemo(function () {
 				try {
 					return grouped && typeof grouped.groupSource === "function" ? grouped.groupSource(groupKey) : undefined;
@@ -1293,11 +1503,22 @@ window.__ModuleLoader__.load({
 				source && typeof source.subscribe === "function" ? source.subscribe : subscribeNothing,
 				source && typeof source.getSnapshot === "function" ? source.getSnapshot : getUndefinedSnapshot
 			);
-			var state = stepCardGroupState(snapshot);
+			// 运行中刷新触发器：本组所属 turn 的 tool-call 数据源（成员参数到达/结果落地时通知，
+			// 只作触发器用——成员 key 仍以 group snapshot.members 为准）。身份稳定 → 订阅不抖动。
+			var toolSource = react.useMemo(function () {
+				var turn = snapshot && snapshot.data ? snapshot.data.turn : undefined;
+				if (!nodeStore || typeof nodeStore.turnDataSource !== "function" || typeof turn !== "number") return undefined;
+				try { return nodeStore.turnDataSource(turn, "tool-call"); } catch (e) { return undefined; }
+			}, [nodeStore, snapshot]);
+			useSyncExternalStore(
+				toolSource && typeof toolSource.subscribe === "function" ? toolSource.subscribe : subscribeNothing,
+				toolSource && typeof toolSource.getSnapshot === "function" ? toolSource.getSnapshot : getUndefinedSnapshot
+			);
+			var state = stepCardGroupState(snapshot, nodeStore);
 			react.useEffect(function () {
 				report(groupKey, state === undefined ? null : state);
 				return function () { report(groupKey, null); };
-			}, [groupKey, state && state.count, state && state.closed, report]);
+			}, [groupKey, state && state.count, state && state.closed, state && state.filesText, report]);
 			return null;
 		}
 		/** 会话级只读订阅者：官方 group entries → 每组一个 probe → 汇总 → 生成视觉选择器规则。
@@ -1323,6 +1544,12 @@ window.__ModuleLoader__.load({
 			}, [contract]);
 			var entries = useConversation(selectChatGroupedEntries);
 			var grouped = useConversation(selectChatGroupedView);
+			// 官方 ChatNodeStore：useChat 具名 selector 只取 s.nodes（官方"最小切片"实践；
+			// nodes 是身份稳定的 keyed reader，快照再发布也不引发本组件重渲染）。
+			// prop 存在性进程内恒定（与 EnhancedTurnProcessView ② 同款约定）→ 条件调用安全；
+			// 宿主没有 useChat（旧 kit）→ 取不到 → 文件清单不产出，牌数/牌面完全不受影响。
+			var useChat = props.useChat;
+			var nodeStore = typeof useChat === "function" ? useChat(selectChatNodeStore) : undefined;
 			var countsRef = react.useRef({});
 			var versionPair = react.useState(0);
 			var version = versionPair[0], setVersion = versionPair[1];
@@ -1334,7 +1561,8 @@ window.__ModuleLoader__.load({
 					delete map[groupKey];
 				} else {
 					var prev = had ? map[groupKey] : undefined;
-					if (prev && prev.count === state.count && prev.closed === state.closed) return;
+					if (prev && prev.count === state.count && prev.closed === state.closed
+						&& prev.filesText === state.filesText) return;
 					map[groupKey] = state;
 				}
 				setVersion(function (v) { return v + 1; });
@@ -1343,6 +1571,7 @@ window.__ModuleLoader__.load({
 			// 这里同时兜一次（防 entries 变了但计数没变的边界）。
 			react.useEffect(function () {
 				writeStepCardRules(countsRef.current, props.sessionId);
+				writeStepFilesRules(countsRef.current, props.sessionId);
 			}, [version, entries, props.sessionId]);
 			var probes = [];
 			if (entries && grouped) {
@@ -1350,7 +1579,7 @@ window.__ModuleLoader__.load({
 					var entry = entries[i];
 					if (!entry || entry.kind !== "group") continue;
 					probes.push(react.createElement(StepCardGroupProbe, {
-						key: entry.key, groupKey: entry.key, grouped: grouped, report: report
+						key: entry.key, groupKey: entry.key, grouped: grouped, nodeStore: nodeStore, report: report
 					}));
 				}
 			}
@@ -1368,6 +1597,7 @@ window.__ModuleLoader__.load({
 			if (!isLeader || !hasConversation) return null;
 			return react.createElement(StepCardRuleWriter, {
 				useConversation: props.useConversation,
+				useChat: props.useChat,
 				sessionId: props.sessionId
 			});
 		}
@@ -2930,12 +3160,15 @@ window.__ModuleLoader__.load({
 				   同样的过渡曲线 → 开合动画期间遮挡逐帧对齐。rect 不填充（纯轮廓，
 				   壁纸可透出）；下层牌被上层覆盖的区域由 mask 动态扣掉，不透出下层。 */
 				".ccg-poker-motion,.ccg-poker-mask-card{transition:transform .45s cubic-bezier(.22,1,.36,1)}",
-				/* 运行中图标的开合角度过渡（CSS transform 覆盖 attribute，SMIL 动画不断流）：
-				   牌面翻转：收起纵向中轴 ⇄ 展开竖直对角线轴。
-				   data-spin-open 挂在外层 .ccg-poker-icon span（React 可控），
-				   后代选择器切换内部 g 的 CSS transform，transition 播放平滑过渡。 */
-				".ccg-poker-icon .ccg-axis-rest-rotation{transform-box:view-box;transform:rotate(0deg);transition:transform .45s cubic-bezier(.22,1,.36,1)}",
-				".ccg-poker-icon[data-spin-open] .ccg-axis-rest-rotation{transform:rotate(35.5377deg)}",
+				/* 运行中翻牌图标（回合栏）：旋转轴角度**只**由 SVG 的 transform 属性决定
+				   （buildPokerSpinSVG 写入 pokerSpin.restAngle = 竖直对角线轴 ≈ 35.5377°，
+				   原点 = 卡牌中心，靠 translate(8,8) → scale → translate(-8,-8) 共轭结构保证）。
+				   这里不得再写 .ccg-axis-rest-rotation 的 CSS transform：
+				   ① CSS transform 会覆盖同名的 SVG transform 属性（运行中图标会被静默压成
+				      0° = 纵向中轴），② transform-box:view-box 的默认原点 50% 50% 在
+				      translate(8,8) 之后是卡牌角点而非中心，CSS 旋转会让卡牌绕角点公转。
+				   改轴角请改数据源 icons/default.json → pokerSpin.restAngle。
+				   源码守卫：tests/unit.poker.test.mjs「运行中翻牌轴 = 竖直对角线轴」。 */
 				/* 运行中卡牌动画：牌身透明（透壁纸），动画自身的 mask 扣掉上层覆盖区 */
 				".anim-card{fill:transparent}",
 				/* ── 滚轮数字（真实数据变化的里程表式滚动动画） ── */
@@ -3021,6 +3254,18 @@ window.__ModuleLoader__.load({
 				stepCardStyleEl = cardsTag;
 				stepCardRulesCache = cardsTag.textContent;
 			}
+			// 步骤文件清单表：与皮肤表**无关**的独立表——文件清单是信息不是皮肤，
+			// iconStyle = native 时照样显示（所以不随 applyIconStyle 的 disabled 总闸走）。
+			// 内容由同一个 StepCardRulesBridge 写入（逐组 ::after{content}，纯 CSS 文本）。
+			var filesTag = document.querySelector('style[data-plugin-css="' + STEP_FILES_CSS_ID + '"]');
+			if (filesTag === null) {
+				filesTag = document.createElement("style");
+				filesTag.dataset.plugin = "@winteries/dsh-turn-fold";
+				filesTag.dataset.pluginCss = STEP_FILES_CSS_ID;
+				document.head.appendChild(filesTag);
+			}
+			stepFilesStyleEl = filesTag;
+			stepFilesRulesCache = filesTag.textContent;
 			applyIconStyle();
 		}
 
@@ -3088,6 +3333,11 @@ window.__ModuleLoader__.load({
 		function useLiveNow(active) {
 			useSyncExternalStore(active ? subscribeTicks : subscribeNothing, getTickVersion);
 			return active ? Date.now() : undefined;
+		}
+		/** 设置面板预览用的 1s 计数器：与耗时秒表共用同一只直播时钟（有订阅者才走时，
+		 *  弹窗卸载即退订停表——不新开第二只定时器）。驱动"动态扑克牌"预览的牌面轮播。 */
+		function usePreviewTick() {
+			return useSyncExternalStore(subscribeTicks, getTickVersion);
 		}
 
 		/** 只把 tokens 槽位换成 displayTokens（presentation-only 展示值）；
@@ -4203,16 +4453,20 @@ window.__ModuleLoader__.load({
 			{ key: "tokensPerSecond", labelKey: "fieldTps", descKey: "fieldTpsDesc" },
 			{ key: "cacheHit", labelKey: "fieldCacheHit", descKey: "fieldCacheHitDesc" }
 		];
-		/** 通用选项行选择器（radio 语义）：options = [{value,labelKey,descKey,previews(fn)}]。 */
+		/** 通用选项行选择器（radio 语义）：options = [{value,labelKey,descKey,previews(tick)}]。
+		 *  previews 收到每秒递增的预览 tick（复用全局直播时钟）——静态扑克预览靠它换牌，
+		 *  不需要轮播的选项（native chevron）忽略该参数即可。 */
 		function GearOptionSelector(props) {
 			var current = props.current;
 			var labelKey = props.labelKey;
 			var options = props.options;
+			// 预览轮播 tick：无条件调用一次（Hook 顺序稳定——选项行数量/内容变化都不影响它）
+			var previewTick = usePreviewTick();
 			var opts = [];
 			for (var oi = 0; oi < options.length; oi++) {
 				var opt = options[oi];
 				var selected = current === opt.value;
-				var previewEls = opt.previews ? opt.previews() : [];
+				var previewEls = opt.previews ? opt.previews(previewTick) : [];
 				var previewItems = [];
 				for (var pi = 0; pi < previewEls.length; pi++) {
 					// 每个预览项外包一层 .ccg-preview-tooltip：悬浮时在其上方弹出放大气泡。
@@ -4251,9 +4505,13 @@ window.__ModuleLoader__.load({
 				opts
 			);
 		}
-		/** 扑克牌预览（3 牌折叠 / 3 牌展开 / 5 牌折叠 / 5 牌展开 + 运行中翻牌）。 */
-		function pokerPreviews() {
+		/** 扑克牌预览（3 牌折叠 / 3 牌展开 / 5 牌折叠 / 5 牌展开 + 运行中翻牌）。
+		 *  静态预览的牌面按每秒 tick 在牌面池里轮换（tick 自身不入模，只有下标取模），
+		 *  四张预览相位错开 fi=0..3 → 同一时刻恰好展示 4 种不同牌面（含 DeepSeek 鲸鱼）。
+		 *  tick 缺省（无时钟的渲染路径）= 0，退化为固定相位而不是抛错。 */
+		function pokerPreviews(tick) {
 			var pool = pokerFacePool();
+			var t = typeof tick === "number" && isFinite(tick) ? tick : 0;
 			var items = [];
 			for (var fi = 0; fi < 4; fi++) {
 				var five = fi >= 2;
@@ -4261,7 +4519,7 @@ window.__ModuleLoader__.load({
 				items.push(react.createElement(PokerIcon, {
 					key: "s" + fi,
 					count: five ? 5 : 3,
-					suit: pool[fi % pool.length],
+					suit: pool[(t + fi) % pool.length],
 					open: open
 				}));
 			}
@@ -4464,7 +4722,11 @@ window.__ModuleLoader__.load({
 			// 官方 turn-process 是 turn 级控制器节点、不是 Process Group 成员，所以桥
 			// 不从这里取"本组"数据——它订阅官方 group snapshot 全集，按官方 groupKey
 			// 生成视觉选择器（见 buildStepCardRulesCss）。
-			var cardBridge = react.createElement(StepCardRulesBridge, { useConversation: props.useConversation, sessionId: props.sessionId });
+			var cardBridge = react.createElement(StepCardRulesBridge, {
+				useConversation: props.useConversation,
+				useChat: props.useChat,
+				sessionId: props.sessionId
+			});
 			var liveNow = useLiveNow(running);
 			// 指标 + 运行中展示 token：全部在条件 return 之前（两个 Hook 都无条件调用）。
 			// canonical（真实数据层）与 display（presentation-only）在这里分岔，之后只交换 tokens 槽位。

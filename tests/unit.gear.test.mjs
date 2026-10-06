@@ -160,3 +160,94 @@ describe('统一图标模式选择器（iconStyle）', () => {
     assert.equal(T.getIconStyle(), 'poker')
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════
+// F. 「动态扑克牌」预览的牌面轮播（每秒按牌面池换牌）
+// ══════════════════════════════════════════════════════════════════════
+describe('动态扑克牌预览：静态牌面每秒轮换', () => {
+  /** 一张静态预览（3/5 张同款牌）的牌面：花色 glyph 或 DeepSeek 鲸鱼 <use>。 */
+  function faceOf(el) {
+    const pip = el.querySelector('.ccg-poker-pip')
+    if (!pip) return null
+    if (pip.innerHTML.includes('ccg-poker-logo-')) return 'deepseek'
+    for (const s of T.POKER_SUITS) {
+      if (pip.innerHTML.includes(T.POKER_PIPS[s].path.slice(0, 30))) return s
+    }
+    return null
+  }
+  /** 弹窗里 4 张静态预览的牌面（运行中翻牌项没有 .ccg-poker-card；native 行是 chevron）。 */
+  function staticFaces() {
+    return [...container.querySelectorAll('.ccg-gear-icon-option-preview-item')]
+      .filter((el) => el.querySelector('.ccg-poker-card'))
+      .map(faceOf)
+  }
+  /** 4 张静态预览的位姿签名（换牌不得扰动牌堆/扇形位姿——"只剩一张牌"那类 bug 的守卫）。 */
+  function staticPoses() {
+    return [...container.querySelectorAll('.ccg-gear-icon-option-preview-item')]
+      .filter((el) => el.querySelector('.ccg-poker-card'))
+      .map((el) => [...el.querySelectorAll('.ccg-poker-motion')].map((m) => m.getAttribute('transform')).join('|'))
+  }
+  /** 等一次真实直播 tick（订阅 → 回调内退订，恰好一拍）。 */
+  function nextLiveTick() {
+    return new Promise((resolve) => {
+      const unsub = T.subscribeTicks(() => { unsub(); resolve() })
+    })
+  }
+  const shifted = (faces) => {
+    const pool = T.pokerFacePool()
+    return faces.map((s) => pool[(pool.indexOf(s) + 1) % pool.length])
+  }
+
+  it('pokerPreviews(tick)：4 张静态预览互不同款，每 tick 整体前移一位', () => {
+    const pool = T.pokerFacePool()
+    const at = (t) => T.pokerPreviews(t).slice(0, 4).map((el) => el.props.suit)
+    const a = at(0)
+    assert.equal(a.length, 4, '3 牌折叠 / 3 牌展开 / 5 牌折叠 / 5 牌展开')
+    assert.equal(new Set(a).size, 4, '同一时刻恰好 4 种不同牌面：' + a.join(','))
+    for (const s of a) assert.ok(pool.includes(s), '牌面必须来自牌面池：' + s)
+    const b = at(1)
+    assert.deepEqual(b, shifted(a), '每 tick 整体前移一位：' + a.join(',') + ' → ' + b.join(','))
+    assert.notDeepEqual(b, a, '牌面确实在变（不是冻结的 ♠♥♦♣）')
+    assert.deepEqual(at(0), a, '同一 tick 结果稳定（纯函数，无随机副作用）')
+    // 一个完整池周期内五种牌面都出现过（含 DeepSeek 鲸鱼）
+    const seen = new Set()
+    for (let t = 0; t < pool.length; t += 1) at(t).forEach((s) => seen.add(s))
+    assert.deepEqual([...seen].sort(), [...pool].sort(), '池内每种牌面都会轮到：' + [...seen].join(','))
+  })
+
+  it('pokerPreviews()：缺省 tick 退化为 0，不抛错（4 静态 + 1 运行中翻牌）', () => {
+    const items = T.pokerPreviews()
+    assert.equal(items.length, 5)
+    assert.equal(items[4].type, T.PokerSpinIcon, '第 5 项是运行中翻牌动画（真实组件）')
+    assert.deepEqual(
+      items.slice(0, 4).map((el) => el.props.suit),
+      T.pokerPreviews(0).slice(0, 4).map((el) => el.props.suit),
+    )
+  })
+
+  it('弹窗挂载期间跟着直播时钟换牌；关闭弹窗即退订（不新开定时器）', async () => {
+    const baseline = T.tickListeners.size
+    openPopup()
+    assert.equal(T.tickListeners.size, baseline + 1, '预览复用全局直播时钟（只 +1 个订阅者）')
+    const before = staticFaces()
+    assert.equal(before.length, 4, '4 张静态预览都在：' + before.join(','))
+    assert.equal(new Set(before).size, 4, '同一时刻互不相同：' + before.join(','))
+    assert.ok(before.every((s) => s !== null), '牌面可识别：' + before.join(','))
+    const poses = staticPoses()
+
+    await act(async () => { await nextLiveTick() })
+
+    const after = staticFaces()
+    assert.deepEqual(after, shifted(before), '一 tick 后整体前移一位：' + before.join(',') + ' → ' + after.join(','))
+    assert.deepEqual(staticPoses(), poses, '换牌只换牌面：牌堆/扇形位姿逐值保留（不重播入场动画）')
+    for (const el of container.querySelectorAll('.ccg-gear-icon-option-preview-item')) {
+      const svg = el.querySelector('svg')
+      if (svg && svg.querySelector('.ccg-poker-card')) {
+        assert.equal(svg.getAttribute('data-ccg-ready'), '1', '位姿已提交（无过渡的首次应用路径）')
+      }
+    }
+
+    act(() => { T.setPopupOpen(false, null) })
+    assert.equal(T.tickListeners.size, baseline, '弹窗关闭后预览退订（时钟无订阅者即停表）')
+  })
+})

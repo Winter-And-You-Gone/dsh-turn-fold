@@ -205,6 +205,20 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   为控制样式体积，逐组牌面资产按 `(count, topFace)` 懒生成、永久缓存、每个变体一个
   `<style>` 元素（只写一次）：逐组规则只有 ~0.5KB（引用变量），整页资产上限 = 池大小 ×
   2 个牌数档位；
+- **步骤文件清单**（组头尾部"本步骤碰过哪些文件"，纯 CSS 文本）：数据同样只读官方 API——
+  `GroupSnapshot.members`（本组每个成员节点的 key）→ 官方 `ChatNodeStore.get(key)` 读工具
+  节点（`ToolChatData.root` = `name` + `argsRaw`）→ `JSON.parse(argsRaw)` 抽
+  `file_path/filePath/file/target/path`；出口是官方组头按钮
+  `button[data-process-activity]::after{content:"…"}`——**不写官方 DOM、不加官方属性、
+  不做 DOM 观察**（架构红线见 `tests/unit.compat.test.mjs` 的禁用标识符与
+  `tests/unit.step-cards.test.mjs` 的桥守卫）。显示规则：basename 再去重，然后按**整名预算**
+  取舍——最多 3 个、总长不超过 `STEP_FILES_BUDGET`（32 字符），放不下的名字整条折成 ` +N`
+  （**绝不显示半个文件名**；CSS 的 `max-width` + ellipsis 只作超长兜底，正常不触发）；
+  `glob/grep/find/ls` 这类目录型工具的 `path` 是搜索根、不当文件名
+  （`file_path` 恒采信）；目录（以分隔符结尾）与 `url` 不算文件；运行中与已完成都显示
+  （运行中随官方工具数据变化累积，`turnDataSource(turn,'tool-call')` 只作刷新触发器），
+  条目消失/会话卸载即撤下规则。独立样式表 `style-step-files`，**不随 iconStyle 启停**
+  （信息不是皮肤，native 模式同样显示）；旧宿主（0.1.2~0.1.6 legacy 面）不产出；
 - 花色按官方 `data-process-activity` 值映射（`ACTIVITY_SUIT` 单一数据源生成 CSS）：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
@@ -797,9 +811,10 @@ npm run check      # 语法检查 client.js / index.js
 | --- | --- |
 | `unit.logic.test.mjs` | 指标纯函数：`turnClockOf` / `computeTurnMetrics` / `readStepUsage`（官方 TurnLocation / step usage / turn-tail 聚合三来源）、格式化、字段显隐与 localStorage 持久化；同一输入两次计算结果逐字段相等（无伪造增长） |
 | `unit.turn-renderer.test.mjs` | Turn 渲染器：`open=false → 点击 → setOpen(true)`、`open=true → 点击 → setOpen(false)`；`foldable=false`/aborted/error → 静态栏无 setOpen 通道；Running Bar 0 秒出现、非交互、不触碰 Fold 状态；回合结束平滑交接；`turnProcess` 缺失降级 |
-| `unit.poker.test.mjs` | 活动→花色映射（官方 ProcessActivity 词表全覆盖）、牌堆/扇形/翻牌 SVG 生成、组件渲染、reduced-motion 与无 WAAPI 静态降级 |
+| `unit.poker.test.mjs` | 活动→花色映射（官方 ProcessActivity 词表全覆盖）、牌堆/扇形/翻牌 SVG 生成、**运行中翻牌轴 = 竖直对角线轴（轴角 = atan(w/h) + 几何/原点校验 + CSS 覆盖回归守卫）**、组件渲染、reduced-motion 与无 WAAPI 静态降级 |
+| `unit.step-cards.test.mjs` | Step 牌数桥：官方 `counts` 求和 → 3/5 张、3 张 morph 身份连续、逐组 mask 几何、桥全链路（groupSource 订阅、同域规则撤销/恢复、leader 卸载清空）；**步骤文件清单：路径抽取（结算态/运行中/preparing/截断/目录型工具/转义）、basename 去重 + `+N` 截断、会话作用域双支、运行中也输出、参数变化跟随刷新、无 ChatNodeStore 时降级为空** |
 | `unit.css.test.mjs` | Step 皮总闸（`body[data-tf-step-skin]`）与官方 DOM 钩子规则；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
-| `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫） |
+| `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫）；**「动态扑克牌」预览的牌面每秒轮换（纯函数位移 + 真实直播时钟驱动 + 关窗退订）** |
 | `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零**；官方四档 transcript 模式渲染兼容 |
 | `regression.test.mjs` | 历史回归：直播时钟空转定时器、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
 | `unit.host-compat.test.mjs` | 跨版本能力矩阵（三态语义、UNKNOWN ≠ LEGACY）、注册门控（Modern 宿主 legacy 激活恒 0；legacy 宿主注册期只记 Turn）、selector 完整 host 逐支生成 + jsdom 双树命中、运行时 resolution（未就绪保持 unknown / 契约缺失才 legacy / 已定论不翻转）、metrics 与 Turn fold 解耦（reactive/fallback/unknown）、诊断两行制（probing → resolved） |
@@ -817,6 +832,10 @@ npm run check      # 语法检查 client.js / index.js
 - **动态扑克牌（poker，默认）**：
   - Turn：完成态 = 牌堆/扇形（本回合工具+子代理 ≤3 用 3 张、>3 用 5 张），运行态 = 翻牌动画；
   - Step：completed = 扑克牌堆/扇形（张数按 Process Group 工具数），running = 五牌面轮换。
+  - 设置预览：4 张静态预览（3 牌折叠 / 3 牌展开 / 5 牌折叠 / 5 牌展开）的牌面**每秒在牌面池
+    （♠♥♦♣ + DeepSeek 鲸鱼）里整体轮换一位**，各预览相位错开 → 同一时刻恰好展示 4 种不同
+    牌面；第 5 项是运行中翻牌（真实组件）。轮播复用耗时秒表那只全局 1s 直播时钟：弹窗挂载
+    才订阅、关闭即退订（不新开第二只定时器，无空转）。
 - **官方图标（native）**：
   - Turn：**保留插件增强栏的全部内容**（耗时/首字/token/tok/s/缓存/第 N 轮/齿轮/durable
     指标/官方 Fold 行为——仍然是 `EnhancedTurnProcessView` 渲染，**不**切回官方
@@ -979,7 +998,8 @@ git push --follow-tags
     Turn Fold 与页面稳定性；
   - **Soft style injection（非理想软兼容点，已如实记录）**：插件向 `document.head`
     注入最小 `<style>`：基础样式 + Step 皮 + 牌数桥逐组规则 + 逐组牌面资产（每个
-    `(count, topFace)` 变体一个元素，只写一次）。截至当前 DSH master（21638c5631）
+    `(count, topFace)` 变体一个元素，只写一次）+ 步骤文件清单逐组规则（独立元素，
+    与皮肤总闸解耦）。截至当前 DSH master（21638c5631）
     官方没有给 plain-JS client plugin 提供样式注册 API（全宿主唯一 `createElement('style')`
     在 web 自身代码里），而 Step 皮必须作用在官方 Header 的官方 DOM 上、无法收敛进
     插件 React 子树——故保留此软兼容点。注入失败的最坏退化 = 无 Turn 栏样式与无
@@ -987,6 +1007,8 @@ git push --follow-tags
 - 相比上一代（≤0.5.x）的行为变化：
   - 步骤分组/标题完全交还官方——插件自研的「运行了N条命令 / 读取了… / 思考了N次」
     段标题、段内文件链接复制、[ +N -M ] 行数统计、标题缓存已删除（官方标题语义为准）；
+    （唯一回来的相关能力是**只读的步骤文件清单**：组头尾部 `a.ts · b.ts +2` 纯文本，
+    由官方节点数据生成、走 CSS `::after`——仍然不可点击、不复制路径、不碰官方 DOM。）
   - 「待折叠/已折叠 N 步」字段删除（折叠成员归属由官方决定，插件不再自行统计步数）；
   - **旧版 +1/+11 假增长删除**——现在运行中的 token 槽是 **presentation-only 视觉计数**
     （canonical 真实值与展示值分层，见上文「真实数据层 / 展示层」）：真实 usage 一到立即校准、

@@ -42,11 +42,24 @@ Write a complete icon package (same shape as `icons/default.json`, including `me
                                        //  在 stack 与 fan 里是同一张牌、层级不变——
                                        //  stack 的顶牌（最大 id）在 fan 里必须是最右那张，
                                        //  与 fan5 同构：居中那张不旋转、两侧对称）
-  "pokerSpin":       { ... },          // flip animation
-  "pokerAnimSVG":    "...",            // running 5-face rotation animation (largest block)
+  "pokerSpin":       { ... },          // running-icon flip: restAngle = vertical-diagonal axis ≈35.5377°
+  "pokerAnimSVG":    "...",            // legacy data (largest block) — no longer consumed at runtime
   "pokerSpinDeepseek":"..."            // DeepSeek face
 }
 ```
+
+The **running** icon (both the Turn bar while a turn is live and the settings preview) is the
+"card flip · vertical diagonal axis" card: the 5:7 card is rotated by `pokerSpin.restAngle`
+(≈35.5377° = `atan(w/h)`) so its own top-left → bottom-right diagonal stands vertical, and it is
+then squashed horizontally about that vertical line (`translate(8,8) → scaleX(cosθ) →
+rotate(restAngle) → translate(-8,-8)`), so the rotation origin is the card centre. Suits cycle
+♠ → ♥ → ♦ → ♣ on the front with the DeepSeek whale on the back.
+
+The settings option row is built by `pokerPreviews(tick)`: four static stack/fan previews whose
+faces shift one slot through the face pool (`♠♥♦♣` + whale) every second — `tick` comes from the
+shared 1s live clock (`usePreviewTick`), so the row keeps changing while the popup is open and
+unsubscribes when it closes. Option rows keep the `previews(tick)` signature; rows that don't
+animate (native chevron) simply ignore the argument.
 
 ## The official default chevron is NOT in the JSON
 
@@ -59,6 +72,7 @@ Recorded in the project memory file (`MEMORY.md` in the plugin repo — workspac
 - **CSS cannot override an explicit `fill` on `<defs>` content referenced by `<use>`** → never write `fill` in defs; inherit from the `<use>` element and control via CSS.
 - **`clip-rule="evenodd"` clip-path does not work** → drop clip-path entirely.
 - **CSS `transform-origin` on SVG `<g>` is unreliable** → use `translate(cx,cy) → animateTransform scale → translate(-cx,-cy)` or `animateTransform additive="sum"`.
+- **A CSS `transform` rule silently overrides the SVG `transform` attribute** (and `transform-box:view-box` resolves `50% 50%` in the element's *local* space, which is NOT the card centre) → never restate a flip-axis angle as CSS `transform`; write it once as the `transform` attribute on the group (running icon: `.ccg-axis-rest-rotation`, angle from `pokerSpin.restAngle`). Guarded by `tests/unit.poker.test.mjs`.
 - **`display:none` / wrong attribute-selector level hides whole blocks** → prefer `visibility:hidden`; put `[data-top]` on the correct `<g>` level.
 - Masks: use `mask-type:luminance` (white=visible, black=hidden); black occluder must be larger than the card (e.g. 8.72 vs 8, rx 1.86 vs 1.5) so stroke is fully knocked out; suffix mask ids/urls uniquely per instance.
 

@@ -790,3 +790,280 @@ describe('Step 牌数 H：3 张 morph 全程身份连续', () => {
     }
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════
+// G. 步骤文件清单（本 Process Group 碰过哪些文件 → 组头尾部纯 CSS 文本）
+// ══════════════════════════════════════════════════════════════════════
+// 架构红线（不许动）：插件不写官方 DOM、不加官方属性、不做 DOM 观察——
+// 出口只能是官方组头按钮 [data-process-activity] 上的 ::after{content}。
+describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
+  const GROUP_A = '["process","files-a",null]'
+  const GROUP_B = '["process","files-b",null]'
+  const GROUP_RUNNING_F = '["process","files-running",null]'
+  const args = (obj) => JSON.stringify(obj)
+  const settledCall = (name, argv) => ({
+    kind: 'tool-call',
+    data: { root: { kind: 'tool-result', callId: 'c', call: { name, argsRaw: args(argv) } } },
+  })
+  const startedCall = (name, argv) => ({
+    kind: 'tool-call',
+    data: { root: { phase: 'start', name, argsRaw: args(argv) } },
+  })
+  const nodeRef = (key) => ({ kind: 'node', key })
+
+  it('toolCallFilePath：结算态 / 运行中两种 payload 都认，preparing 与截断 call=null 不出路径', () => {
+    assert.equal(T.toolCallFilePath(settledCall('read', { file_path: 'X:\\a\\b.ts' })), 'X:\\a\\b.ts')
+    assert.equal(T.toolCallFilePath(startedCall('write', { file_path: '/tmp/x/y.md' })), '/tmp/x/y.md')
+    assert.equal(T.toolCallFilePath({ kind: 'tool-call', data: { root: { phase: 'preparing', name: 'read' } } }), null, 'args 未到 → 无路径')
+    assert.equal(T.toolCallFilePath({ kind: 'tool-call', data: { root: { kind: 'tool-result', call: null } } }), null, '窗口截断 → 无路径')
+    assert.equal(T.toolCallFilePath({ kind: 'assistant-step', data: {} }), null, '非工具节点 → 无路径')
+    assert.equal(T.toolCallFilePath(null), null)
+    assert.equal(T.toolCallFilePath({ kind: 'tool-call', data: { root: { phase: 'start', name: 'read', argsRaw: '{oops' } } }), null, 'args JSON 坏 → 无路径')
+  })
+
+  it('filePathFromArgs：键优先级 + camelCase + 目录不算文件 + url 不取', () => {
+    assert.equal(T.filePathFromArgs({ filePath: 'a/b.ts' }, 'read'), 'a/b.ts', 'camelCase filePath')
+    assert.equal(T.filePathFromArgs({ path: 'p.ts', file_path: 'f.ts' }, 'read'), 'f.ts', 'file_path 优先于 path')
+    assert.equal(T.filePathFromArgs({ file: 'f.ts' }, 'read'), 'f.ts')
+    assert.equal(T.filePathFromArgs({ target: 't.ts' }, 'read'), 't.ts')
+    assert.equal(T.filePathFromArgs({ path: 'src/dir/' }, 'read'), null, '以分隔符结尾 = 目录')
+    assert.equal(T.filePathFromArgs({ url: 'https://x/y.ts' }, 'webFetch'), null, 'url 不是文件')
+    assert.equal(T.filePathFromArgs({}, 'read'), null)
+    assert.equal(T.filePathFromArgs('nope', 'read'), null)
+  })
+
+  it('目录型工具（glob/grep/find/ls）：path 不采信，file_path 仍采信', () => {
+    assert.equal(T.filePathFromArgs({ path: 'src' }, 'grep'), null, 'grep 的 path 是搜索根')
+    assert.equal(T.filePathFromArgs({ path: 'src' }, 'glob'), null)
+    assert.equal(T.filePathFromArgs({ path: 'src' }, 'dsh_find'), null, '命名空间前缀同样识别')
+    assert.equal(T.filePathFromArgs({ path: 'src' }, 'read'), 'src', '非目录型工具照常采信')
+    assert.equal(T.filePathFromArgs({ file_path: 'src/a.ts' }, 'grep'), 'src/a.ts', 'file_path 恒采信')
+  })
+
+  it('stepGroupFilePaths：按成员顺序、去重（分隔符归一）、跳过非 node 成员', () => {
+    const nodes = new Map([
+      ['n1', settledCall('read', { file_path: 'X:\\a\\b.ts' })],
+      ['n2', settledCall('edit', { file_path: 'X:/a/b.ts' })],      // 同一文件的另一种写法 → 去重
+      ['n3', startedCall('write', { file_path: 'X:\\c\\d.md' })],
+      ['n4', settledCall('grep', { path: 'src' })],                  // 目录型 → 无路径
+    ])
+    const snapshot = { members: [nodeRef('n1'), nodeRef('n2'), nodeRef('n3'), nodeRef('n4'), { kind: 'group', key: 'g' }] }
+    assert.deepEqual(T.stepGroupFilePaths(snapshot, (k) => nodes.get(k)), ['X:\\a\\b.ts', 'X:\\c\\d.md'])
+    assert.deepEqual(T.stepGroupFilePaths({ members: [] }, (k) => nodes.get(k)), [])
+    assert.deepEqual(T.stepGroupFilePaths(snapshot, null), [], '无 node 读端 → 空（不抛错）')
+    assert.deepEqual(T.stepGroupFilePaths({ members: [nodeRef('boom')] }, () => { throw new Error('x') }), [], '读端抛错 → 跳过')
+  })
+
+  it('stepFilesText：basename 再去重、最多 3 个、其余折成 " +N"', () => {
+    assert.equal(T.stepFilesText([]), '')
+    assert.equal(T.stepFilesText(['X:\\a\\b.ts']), 'b.ts')
+    assert.equal(T.stepFilesText(['X:\\a\\b.ts', 'X:\\c\\b.ts']), 'b.ts', '同名文件只显示一次')
+    assert.equal(
+      T.stepFilesText(['a/one.ts', 'a/two.ts', 'a/three.ts', 'a/four.ts', 'a/five.ts']),
+      'one.ts \u00b7 two.ts \u00b7 three.ts +2',
+    )
+    assert.equal(T.STEP_FILES_MAX, 3)
+  })
+
+  it('stepFilesText：整名策略——超预算的名字整条折进 "+N"，绝不显示半个文件名', () => {
+    // 截图回归：client.js · process-groups.ts · ChatGroupSeat.tsx 曾被切成 "ChatGroup…"
+    const shots = T.stepFilesText(['X:/p/client.js', 'X:/p/process-groups.ts', 'X:/p/ChatGroupSeat.tsx'])
+    assert.equal(shots, 'client.js \u00b7 process-groups.ts +1', '不出现残片名：' + shots)
+    assert.ok(!shots.includes('ChatGroup'), '被预算挤掉的名字不得留半截')
+    // 首个名字就超长：仍显示完整名 + 计数（至少留一个完整名，否则这段就没信息了）
+    const long = 'averyverylongfilename-one.ts'
+    assert.equal(T.stepFilesText([long, 'b.ts', 'c.ts']), long + ' +2')
+    // 三个短名都放得下 → 全显示，无 +N
+    assert.equal(T.stepFilesText(['a.ts', 'b.ts', 'c.ts']), 'a.ts \u00b7 b.ts \u00b7 c.ts')
+    assert.ok(T.STEP_FILES_BUDGET > 0 && T.STEP_FILES_BUDGET < 44, '预算必须小于 CSS 兜底宽度')
+  })
+
+  it('buildStepFileRulesCss：规则挂在官方组头按钮的 ::after 上，内容为纯文本', () => {
+    const map = { [GROUP_A]: { count: 3, closed: true, filesText: 'a.ts \u00b7 b.ts' } }
+    const css = T.buildStepFileRulesCss(map)
+    assert.equal(css.split('\n').filter(Boolean).length, 1, '一个组一条规则')
+    assert.ok(css.includes('[data-step-process][data-chat-group-key="' + T.cssAttrValue(GROUP_A) + '"] button[data-process-activity]::after{'))
+    assert.ok(css.includes('content:"a.ts \u00b7 b.ts"'))
+    assert.ok(css.includes('text-overflow:ellipsis'), '过长时省略号')
+    assert.ok(css.includes('flex:none'), '标题先收缩')
+    assert.ok(!css.includes(':has('), '文件清单不参与 running/牌面竞争，无需 shimmer 排除子句')
+  })
+
+  it('buildStepFileRulesCss：会话作用域双支 / 无 session 单支 / legacy 面不产出 / 空清单不产出', () => {
+    const map = { [GROUP_A]: { filesText: 'a.ts' } }
+    const scoped = T.buildStepFileRulesCss(map, 'sess-1')
+    assert.ok(scoped.includes('[data-conversation-session="sess-1"] [data-step-process]'), '官方锚点支')
+    assert.ok(scoped.includes('[data-conversation-content]:not([data-conversation-session]) [data-step-process]'), 'rc.1 回退支')
+    assert.equal(scoped.split('{').length - 1, 1, '两支共享一个声明块（同一行）')
+    assert.ok(!T.buildStepFileRulesCss(map, 'sess-1').includes('undefined'))
+    assert.equal(T.buildStepFileRulesCss(map, 'sess-1', 'legacy'), '', 'legacy 面本轮不产出')
+    assert.equal(T.buildStepFileRulesCss({ [GROUP_A]: { filesText: '' } }), '', '空清单 → 无规则')
+    assert.equal(T.buildStepFileRulesCss({ [GROUP_A]: { count: 3, closed: true } }), '', '缺 filesText → 无规则')
+    assert.equal(T.buildStepFileRulesCss({}), '')
+    assert.equal(T.buildStepFileRulesCss(null), '')
+  })
+
+  it('CSS 字符串转义：文件名里的引号/反斜杠/换行不得破坏规则', () => {
+    assert.equal(T.cssStringContent('a"b'), 'a\\"b')
+    assert.equal(T.cssStringContent('a\\b'), 'a\\\\b')
+    assert.equal(T.cssStringContent('a\nb'), 'a b')
+    const css = T.buildStepFileRulesCss({ [GROUP_A]: { filesText: 'we"ird\\name.ts' } })
+    assert.ok(css.includes('content:"we\\"ird\\\\name.ts"'), css)
+    assert.equal(css.split('{').length - 1, 1, '转义后仍是合法单规则')
+  })
+
+  it('选择器命中官方组头：组根 + data-process-activity 按钮（去掉 ::after 后 matches）', () => {
+    const css = T.buildStepFileRulesCss({ [GROUP_A]: { filesText: 'a.ts' } })
+    const selector = css.slice(0, css.indexOf('{')).replace(/::after$/, '')
+    const host = sharedDocument.createElement('div')
+    host.setAttribute('data-step-process', '')
+    host.setAttribute('data-chat-group-key', GROUP_A)
+    const button = sharedDocument.createElement('button')
+    button.setAttribute('data-process-activity', 'read')
+    host.appendChild(button)
+    sharedDocument.body.appendChild(host)
+    try {
+      assert.ok(button.matches(selector), '官方组头按钮命中：' + selector)
+      host.setAttribute('data-chat-group-key', GROUP_B)
+      assert.ok(!button.matches(selector), '别的组不命中')
+    } finally { host.remove() }
+  })
+
+  // ── 全链路：React 订阅官方 group snapshot + ChatNodeStore ──
+  describe('全链路（桥 → 样式表）', () => {
+    let root = null, container = null
+    beforeEach(() => {
+      container = sharedDocument.createElement('div')
+      sharedDocument.body.appendChild(container)
+      root = createRoot(container)
+      T.writeStepFilesRules(null)
+      T.writeStepCardRules(null)
+    })
+    afterEach(() => {
+      act(() => { root.unmount() })
+      container.remove()
+      T.writeStepFilesRules(null)
+      T.writeStepCardRules(null)
+    })
+    function filesCss() {
+      const tag = sharedDocument.querySelector('style[data-plugin-css="' + T.STEP_FILES_CSS_ID + '"]')
+      assert.ok(tag, '步骤文件清单样式表已注入')
+      return tag.textContent
+    }
+    function makeNodes(initial) {
+      const nodes = new Map(initial)
+      const listeners = new Set()
+      let version = 0
+      const toolSource = {
+        subscribe(l) { listeners.add(l); return () => { listeners.delete(l) } },
+        getSnapshot: () => version,
+      }
+      return {
+        get: (key) => nodes.get(key),
+        turnDataSource: () => toolSource,
+        set(key, node) { nodes.set(key, node); version += 1; for (const l of [...listeners]) l() },
+      }
+    }
+    function makeSource(initial) {
+      let value = initial
+      const listeners = new Set()
+      return {
+        getSnapshot: () => value,
+        subscribe(l) { listeners.add(l); return () => { listeners.delete(l) } },
+        set(next) { value = next; for (const l of [...listeners]) l() },
+      }
+    }
+    function renderWith(store, options) {
+      const useConversation = (selector) => react.useSyncExternalStore(store.subscribe, () => selector(store.getSnapshot()))
+      // useChat 收到的是官方 ChatSnapshot（含 nodes）；store 里同时挂 views + nodes
+      const useChat = (selector) => react.useSyncExternalStore(store.subscribe, () => selector(store.getSnapshot()))
+      const props = { useConversation, sessionId: 'sess-files' }
+      if (!options || options.useChat !== false) props.useChat = useChat
+      act(() => { root.render(react.createElement(() => react.createElement(T.StepCardRulesBridge, props))) })
+    }
+    function makeStore({ entries, sources, nodes }) {
+      let snap = null
+      const listeners = new Set()
+      const grouped = { entries, groupSource: (key) => sources.get(key) }
+      snap = { views: { grouped: () => grouped }, nodes }
+      return {
+        getSnapshot: () => snap,
+        subscribe(l) { listeners.add(l); return () => { listeners.delete(l) } },
+        set(next) { snap = next; for (const l of [...listeners]) l() },
+      }
+    }
+    const groupData = (counts, closed) => ({ turn: 1, closed, summary: { counts, running: undefined, runningDetail: '' } })
+
+    it('已完成组：成员工具调用 → 组头文件清单规则；牌数桥规则同时照旧', () => {
+      const nodes = makeNodes([
+        ['n1', settledCall('read', { file_path: 'X:\\proj\\client.js' })],
+        ['n2', settledCall('edit', { file_path: 'X:\\proj\\README.md' })],
+      ])
+      const sources = new Map([[
+        GROUP_A,
+        makeSource({ key: GROUP_A, members: [nodeRef('n1'), nodeRef('n2')], data: groupData([{ kind: 'read', count: 2 }], true) }),
+      ]])
+      const store = makeStore({ entries: [{ kind: 'group', key: GROUP_A }], sources, nodes })
+      renderWith(store)
+      const css = filesCss()
+      assert.ok(css.includes('[data-step-process][data-chat-group-key="' + T.cssAttrValue(GROUP_A) + '"] button[data-process-activity]::after'), '规则已写入')
+      assert.ok(css.includes('content:"client.js \u00b7 README.md"'), css)
+      assert.ok(cardRulesCss().includes('[data-chat-group-key="' + T.cssAttrValue(GROUP_A) + '"]'), '牌数桥规则不受影响')
+    })
+
+    it('运行中组：文件清单照样输出（边跑边累积），牌面覆盖仍不写', () => {
+      const nodes = makeNodes([['n1', startedCall('read', { file_path: 'X:\\proj\\live.ts' })]])
+      const sources = new Map([[
+        GROUP_RUNNING_F,
+        makeSource({ key: GROUP_RUNNING_F, members: [nodeRef('n1')], data: groupData([{ kind: 'read', count: 1 }], false) }),
+      ]])
+      const store = makeStore({ entries: [{ kind: 'group', key: GROUP_RUNNING_F }], sources, nodes })
+      renderWith(store)
+      assert.ok(filesCss().includes('content:"live.ts"'), '运行中组也有文件清单：' + filesCss())
+      assert.ok(!cardRulesCss().includes(T.cssAttrValue(GROUP_RUNNING_F)), '牌面覆盖仍不写运行中组')
+    })
+
+    it('工具参数/结果变化跟随刷新（turn tool-call 源通知），条目消失则清空', () => {
+      const nodes = makeNodes([['n1', startedCall('read', { file_path: 'X:\\proj\\a.ts' })]])
+      const src = makeSource({ key: GROUP_A, members: [nodeRef('n1')], data: groupData([{ kind: 'read', count: 1 }], true) })
+      const sources = new Map([[GROUP_A, src]])
+      const store = makeStore({ entries: [{ kind: 'group', key: GROUP_A }], sources, nodes })
+      renderWith(store)
+      assert.ok(filesCss().includes('content:"a.ts"'))
+      // 第二条调用落地（成员数组 + 工具数据同时变化）
+      act(() => {
+        nodes.set('n2', settledCall('write', { file_path: 'X:\\proj\\b.ts' }))
+        src.set({ key: GROUP_A, members: [nodeRef('n1'), nodeRef('n2')], data: groupData([{ kind: 'read', count: 2 }], true) })
+      })
+      assert.ok(filesCss().includes('content:"a.ts \u00b7 b.ts"'), '累积后的清单：' + filesCss())
+      // 组消失 → 规则撤下（grouped 读端必须是稳定对象：uSES 的 getSnapshot 每次新建会自激）
+      const emptyGrouped = { entries: [], groupSource: () => undefined }
+      act(() => { store.set({ views: { grouped: () => emptyGrouped }, nodes }) })
+      assert.equal(filesCss(), '', '组消失后不得残留文件清单规则')
+    })
+
+    it('拿不到官方 ChatNodeStore（旧宿主/降级）→ 只写牌数规则，文件清单表保持空', () => {
+      const sources = new Map([[
+        GROUP_A,
+        makeSource({ key: GROUP_A, members: [nodeRef('n1')], data: groupData([{ kind: 'read', count: 2 }], true) }),
+      ]])
+      const store = makeStore({ entries: [{ kind: 'group', key: GROUP_A }], sources, nodes: undefined })
+      renderWith(store)
+      assert.equal(filesCss(), '', '没有节点读端 → 不猜文件')
+      assert.ok(cardRulesCss().includes('[data-chat-group-key="' + T.cssAttrValue(GROUP_A) + '"]'), '牌数规则照旧')
+    })
+
+    it('宿主没给 useChat（旧 kit）→ 桥照常写牌数规则，文件清单不产出', () => {
+      const nodes = makeNodes([['n1', settledCall('read', { file_path: 'X:\\proj\\a.ts' })]])
+      const sources = new Map([[
+        GROUP_A,
+        makeSource({ key: GROUP_A, members: [nodeRef('n1')], data: groupData([{ kind: 'read', count: 1 }], true) }),
+      ]])
+      const store = makeStore({ entries: [{ kind: 'group', key: GROUP_A }], sources, nodes })
+      renderWith(store, { useChat: false })
+      assert.equal(filesCss(), '', '无 useChat → 不产出文件清单')
+      assert.ok(cardRulesCss().includes('[data-chat-group-key="' + T.cssAttrValue(GROUP_A) + '"]'), '牌数规则不受影响')
+    })
+  })
+})
+

@@ -195,12 +195,14 @@ describe('架构守卫（源码扫描）', () => {
   it('无 document.body 成员访问 / appendChild（head 的样式注入是已记录的软依赖，放行）', () => {
     assert.ok(!/document\.body\s*\./.test(src), '不得访问 document.body 成员')
     assert.ok(!src.includes('body.appendChild'), '不得向 body 追加节点')
-    // head 注入恰为四处（base + skin + 牌数桥逐组覆盖表 + 逐组牌面资产表）——软依赖面
-    // 收敛到最小。牌数桥表只承载"官方 group snapshot → [data-chat-group-key] 视觉选择器"，
-    // 牌面资产表只承载逐组 faces 的 mask/keyframes（追加式：只增不改，不写官方 DOM、
-    // 不加官方属性）。
+    // head 注入恰为六处（base + skin + 牌数桥逐组覆盖表 + 逐组牌面资产表 + Legacy Step 表
+    // + 步骤文件清单表）——软依赖面收敛到最小。牌数桥表只承载"官方 group snapshot →
+    // [data-chat-group-key] 视觉选择器"，牌面资产表只承载逐组 faces 的 mask/keyframes，
+    // 步骤文件清单表只承载逐组组头 ::after{content}（追加式：只增不改，不写官方 DOM、
+    // 不加官方属性）。文件清单独立成表的原因：它是"信息"不是"皮肤"，iconStyle = native
+    // 时也必须显示，因此不能挂在随皮肤启停的那两张表上。
     const headInjects = src.match(/document\.head\.appendChild\(/g) || []
-    assert.equal(headInjects.length, 5, '样式注入共五处（含 Legacy Step 表，插件属性作用域 + 能力门控）')
+    assert.equal(headInjects.length, 6, '样式注入共六处（含 Legacy Step 表与步骤文件清单表）')
   })
 
   it('插件不写 transcriptView（写入调用 / 声明 / 注入面一律禁止）', () => {
@@ -212,14 +214,17 @@ describe('架构守卫（源码扫描）', () => {
   it('订阅最小切片：useChat 一律传具名 selector，禁止整快照/内联 selector', () => {
     assert.ok(!src.includes('useChat(s => s)'), 'useChat(s => s) 必须消失')
     // 任何内联函数/箭头作为 useChat 参数都被禁止（等价"返回整个 snapshot"的
-    // selector 由该模式统一拦截）；只允许具名 selector。现有两处订阅：
-    // selectTurnNodeSource（本 Turn 的 assistant-step 数据源）与
-    // selectChatNodeShape（store 形状探针，metrics capability 运行时定论用）。
+    // selector 由该模式统一拦截）；只允许具名 selector。现有四处订阅：
+    // selectTurnNodeSource（本 Turn 的 assistant-step 数据源）、
+    // selectChatNodeShape（store 形状探针，metrics capability 运行时定论用）、
+    // selectChatNodeStore（步骤文件清单的节点读端，只取 s.nodes 身份稳定原语）、
+    // 以及 legacy 快照。
     assert.ok(!/useChat\(\s*(function|\()/.test(src), 'useChat 只能传具名 selector')
     const calls = src.match(/useChat\(/g) || []
-    assert.equal(calls.length, 3, 'useChat 恰好三处具名订阅（数据源 + 形状探针 + legacy 快照）')
+    assert.equal(calls.length, 4, 'useChat 恰好四处具名订阅（数据源 + 形状探针 + 节点读端 + legacy 快照）')
     assert.ok(src.includes('selectTurnNodeSource(number, "assistant-step")'), '订阅面 = 本 Turn 的 assistant-step 源')
     assert.ok(src.includes('useChat(selectChatNodeShape)'), 'store 形状探针也是具名 selector')
+    assert.ok(src.includes('useChat(selectChatNodeStore)'), '步骤文件清单的节点读端也是具名 selector')
     assert.ok(src.includes('useChat(selectLegacyChatSnapshot)'), 'legacy 快照也是具名 selector（能力门控：Modern 宿主从不执行）')
   })
 
