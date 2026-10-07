@@ -78,7 +78,7 @@ and search reveal) works untouched; the plugin only reskins it:
   with a 1.05px stroke, pixel-identical on both sides;
 - **Completed two-state icon** (fold-state aware): collapsed = a five-suit stack
   (♠ ♥ ♦ ♣ + whale, closed = cards put away), expanded = a five-card fan (open = cards
-  looked through) — same suit order and structure as the running rotation, with the
+  looked through) — same plugin face pool as the completed step faces, with the
   geometry taken straight from the Turn bar's stack5/fan5 transform tables
   (`icons/default.json` data source). **Open/close has a morph transition**: pre-sampled
   stack5→fan5 interpolation frames (cubic-bezier(.22,1,.36,1) sampling, 400ms, each
@@ -98,21 +98,48 @@ and search reveal) works untouched; the plugin only reskins it:
   webFetch → ♠, edit/write → ♦, commands/code → ♣, subagents/plan/tools → 🐋whale
   (DeepSeek logo); unregistered activities fall back to ♥ (this mapping now mainly
   serves as the reduced-motion running fallback);
-- **Running face rotation**: a running step (official title shimmer. Soft
-  running-state dependencies — DSH 0.1.7 renders `data-text-shimmer`, DSH 0.2.0+
-  renders `data-shimmer`; both are real official historical contracts and the plugin
-  supports both) cycles through **five equal card faces** (♠ ♥ ♦ ♣ + the DeepSeek whale;
-  no front/back, no card back): a self-running SVG (SMIL, ported from the reference
-  `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html` row 3 "牌面轮换 · 正向" via
-  `scripts/sync-step-anim.mjs`) is used as the card's CSS mask, so the stroke color keeps
-  following `currentColor`. Every 0.8s two full flat cards drift slightly apart on
-  opposite diagonals and merge again (the only rotate is a ±3.1° 2D in-plane tilt), the
-  layer order is flipped mid-way with `discrete`, and four dynamic masks knock the lower
-  card's strokes out under the upper card (transparent faces still show the wallpaper);
-  five phases form a 4s loop: diamond → club → spade → heart → deepseek → (back to
-  diamond). When the step settles the shimmer disappears → automatic fallback to the
-  completed two-state icon (collapsed stack / expanded fan) — pure CSS cascade, zero JS
-  running state; static suit card under reduced motion;
+- **Running card flip · vertical diagonal axis** (same look as the Turn bar's running icon):
+  a running step (official title shimmer. Soft running-state dependencies — DSH 0.1.7
+  renders `data-text-shimmer`, DSH 0.2.0+ renders `data-shimmer`; both are real official
+  historical contracts and the plugin supports both) flips the card around its own
+  **top-left → bottom-right diagonal**: the four suits cycle as faces (♠ → ♥ → ♦ → ♣) and
+  every flip to the back shows the DeepSeek whale. A self-running SVG (SMIL) is used as
+  the card's CSS mask, so the stroke color keeps following `currentColor`:
+  - **Design source**: the reference `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html`
+    **row 5 "牌面翻转 · 竖直对角线轴"** (`renderDiagonalSpinCard()` →
+    `svgAxisSpin(16, poker, 0, diagonalRestAngle())`);
+  - **Value source**: `icons/default.json` alone (`pokerSpin.*` axis/geometry/keyframes,
+    `pokerPips.*` suits, `pokerSpinDeepseek` back) — the same file the Turn bar's
+    `buildPokerSpinSVG` reads, so the two axis angles cannot diverge under the shipped
+    data source;
+  - **Generated** by `node scripts/sync-step-anim.mjs` into the
+    `>>> step-running-poker-svg` marker block of `client.js`. The script asserts the
+    design source still wires row 5 (call site, conjugate transform, visibility windows,
+    timings) **and** that every literal equals the data source (h, pokerRatio, r,
+    pipScale, strokeW, the 73-frame scaleKeys/scaleKeyTimes), plus the axis identity
+    `restAngle == atan(w/h)` (rounded to 4 decimals) — drift on either side fails the run;
+  - **Structure**: the conjugate transform
+    `translate(8,8) → scale(cosθ) → rotate(35.5377°) → translate(-8,-8)`. The scale group
+    flips once every 1.6s (θ crossing 90°/270° swaps front/back at the zero-width edge),
+    and the axis group (`class="tf-step-axis"`) brings the diagonal upright — visually a
+    flip around that real diagonal. Four suit windows plus one back window (6.4s each,
+    `discrete`) form one cycle: ♠ → back → ♥ → back → ♦ → back → ♣ → back → ♠;
+  - **A single card needs no occlusion machinery**: the generated SVG contains no `mask`,
+    `mask-type`, or phase groups (row 3's "two overlapping cards + four dynamic knockout
+    masks" has no object on a single card);
+  - **Recorded boundary**: this SVG is baked into `client.js` at build time; a runtime
+    localStorage icon-pack override does not rewrite it (overrides only reach the Turn-bar
+    flip and the runtime-generated completed two-state faces) — same nature as the old
+    row-3 artifact;
+  - The running look is independent of the card count, and when the step settles the
+    shimmer disappears → automatic fallback to the completed two-state icon (collapsed
+    stack / expanded fan) — pure CSS cascade, zero JS running state; static suit card
+    under reduced motion;
+  - The axis angle lives **only** in the SVG `transform` attribute: **CSS must never
+    restate it** (a CSS transform silently overrides the attribute — the Turn bar hit
+    exactly that bug). The step-side class name `tf-step-axis` is deliberately distinct
+    from the Turn bar's `ccg-axis-rest-rotation`; guards live in
+    `tests/unit.css.test.mjs` ("vertical diagonal axis flip contract");
 - **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
   the skin `<style>` element's `disabled` property (the plugin never writes global
   `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
@@ -326,9 +353,9 @@ git push --follow-tags
     - DSH 0.2.0+ (master, `TextShimmer.tsx`: `data-shimmer={active || undefined}`) →
       `data-shimmer="true"`.
     The plugin supports both: either one present → Running Step Poker animation
-    (`:has()` matching swaps the card mask to the five-face rotation SVG — ♠ ♥ ♦ ♣ +
-    the DeepSeek whale, one rotation every 0.8s, a 4s loop with dynamic knockout of the
-    lower card); both absent →
+    (`:has()` matching swaps the card mask to the **vertical-diagonal-axis flip SVG** —
+    suits ♠ → ♥ → ♦ → ♣ as faces plus the DeepSeek whale as the fixed back, one flip every
+    1.6s, a 6.4s cycle, no occlusion machinery on a single card); both absent →
     completed two-state fallback (collapsed five-suit stack / expanded fan).
     **Used only to identify running steps for the poker flip animation**; when the
     official turn/step closes the attribute disappears, the animation rule stops

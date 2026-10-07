@@ -25,6 +25,7 @@
     "check": "node --check client.js && node --check index.js",
     "test": "node --max-old-space-size=4096 --max-semi-space-size=64 --test --test-isolation=none --test-force-exit \"tests/*.test.mjs\"",
     "sync:icons": "node scripts/sync-icons.mjs --inject",
+    "sync:step-anim": "node scripts/sync-step-anim.mjs",
     "icons:check": "node scripts/sync-icons.mjs"
   },
   "keywords": [
@@ -42,6 +43,7 @@
     "icons/default.json",
     "assets/dsh-turn-fold-customize-icons.md",
     "scripts/sync-icons.mjs",
+    "scripts/sync-step-anim.mjs",
     "cordis.patch.yml",
     "install.ps1",
     "LICENSE",

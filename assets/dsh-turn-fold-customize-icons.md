@@ -48,12 +48,23 @@ Write a complete icon package (same shape as `icons/default.json`, including `me
 }
 ```
 
-The **running** icon (both the Turn bar while a turn is live and the settings preview) is the
-"card flip · vertical diagonal axis" card: the 5:7 card is rotated by `pokerSpin.restAngle`
-(≈35.5377° = `atan(w/h)`) so its own top-left → bottom-right diagonal stands vertical, and it is
-then squashed horizontally about that vertical line (`translate(8,8) → scaleX(cosθ) →
-rotate(restAngle) → translate(-8,-8)`), so the rotation origin is the card centre. Suits cycle
-♠ → ♥ → ♦ → ♣ on the front with the DeepSeek whale on the back.
+The **running** icon (the Turn bar while a turn is live, the settings preview, and the Step group
+header while a step runs) is the "card flip · vertical diagonal axis" card: the 5:7 card is rotated
+by `pokerSpin.restAngle` (≈35.5377° = `atan(w/h)`) so its own top-left → bottom-right diagonal
+stands vertical, and it is then squashed horizontally about that vertical line (`translate(8,8) →
+scaleX(cosθ) → rotate(restAngle) → translate(-8,-8)`), so the rotation origin is the card centre.
+Suits cycle ♠ → ♥ → ♦ → ♣ on the front with the DeepSeek whale on the back.
+
+Two consumers, two axis-group class names — do not merge them:
+- **Turn bar / settings preview**: inline SVG built at runtime by `buildPokerSpinSVG` from
+  `iconConfig` (so a `localStorage['dsh-turn-fold:icons']` pack override reaches it); the axis
+  group is `.ccg-axis-rest-rotation`, and CSS must never restate its angle.
+- **Step group header (running)**: a **self-running SVG baked into `client.js`** by
+  `node scripts/sync-step-anim.mjs`, used as the `[data-step-process-icon]::before` mask data URI;
+  the axis group is `tf-step-axis`. Regenerating it asserts the reference design's row 5 wiring and
+  that every literal equals `icons/default.json` (`pokerSpin.restAngle` = `atan(w/h)`, geometry, the
+  73-frame cos keyframes). Because it is a build-time artifact, a runtime icon-pack override does
+  **not** rewrite it — re-run the script after changing the data source if the step flip must follow.
 
 The settings option row is built by `pokerPreviews(tick)`: four static stack/fan previews whose
 faces shift one slot through the face pool (`♠♥♦♣` + whale) every second — `tick` comes from the
@@ -72,7 +83,7 @@ Recorded in the project memory file (`MEMORY.md` in the plugin repo — workspac
 - **CSS cannot override an explicit `fill` on `<defs>` content referenced by `<use>`** → never write `fill` in defs; inherit from the `<use>` element and control via CSS.
 - **`clip-rule="evenodd"` clip-path does not work** → drop clip-path entirely.
 - **CSS `transform-origin` on SVG `<g>` is unreliable** → use `translate(cx,cy) → animateTransform scale → translate(-cx,-cy)` or `animateTransform additive="sum"`.
-- **A CSS `transform` rule silently overrides the SVG `transform` attribute** (and `transform-box:view-box` resolves `50% 50%` in the element's *local* space, which is NOT the card centre) → never restate a flip-axis angle as CSS `transform`; write it once as the `transform` attribute on the group (running icon: `.ccg-axis-rest-rotation`, angle from `pokerSpin.restAngle`). Guarded by `tests/unit.poker.test.mjs`.
+- **A CSS `transform` rule silently overrides the SVG `transform` attribute** (and `transform-box:view-box` resolves `50% 50%` in the element's *local* space, which is NOT the card centre) → never restate a flip-axis angle as CSS `transform`; write it once as the `transform` attribute on the group (Turn running icon: `.ccg-axis-rest-rotation`; Step running icon: `tf-step-axis` — both take their angle from `pokerSpin.restAngle`). Guarded by `tests/unit.poker.test.mjs` (Turn) and `tests/unit.css.test.mjs` (Step).
 - **`display:none` / wrong attribute-selector level hides whole blocks** → prefer `visibility:hidden`; put `[data-top]` on the correct `<g>` level.
 - Masks: use `mask-type:luminance` (white=visible, black=hidden); black occluder must be larger than the card (e.g. 8.72 vs 8, rx 1.86 vs 1.5) so stroke is fully knocked out; suffix mask ids/urls uniquely per instance.
 
@@ -80,5 +91,5 @@ Recorded in the project memory file (`MEMORY.md` in the plugin repo — workspac
 
 1. Ask the user what to change: card look, suit design, geometry (corner radius / fan angle / stack offset), running animation, or switching to the official chevron.
 2. Prefer **Path A** (versioned, reproducible). If the user only wants a quick local preview, offer **Path B**.
-3. After edits, always: `npm run sync:icons`, `npm run icons:check`, `node --check client.js`, and `npm test` (the suite asserts icon-related rendering).
+3. After edits, always: `npm run sync:icons`, `npm run icons:check`, `node --check client.js`, and `npm test` (the suite asserts icon-related rendering). When the change touches `pokerSpin` / `pokerPips` / `pokerSpinDeepseek`, also run `npm run sync:step-anim` — the Step running flip is generated from this data source plus the reference design's row 5.
 4. Remind the user to **refresh the DSH web page** (web-only project) before judging the result.

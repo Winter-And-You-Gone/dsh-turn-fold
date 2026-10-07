@@ -38,6 +38,8 @@ const TEST_EXPORTS = [
   'ACTIVITY_SUIT',
   'activitySuitOf',
   'buildStepSkinCss',
+  // 运行中牌面翻转（生成块；与 icons/default.json 的一致性守卫用）
+  'STEP_RUNNING_POKER_SVG',
   'suitMaskImage',
   'stepCompletedGroupMask',
   'stepCompletedGroupSvg',

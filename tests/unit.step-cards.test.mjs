@@ -157,12 +157,12 @@ describe('Step 牌数 B：3 张几何 = Turn 栏 3 张同一设计系统', () =>
     const stack5 = decodeMask(T.stepCompletedGroupMask(5, false))
     assert.ok(/scale\(0\.24\d*\)/.test(stack5), '花色点缩放仍是 pipScaleFive=0.24')
   })
-  it('牌面 = 运行态轮换序列前缀（diamond→club→spade），未新建 Step 专属牌面池', () => {
+  it('牌面回退顺序 = 插件自有池（diamond→club→spade→heart→deepseek），未新建 Step 专属牌面池', () => {
     const svg = decodeMask(T.stepCompletedGroupMask(3, false))
     const order = ['diamond', 'club', 'spade', 'heart', 'deepseek']
     assert.ok(order.slice(0, 3).every((suit) => svg.includes(T.POKER_PIPS[suit].path) ||
       svg.includes(String(T.POKER_SPIN_DEEPSEEK).slice(0, 40).replace(/id="[^"]*"/, '')) ||
-      svg.includes('M23.748 4.482')), '3 张牌面应取轮换序列前 3 张的既有花色数据')
+      svg.includes('M23.748 4.482')), '3 张牌面应取插件牌面池前 3 张的既有花色数据')
   })
 })
 
@@ -364,9 +364,9 @@ describe('Step 牌数 E：只读视觉桥', () => {
     assert.ok(block5[0].includes('--tf-face-' + set5.id + '-stack'), '5 张牌堆规则引用本组 set（不再吃默认固定牌面）')
     assert.ok(block5[1].includes('--tf-face-' + set5.id + '-fan'), '5 张扇形规则引用本组 set')
     assert.ok(block5[1].includes('[data-process-activity][aria-expanded="true"]'), '扇形规则挂在官方展开态上')
-    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不得产出覆盖规则（它走五牌面轮换）')
+    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不得产出覆盖规则（它走运行中翻牌动画）')
     for (const line of lines) {
-      assert.ok(line.includes(':not(:has([data-shimmer="true"]))'), '规则必须排除 running（否则压掉五牌面轮换）')
+      assert.ok(line.includes(':not(:has([data-shimmer="true"]))'), '规则必须排除 running（否则压掉运行中翻牌动画）')
       assert.ok(line.includes(':not(:has([data-text-shimmer="true"]))'), '双契约都要排除')
     }
   })
@@ -403,7 +403,7 @@ describe('Step 牌数 E：只读视觉桥', () => {
       assert.ok(!target(selectors[1]).matches(hostSel(selectors[1])), '收起态不得命中扇形规则')
       button.setAttribute('aria-expanded', 'true')
       assert.ok(target(selectors[1]).matches(hostSel(selectors[1])), '展开态应命中 3 张扇形规则')
-      // running（官方 shimmer 在场）→ 两条规则都不得命中（轮换优先）
+      // running（官方 shimmer 在场）→ 两条规则都不得命中（运行中翻牌优先）
       const shimmer = sharedDocument.createElement('span')
       shimmer.setAttribute('data-shimmer', 'true')
       button.appendChild(shimmer)
@@ -449,7 +449,7 @@ describe('Step 牌数 E：只读视觉桥', () => {
     const css = cardRulesCss()
     assert.ok(css.includes('[data-chat-group-key="' + T.cssAttrValue(GROUP3) + '"]'), '3 张组规则已写入')
     assert.ok(css.includes('[data-chat-group-key="' + T.cssAttrValue(GROUP5) + '"]'), '4 张+ 组同样写规则（5 张牌面）')
-    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不写规则（走五牌面轮换）')
+    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不写规则（走运行中翻牌动画）')
     const set3 = T.completedFaceSetFor(3, T.completedStepTopFace(undefined, GROUP3))
     const set5 = T.completedFaceSetFor(5, T.completedStepTopFace(undefined, GROUP5))
     assert.ok(css.includes('--tf-face-' + set3.id + '-stack') && css.includes('--tf-face-' + set5.id + '-stack'), '两组引用各自的牌面 set')
@@ -523,15 +523,17 @@ describe('Step 牌数 E：只读视觉桥', () => {
 // F. 回归：running / hover-focus / 双契约 / reduced-motion / Turn 栏
 // ══════════════════════════════════════════════════════════════════════
 describe('Step 牌数 F：零回归', () => {
-  it('running 五牌面轮换未受影响（规则、相位、牌面顺序原样）', () => {
+  it('running 竖直对角线轴翻牌未受影响（规则、轴角、牌面顺序原样）', () => {
     const css = skinCss()
     const running = css.split('\n').find((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
-    assert.ok(running, 'running 轮换规则缺失')
+    assert.ok(running, 'running 翻牌规则缺失')
     const m = running.match(/-webkit-mask-image:url\("(data:image\/svg\+xml,[^"]+)"\)/)
     const svg = decodeURIComponent(m[1].slice('data:image/svg+xml,'.length))
-    for (let n = 1; n <= 5; n++) assert.ok(svg.includes('<g id="phase-' + n + '">'), 'phase-' + n)
-    assert.equal((svg.match(/type="rotate" values="/g) || []).length >= 20, true)
-    assert.ok(svg.includes('id="card-deepseek"'), '五牌面（含鲸鱼）原样')
+    const spin = T.ICON_DEFAULTS.pokerSpin
+    assert.ok(svg.includes('class="tf-step-axis" transform="rotate(' + spin.restAngle + ')"'), '轴角应取数据源 pokerSpin.restAngle')
+    assert.equal((svg.match(/<animateTransform/g) || []).length, 1, '只应有 1 个 scale 翻面动画')
+    assert.equal((svg.match(/<animate\b/g) || []).length, 5, '四花色 + 牌背共 5 条可见性窗口')
+    assert.ok(svg.includes('id="axis-deepseek-step"'), '牌背鲸鱼 def 原样')
     // running 与 tool count 无关：规则本身不引用 --tf-stack-3/-fan-3
     assert.ok(!running.includes('--tf-stack-3') && !running.includes('--tf-fan-3'), 'running 动画必须与牌数无关')
   })
