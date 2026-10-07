@@ -578,8 +578,22 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     const raw = T.STEP_RUNNING_POKER_SVG
     const spin = T.ICON_DEFAULTS.pokerSpin
     assert.ok(raw.includes('class="tf-step-axis" transform="rotate(' + spin.restAngle + ')"'),
-      '生成块的轴角与数据源不一致（应重跑 node scripts/sync-step-anim.mjs）')
-    assert.ok(raw.includes('values="' + spin.scaleKeys + '"'), '生成块的关键帧与数据源不一致')
+      '生成块的轴角与数据源不一致（应重跑 npm run sync:step-anim）')
+    assert.ok(raw.includes('values="' + spin.scaleKeys + '"'), '生成块的关键帧与数据源不一致（应重跑 npm run sync:step-anim）')
+    assert.ok(raw.includes('keyTimes="' + spin.scaleKeyTimes + '"'), '生成块的 keyTimes 与数据源不一致（应重跑 npm run sync:step-anim）')
+    // 几何：任一改动（pokerRatio / h / r / strokeW / 花色路径）都必须重跑生成脚本，
+    // 否则运行中翻牌会与回合栏、与 completed 双态牌面用两套几何静默分叉。
+    assert.ok(raw.includes('width="' + (spin.h * spin.pokerRatio) + '"') && raw.includes('height="' + spin.h + '"'),
+      '生成块的卡牌宽高与数据源不一致（应重跑 npm run sync:step-anim）')
+    assert.ok(raw.includes('rx="' + spin.r + '"') && raw.includes('stroke-width="' + spin.strokeW + '"'),
+      '生成块的圆角/描边与数据源不一致（应重跑 npm run sync:step-anim）')
+    // 牌面：四花色 + 牌背 Logo 也必须是数据源那一份
+    for (const suit of ['spade', 'heart', 'diamond', 'club']) {
+      assert.ok(raw.includes(T.ICON_DEFAULTS.pokerPips[suit].path),
+        suit + ' 牌面与数据源 pokerPips 不一致（应重跑 npm run sync:step-anim）')
+    }
+    assert.ok(raw.includes(String(T.ICON_DEFAULTS.pokerSpinDeepseek).replace('axis-deepseek-UID', 'axis-deepseek-step')),
+      '牌背 Logo 与数据源 pokerSpinDeepseek 不一致（应重跑 npm run sync:step-anim）')
     assert.ok(!raw.includes("'") && !raw.includes('\\'), '生成块必须能安全嵌进单引号 JS 字符串')
   })
 
