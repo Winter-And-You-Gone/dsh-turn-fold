@@ -4,6 +4,7 @@
 //   - 架构守卫：旧折叠引擎的 CSS（:has() 隐藏成员、hidden 标记、fold-clip 等）必须消失
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { loadPlugin } from './helpers/loader.mjs'
 
 const { test: T, document, window } = loadPlugin()
@@ -169,7 +170,7 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
     assert.equal((fanSvg.match(/id="scc-g\d"/g) || []).length, 5, '扇形应为五张牌 glyph')
   })
 
-  it('DOM 命中：收起不命中 fan（走基础牌堆）；展开命中；展开 + shimmer 不命中（运行中翻牌优先）', () => {
+  it('DOM 命中：收起不命中 fan（走基础牌堆）；展开命中；展开 + shimmer 不命中（运行中轮换优先）', () => {
     const skin = skinEl().textContent
     const sel = fanHostSelectorOf(skin)
     const closed = completedDom({})
@@ -182,7 +183,7 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
     } finally { open.cleanup() }
     const openRunning = completedDom({ expanded: true, shimmer: true })
     try {
-      assert.ok(!openRunning.button.matches(sel), 'shimmer 在场的展开组不得命中 fan 规则（running 翻牌优先）')
+      assert.ok(!openRunning.button.matches(sel), 'shimmer 在场的展开组不得命中 fan 规则（running 轮换优先）')
     } finally { openRunning.cleanup() }
   })
 
@@ -355,7 +356,7 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
 
 describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
   // ── 从皮肤 CSS 提取真实 running 规则（单一事实来源，测试不复制选择器） ──
-  // running 规则形态（单一卡牌位 ::before；mask 换成竖直对角线轴翻牌 SVG 的数据 URI）：
+  // running 规则形态（单一卡牌位 ::before；mask 换成平面旋转（35.5°）轮换 SVG 的数据 URI）：
   //   [data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before,
   //   [data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{ …mask-image:url("data:image/svg+xml,…")… }
   function runningRuleOf(skin) {
@@ -363,7 +364,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     const line = skin
       .split('\n')
       .find((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
-    assert.ok(line, 'running 规则缺失（双契约 + 竖直对角线轴翻牌 mask）')
+    assert.ok(line, 'running 规则缺失（双契约 + 平面旋转轮换 mask）')
     return line
   }
   function runningDeclarationOf(skin) {
@@ -374,7 +375,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     const line = runningRuleOf(skin)
     return line.slice(0, line.indexOf('{')).split(',')
   }
-  // 从 running 规则取出竖直对角线轴翻牌 SVG 数据 URI 并解码（还原 SVG 文本后断言内部结构）
+  // 从 running 规则取出平面旋转轮换 SVG 数据 URI 并解码（还原 SVG 文本后断言内部结构）
   function decodedAnimSvgOf(skin) {
     const declaration = runningDeclarationOf(skin)
     const m = declaration.match(/-webkit-mask-image:url\("(data:image\/svg\+xml,[^"]+)"\)/)
@@ -424,18 +425,18 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(!skin.includes('[data-step-process-icon]::after'), 'Step 侧不得再出现第二个伪元素')
   })
 
-  it('0.1.7 DOM：data-text-shimmer="true" → 竖直对角线轴翻牌 mask 生效', () => {
+  it('0.1.7 DOM：data-text-shimmer="true" → 平面旋转轮换 mask 生效', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('0.1.7')
     try {
       const sel = runningSelectorsOf(skin).find((s) => s.includes('[data-text-shimmer="true"]'))
       assert.ok(sel, '0.1.7 契约选择器缺失')
       assert.ok(host.matches(hostSelectorOf(sel)), '0.1.7 官方 DOM 未命中 running 选择器')
-      assert.ok(runningDeclarationOf(skin).includes('mask-image:url("data:image/svg+xml'), 'running 声明未换成翻牌 mask')
+      assert.ok(runningDeclarationOf(skin).includes('mask-image:url("data:image/svg+xml'), 'running 声明未换成轮换 mask')
     } finally { cleanup() }
   })
 
-  it('0.2.0+ DOM：data-shimmer="true" → 竖直对角线轴翻牌 mask 生效', () => {
+  it('0.2.0+ DOM：data-shimmer="true" → 平面旋转轮换 mask 生效', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('0.2.0')
     try {
@@ -465,11 +466,11 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       const rule = skin.split('\n').find((l) => l.includes('[data-process-activity="' + activity + '"] [data-step-process-icon]'))
       assert.ok(rule, activity + ' 静态规则缺失')
       assert.ok(rule.includes('--tf-suit:' + T.suitMaskImage(suit)), activity + ' 静态花色不是 ' + suit)
-      assert.ok(!rule.includes('tf-step-axis'), activity + ' 静态规则不得携带翻牌动画 SVG（只允许花色 mask）')
+      assert.ok(!rule.includes('tf-step-flat-rotation'), activity + ' 静态规则不得携带轮换动画 SVG（只允许花色 mask）')
     }
   })
 
-  it('双属性同时存在 → 仍只有一条 running 规则（翻牌 SVG 数据 URI 只声明一次）', () => {
+  it('双属性同时存在 → 仍只有一条 running 规则（轮换 SVG 数据 URI 只声明一次）', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('both')
     try {
@@ -477,124 +478,125 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
         assert.ok(host.matches(hostSelectorOf(sel)), '双属性 DOM 未命中 running 选择器：' + sel)
       }
       const maskRules = skin.split('\n').filter((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before') && l.includes('mask-image:url("data:image/svg+xml'))
-      assert.equal(maskRules.length, 1, 'running 翻牌 mask 规则必须恰好一条')
-      assert.equal((skin.match(/tf-step-axis/g) || []).length, 2, '翻牌 SVG 只应出现一次（webkit + 标准两条 mask-image 声明）')
+      assert.equal(maskRules.length, 1, 'running 轮换 mask 规则必须恰好一条')
+      assert.equal((skin.match(/tf-step-flat-rotation/g) || []).length, 2, '轮换 SVG 只应出现一次（webkit + 标准两条 mask-image 声明）')
     } finally { cleanup() }
   })
 
-  // ══════ 竖直对角线轴翻牌契约 ══════
-  // 设计源 = 参考稿 docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html 第五行
-  //          「牌面翻转 · 竖直对角线轴」（renderDiagonalSpinCard → svgAxisSpin(16, poker, 0, atan(w/h))）。
-  // 数值源 = icons/default.json（pokerSpin.* / pokerPips.* / pokerSpinDeepseek）——
-  //          与回合栏 buildPokerSpinSVG 同读一份：轴角、几何、关键帧都必须逐字一致。
-  it('牌面翻转 SVG：轴角 = 数据源 pokerSpin.restAngle = atan(w/h)；共轭结构 translate(8,8) → scale → 轴组 → translate(-8,-8)', () => {
+  // ══════ 平面旋转契约（机械移植自参考实现 docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html 第三行变体） ══════
+  // 设计源 = 第三行的五牌面轮换动画本体 + svg3dRotated() 那一步：
+  //          「牌面轮换 · 平面旋转 35.5°」（把整套可见动画绕 16×16 画布中心整体旋转，关键帧不改）。
+  // 旋转角 = icons/default.json → pokerSpin.restAngle（= atan(w/h)），断言其四舍五入 == 参考稿字面量 35.5。
+  const referenceHtml = readFileSync(new URL('../docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html', import.meta.url), 'utf8')
+
+  it('平面旋转组：<g class="tf-step-flat-rotation" transform="rotate(<角> 8 8)"> 包住全部相位，角度取自数据源', () => {
     const svg = decodedAnimSvgOf(skinEl().textContent)
     const spin = T.ICON_DEFAULTS.pokerSpin
-    const axisDeg = Math.atan((spin.h * spin.pokerRatio) / spin.h) * 180 / Math.PI   // 5:7 卡牌 ≈ 35.5377°
-    const m = svg.match(/class="tf-step-axis" transform="rotate\((-?[0-9.]+)\)"/)
-    assert.ok(m, '翻牌 SVG 必须带 tf-step-axis 轴组（轴角只由该 SVG transform 属性决定）')
-    assert.equal(Number(m[1]), spin.restAngle, '轴角必须逐字取数据源 pokerSpin.restAngle')
-    assert.ok(Math.abs(Number(m[1]) - axisDeg) < 1e-3, '轴角应为 atan(w/h) = ' + axisDeg.toFixed(4) + '°，实际 ' + m[1])
-    // 共轭：squash（scale 动画）必须包在轴组之外 —— 否则翻转轴会跟着卡牌一起转，
-    // 就不是「竖直对角线」了；轴组内层 translate(-8 -8) 让旋转绕卡牌中心发生。
-    const scaleAt = svg.indexOf('<animateTransform')
-    const axisAt = svg.indexOf('class="tf-step-axis"')
-    assert.ok(scaleAt >= 0 && axisAt > scaleAt, '共轭顺序：scale 翻面动画应在轴组之前')
-    assert.ok(svg.includes('<g transform="translate(8 8)">'), '视图中心平移到原点')
-    const tail = svg.slice(axisAt, axisAt + 200)
-    assert.ok(/transform="rotate\(-?[0-9.]+\)"><g transform="translate\(-8 -8\)">/.test(tail),
-      'rotate 必须绕局部原点（= 卡牌中心）：' + tail.slice(0, 160))
-    // 轴组类名与回合栏刻意分开：CSS 里那条禁令（不得覆盖属性）只针对 ccg-axis-rest-rotation
-    assert.ok(!svg.includes('ccg-axis-rest-rotation'), '步骤侧不得复用回合栏轴组类名')
+    const m = svg.match(/<g class="tf-step-flat-rotation" transform="rotate\((-?[0-9.]+) 8 8\)">/)
+    assert.ok(m, '缺少平面旋转组 tf-step-flat-rotation（参考稿 svg3dRotated 同款）')
+    assert.equal(Number(m[1]), spin.restAngle, '旋转角必须逐字取数据源 pokerSpin.restAngle')
+    // 设计字面量 35.5 ↔ 数据源轴角：两边同源（参考稿里那条变体的标签与切换目标值）
+    assert.ok(referenceHtml.includes('const target = toward35 ? 35.5 : 0'), '参考稿 35.5 目标值标记漂移')
+    assert.ok(referenceHtml.includes('牌面轮换 · 平面旋转 ${angle}°'), '参考稿「平面旋转」变体标题漂移')
+    assert.ok(referenceHtml.includes('class="anim-root-rotation" transform="rotate(\' + angle + \' 8 8)"'),
+      '参考稿 svg3dRotated 接线漂移')
+    assert.equal(Number(spin.restAngle.toFixed(1)), 35.5, '数据源轴角四舍五入应等于设计字面量 35.5')
+    // 旋转组必须包住五组相位，并在 </svg> 前闭合
+    const rotAt = svg.indexOf('tf-step-flat-rotation')
+    const lastPhaseAt = svg.lastIndexOf('<g id="phase-5')
+    assert.ok(rotAt >= 0 && lastPhaseAt > rotAt, '旋转组必须开在全部相位之前')
+    assert.ok(svg.endsWith('</g></svg>'), '旋转组必须在 </svg> 前闭合')
   })
 
-  it('翻面节律：1.6s 一次翻转（73 帧 cos 投影，含 0 与 -1 零宽切面）、四花色一整轮 6.4s', () => {
+  it('五牌面轮换本体：五组相位 / 每 0.8s 一次轮换 / 4s 完整循环 / 参考参数原样（±3.1°、0.55、0.867、1.888、1.35467）', () => {
     const svg = decodedAnimSvgOf(skinEl().textContent)
-    const spin = T.ICON_DEFAULTS.pokerSpin
-    const scale = svg.match(/<animateTransform attributeName="transform" type="scale" values="([^"]+)" keyTimes="([^"]+)" dur="([^"]+)" repeatCount="indefinite" calcMode="linear"\/>/)
-    assert.ok(scale, '缺少 scale 翻面动画')
-    assert.equal(scale[3], '1.6s', '单次翻转时长应为 1.6s（参考稿第五行同值）')
-    assert.equal(scale[1], spin.scaleKeys, '关键帧必须逐字等于数据源 pokerSpin.scaleKeys')
-    assert.equal(scale[2], spin.scaleKeyTimes, 'keyTimes 必须逐字等于数据源 pokerSpin.scaleKeyTimes')
-    const frames = scale[1].split(';')
-    assert.equal(frames.length, 73, 'cos 投影关键帧应为 73 帧')
-    assert.ok(frames.includes('1 1') && frames.includes('0 1') && frames.includes('-1 1'),
-      '必须完整走过 1 → 0 → -1（经过零宽切面换正/背面）')
-    assert.equal(frames[0], '1 1', '首帧必须是满宽正面（循环起点无跳变）')
-    assert.equal(frames[frames.length - 1], '1 1', '末帧必须回到满宽（循环无跳变）')
-    const windows = [...svg.matchAll(/<animate attributeName="visibility" values="([^"]+)" keyTimes="[^"]+" dur="([^"]+)" repeatCount="indefinite" calcMode="discrete"\/>/g)]
-    assert.equal(windows.length, 5, '应有 5 条可见性窗口（4 花色 + 牌背）')
-    for (const w of windows) assert.equal(w[2], '6.4s', '一整轮花色周期应为 6.4s')
-  })
-
-  it('正面 ♠ → ♥ → ♦ → ♣ 循环；每次翻到背面固定显示 DeepSeek 鲸鱼（牌背语义）', () => {
-    const svg = decodedAnimSvgOf(skinEl().textContent)
-    const suitWindows = [...svg.matchAll(/<g visibility="([a-z]+)"><animate attributeName="visibility" values="([^"]+)"/g)]
-    assert.equal(suitWindows.length, 5, '应有 4 张正面 + 1 张牌背的可见性组')
-    assert.equal(suitWindows[0][1], 'visible', '♠ 是首帧可见的正面')
-    assert.equal(suitWindows[0][2], 'visible;hidden;visible;visible', '♠ 的可见窗口（首尾都在正面）')
-    const later = ['hidden;visible;hidden;hidden']
-    for (let i = 1; i <= 3; i += 1) {
-      assert.equal(suitWindows[i][1], 'hidden', '非首张正面起始必须隐藏')
-      assert.equal(suitWindows[i][2], later[0], '正面窗口必须是离散的单段可见')
+    for (let n = 1; n <= 5; n++) assert.ok(svg.includes('<g id="phase-' + n + '">'), 'phase-' + n + ' 缺失')
+    const opacities = [...svg.matchAll(/attributeName="opacity" values="([^"]+)"/g)].map((m) => m[1])
+    for (const want of ['1;0;0;0;0', '0;1;0;0;0', '0;0;1;0;0', '0;0;0;1;0', '0;0;0;0;1']) {
+      assert.ok(opacities.includes(want), '缺少相位可见窗口 values=' + want)
     }
-    assert.equal(suitWindows[4][1], 'hidden', '牌背起始隐藏')
-    assert.equal(suitWindows[4][2], 'hidden;visible;hidden;visible;hidden;visible;hidden;visible;hidden;hidden',
-      '牌背窗口：四段翻转的背面期都必须显示鲸鱼')
-    // 四花色 + 牌背牌面逐字取自数据源（pokerPips / pokerSpinDeepseek）
-    const pips = T.ICON_DEFAULTS.pokerPips
-    for (const suit of ['spade', 'heart', 'diamond', 'club']) {
-      assert.ok(svg.includes(pips[suit].path), suit + ' 正面未取自数据源 pokerPips')
+    assert.equal((svg.match(/dur="4s"/g) || []).length, 5, '必须恰好 5 个 4s 相位窗口（五牌面完整循环 4s）')
+    assert.equal((svg.match(/dur="0.8s"/g) || []).length, 82, '0.8s 转场参数数量异常（72 组卡牌/蒙版变换 + 10 个半程换层）')
+    assert.equal((svg.match(/<animateTransform/g) || []).length, 72, '参考动画为 72 个 animateTransform')
+    assert.equal((svg.match(/<animate\b/g) || []).length, 15, '参考动画为 15 个 animate（5 相位窗口 + 10 半程换层）')
+    for (const token of ['type="translate"', 'type="rotate"', 'type="scale"', '1.888', '1.35467', '0.55', '0.867', '3.1']) {
+      assert.ok(svg.includes(token), '缺少参考参数 ' + token)
     }
-    assert.ok(svg.includes('id="axis-deepseek-step"') && svg.includes('<use href="#axis-deepseek-step"'),
-      '牌背必须引用数据源的 DeepSeek 鲸鱼 Logo')
+    // 平面旋转不改关键帧：唯一的 rotate 仍是二维平面小角度 ±3.1°
+    // （整体 35.5377° 由外层 tf-step-flat-rotation 的 transform 属性承担，不是动画）
+    const rots = [...svg.matchAll(/type="rotate" values="([^"]+)"/g)].flatMap((m) => m[1].split(';').map(Number))
+    assert.ok(rots.length >= 20, 'rotate 关键帧数量异常：' + rots.length)
+    assert.equal(Math.max(...rots), 3.1, 'rotate 极值应为 +3.1°')
+    assert.equal(Math.min(...rots), -3.1, 'rotate 极值应为 -3.1°')
+    for (const banned of ['rotateY', 'perspective', 'scaleX', 'card-back', 'skew']) {
+      assert.ok(!svg.includes(banned), '五牌面轮换不得包含 ' + banned)
+    }
   })
 
-  it('单张牌翻面：不需要第三行那套遮挡机（无 mask/mask-type/相位分组/上下层）', () => {
+  it('牌面顺序：diamond → club → spade → heart → deepseek → diamond（DeepSeek 是第五张牌，非牌背）', () => {
     const svg = decodedAnimSvgOf(skinEl().textContent)
-    for (const banned of ['mask=', 'mask-type', 'mask-plus', 'mask-minus', 'phase-', 'card-', 'opacity']) {
-      assert.ok(!svg.includes(banned), '单张牌翻面不得引入 ' + banned)
+    const order = ['diamond', 'club', 'spade', 'heart', 'deepseek']
+    const phases = [...svg.matchAll(/<g id="phase-(\d)">([\s\S]*?)(?=<g id="phase-|<\/svg>)/g)]
+    assert.equal(phases.length, 5, '必须解析出 5 个相位')
+    phases.forEach((m, idx) => {
+      const cards = [...m[2].matchAll(/href="#card-([a-z]+)"/g)].map((x) => x[1])
+      assert.equal(cards.length, 4, 'phase-' + m[1] + ' 应有 4 个卡牌引用（前/后半各两张）')
+      assert.equal(cards[1], order[idx], 'phase-' + m[1] + ' 前半当前牌应为 ' + order[idx])
+      assert.equal(cards[3], order[(idx + 1) % 5], 'phase-' + m[1] + ' 后半当前牌应为 ' + order[(idx + 1) % 5])
+    })
+    // 鲸鱼是独立第五张牌面；不存在任何"牌背"语义
+    assert.ok(svg.includes('id="pip-deepseek"') && svg.includes('id="card-deepseek"'), 'DeepSeek 鲸鱼牌面缺失')
+    for (const suit of ['spade', 'heart', 'diamond', 'club', 'deepseek']) {
+      assert.ok(svg.includes('id="card-' + suit + '"'), '五牌面缺少 ' + suit)
     }
-    assert.equal((svg.match(/<animateTransform/g) || []).length, 1, '只应有 1 个 animateTransform（scale 翻面）')
-    assert.equal((svg.match(/<animate\b/g) || []).length, 5, '只应有 5 个 animate（4 正面 + 1 牌背窗口）')
+    assert.ok(!svg.includes('back'), '不得出现 back/牌背语义')
   })
 
-  it('卡片本体 = poker 5:7（与回合栏同几何：宽 = h×ratio、rx = pokerSpin.r、stroke = pokerSpin.strokeW）、透明卡面', () => {
+  it('半程层级交换 + 动态遮挡：discrete 在 50% 换层；四个 luminance 蒙版挖空下层牌线条', () => {
     const svg = decodedAnimSvgOf(skinEl().textContent)
-    const spin = T.ICON_DEFAULTS.pokerSpin
-    assert.ok(svg.includes('class="anim-card axis-spin-card"'), '卡牌 rect 缺失')
-    assert.ok(svg.includes('width="' + (spin.h * spin.pokerRatio) + '"') && svg.includes('height="' + spin.h + '"'),
-      '卡牌 rect 未按 poker 5:7 适配')
-    assert.ok(svg.includes('rx="' + spin.r + '"'), '圆角未取数据源 pokerSpin.r')
-    assert.ok(svg.includes('stroke-width="' + spin.strokeW + '"'), '描边未取数据源 pokerSpin.strokeW')
+    assert.equal((svg.match(/calcMode="discrete"/g) || []).length, 15, '缺少 discrete（5 相位窗口 + 10 半程换层）')
+    assert.equal((svg.match(/values="1;0" keyTimes="0;0.5"/g) || []).length, 5, '前半段换层（1;0 @0;0.5）数量异常')
+    assert.equal((svg.match(/values="0;1" keyTimes="0;0.5"/g) || []).length, 5, '后半段换层（0;1 @0;0.5）数量异常')
+    for (const id of ['mask-plus-out', 'mask-plus-in', 'mask-minus-out', 'mask-minus-in']) {
+      assert.ok(svg.includes('id="' + id + '"'), id + ' 缺失')
+    }
+    assert.equal((svg.match(/mask-type:luminance/g) || []).length, 4, '四个动态蒙版都必须是 luminance')
+    const phases = [...svg.matchAll(/<g id="phase-(\d)">([\s\S]*?)(?=<g id="phase-|<\/svg>)/g)]
+    phases.forEach((m) => {
+      const masks = [...m[2].matchAll(/mask="url\(#(mask-[a-z-]+)\)"/g)].map((x) => x[1])
+      const want = Number(m[1]) % 2 === 1 ? 'plus-' : 'minus-'
+      assert.equal(masks.length, 2, 'phase-' + m[1] + ' 应有前/后半各一个动态蒙版')
+      for (const mk of masks) assert.ok(mk.includes(want), 'phase-' + m[1] + ' 应使用 ' + want + '* 蒙版（实际 ' + mk + '）')
+    })
+    // 蒙版剪影按 poker 5:7 牌形（6.434…×8.72，连同 stroke 一起挖空）
+    assert.ok(svg.includes('class="anim-mask-rect"') && svg.includes('width="6.434285714285714"'), '蒙版剪影未按 poker 5:7 适配')
+    assert.ok(svg.includes('rx="1.44"'), '蒙版剪影圆角未按 poker 适配')
+  })
+
+  it('卡片本体 = poker 5:7（8×5.714…，rx 1.08）、透明卡面（自包含 .anim-card{fill:transparent}）', () => {
+    const svg = decodedAnimSvgOf(skinEl().textContent)
+    assert.ok(svg.includes('class="anim-base-rect"'), '卡牌 rect 缺失')
+    assert.ok(svg.includes('width="5.714285714285714"') && svg.includes('height="8"') && svg.includes('rx="1.08"'), '卡牌 rect 未按 poker 5:7 适配')
     assert.ok(svg.includes('.anim-card{fill:transparent}'), '缺少自包含的 .anim-card{fill:transparent}（透明卡面）')
     assert.ok(svg.includes('stroke="currentColor"'), '卡牌描边应使用 currentColor')
-    assert.equal((svg.match(/class="anim-card axis-spin-card"/g) || []).length, 5, '四个正面 + 牌背共用同一几何')
-    // 与回合栏同比例：16 视箱 —— 牌外缘 ≈9.62×13.05（mask-size 24px 下与 Turn 栏逐像素一致）
-    assert.ok(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"'), '视箱必须是 16×16')
   })
 
-  it('生成块与数据源一致：client.js 里的 STEP_RUNNING_POKER_SVG 未被人手改动', () => {
+  it('生成块与参考稿/数据源一致：client.js 里的 STEP_RUNNING_POKER_SVG 未被人手改动', () => {
     const raw = T.STEP_RUNNING_POKER_SVG
     const spin = T.ICON_DEFAULTS.pokerSpin
-    assert.ok(raw.includes('class="tf-step-axis" transform="rotate(' + spin.restAngle + ')"'),
-      '生成块的轴角与数据源不一致（应重跑 npm run sync:step-anim）')
-    assert.ok(raw.includes('values="' + spin.scaleKeys + '"'), '生成块的关键帧与数据源不一致（应重跑 npm run sync:step-anim）')
-    assert.ok(raw.includes('keyTimes="' + spin.scaleKeyTimes + '"'), '生成块的 keyTimes 与数据源不一致（应重跑 npm run sync:step-anim）')
-    // 几何：任一改动（pokerRatio / h / r / strokeW / 花色路径）都必须重跑生成脚本，
-    // 否则运行中翻牌会与回合栏、与 completed 双态牌面用两套几何静默分叉。
-    assert.ok(raw.includes('width="' + (spin.h * spin.pokerRatio) + '"') && raw.includes('height="' + spin.h + '"'),
-      '生成块的卡牌宽高与数据源不一致（应重跑 npm run sync:step-anim）')
-    assert.ok(raw.includes('rx="' + spin.r + '"') && raw.includes('stroke-width="' + spin.strokeW + '"'),
-      '生成块的圆角/描边与数据源不一致（应重跑 npm run sync:step-anim）')
-    // 牌面：四花色 + 牌背 Logo 也必须是数据源那一份
-    for (const suit of ['spade', 'heart', 'diamond', 'club']) {
-      assert.ok(raw.includes(T.ICON_DEFAULTS.pokerPips[suit].path),
-        suit + ' 牌面与数据源 pokerPips 不一致（应重跑 npm run sync:step-anim）')
+    assert.ok(raw.includes('<g class="tf-step-flat-rotation" transform="rotate(' + spin.restAngle + ' 8 8)">'),
+      '生成块的旋转角与数据源不一致（应重跑 npm run sync:step-anim）')
+    // 旋转组必须包住全部五个相位
+    assert.ok(raw.indexOf('tf-step-flat-rotation') < raw.lastIndexOf('<g id="phase-5'), '旋转组未包住全部相位')
+    for (const token of ['<g id="phase-1">', '<g id="phase-5">', 'id="mask-plus-out"', 'id="mask-minus-in"',
+      'id="card-deepseek"', 'dur="4s"', 'dur="0.8s"', 'calcMode="discrete"', 'viewBox="0 0 16 16"']) {
+      assert.ok(raw.includes(token), '生成块缺少结构标记 ' + token + '（应重跑 npm run sync:step-anim）')
     }
-    assert.ok(raw.includes(String(T.ICON_DEFAULTS.pokerSpinDeepseek).replace('axis-deepseek-UID', 'axis-deepseek-step')),
-      '牌背 Logo 与数据源 pokerSpinDeepseek 不一致（应重跑 npm run sync:step-anim）')
     assert.ok(!raw.includes("'") && !raw.includes('\\'), '生成块必须能安全嵌进单引号 JS 字符串')
+    // 与回合栏刻意不同：不得混入轴旋转翻牌时代的标识
+    for (const banned of ['ccg-axis-rest-rotation', 'tf-step-axis', 'axis-spin-card', 'anim-root-rotation']) {
+      assert.ok(!raw.includes(banned), '生成块出现了其它动画的标识：' + banned)
+    }
   })
 
   it('旧概念清除：无 CSS 3D（rotateY/perspective/backface-visibility）、无 tf-flip/tf-cycle、无第二伪元素', () => {
@@ -624,7 +626,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(staticCount >= 5, '静态映射规则数量异常：' + staticCount)
   })
 
-  it('shimmer 钩子缺失的最坏退化 = completed 双态（running 规则整行退场，无残留翻牌 SVG）', () => {
+  it('shimmer 钩子缺失的最坏退化 = completed 双态（running 规则整行退场，无残留轮换 SVG）', () => {
     const skin = skinEl().textContent
     const withoutRunning = skin
       .split('\n')
@@ -632,10 +634,10 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       .join('\n')
     assert.ok(withoutRunning.includes('[data-step-process] [data-step-process-icon]::before'), '静态牌渲染位仍在')
     assert.ok(withoutRunning.includes('--tf-suit:'), '静态花色映射仍在')
-    assert.ok(!withoutRunning.includes('tf-step-axis'), '翻牌 SVG 随 running 规则一起退场')
+    assert.ok(!withoutRunning.includes('tf-step-flat-rotation'), '轮换 SVG 随 running 规则一起退场')
   })
 
-  it('reduced-motion：不播放翻牌动画——mask 换回静态 activity 花色牌（与统一牌规格同外缘）', () => {
+  it('reduced-motion：不播放轮换动画——mask 换回静态 activity 花色牌（与统一牌规格同外缘）', () => {
     const skin = skinEl().textContent
     const line = skin.split('\n').find((l) => l.includes('@media (prefers-reduced-motion:reduce)') && l.includes('mask-image:var(--tf-suit)'))
     assert.ok(line, 'reduced-motion 的静态回退规则缺失')

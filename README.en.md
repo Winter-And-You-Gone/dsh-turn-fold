@@ -98,48 +98,49 @@ and search reveal) works untouched; the plugin only reskins it:
   webFetch → ♠, edit/write → ♦, commands/code → ♣, subagents/plan/tools → 🐋whale
   (DeepSeek logo); unregistered activities fall back to ♥ (this mapping now mainly
   serves as the reduced-motion running fallback);
-- **Running card flip · vertical diagonal axis** (same look as the Turn bar's running icon):
-  a running step (official title shimmer. Soft running-state dependencies — DSH 0.1.7
-  renders `data-text-shimmer`, DSH 0.2.0+ renders `data-shimmer`; both are real official
-  historical contracts and the plugin supports both) flips the card around its own
-  **top-left → bottom-right diagonal**: the four suits cycle as faces (♠ → ♥ → ♦ → ♣) and
-  every flip to the back shows the DeepSeek whale. A self-running SVG (SMIL) is used as
-  the card's CSS mask, so the stroke color keeps following `currentColor`:
+- **Running face rotation · flat-rotated 35.5°** (**not** the Turn bar's vertical-diagonal-axis
+  flip — the two are deliberately different): a running step (official title shimmer. Soft
+  running-state dependencies — DSH 0.1.7 renders `data-text-shimmer`, DSH 0.2.0+ renders
+  `data-shimmer`; both are real official historical contracts and the plugin supports both)
+  keeps the **five equal card faces** (♠ ♥ ♦ ♣ + the DeepSeek whale; no front/back) and
+  rotates the whole visible animation (cards, suits, and the masks they reference) **around
+  the icon centre by 35.5°**. A self-running SVG (SMIL) is used as the card's CSS mask, so
+  the stroke color keeps following `currentColor`:
   - **Design source**: the reference `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html`
-    **row 5 "牌面翻转 · 竖直对角线轴"** (`renderDiagonalSpinCard()` →
-    `svgAxisSpin(16, poker, 0, diagonalRestAngle())`);
-  - **Value source**: `icons/default.json` alone (`pokerSpin.*` axis/geometry/keyframes,
-    `pokerPips.*` suits, `pokerSpinDeepseek` back) — the same file the Turn bar's
-    `buildPokerSpinSVG` reads, so the two axis angles cannot diverge under the shipped
-    data source;
-  - **Generated** by `node scripts/sync-step-anim.mjs` into the
-    `>>> step-running-poker-svg` marker block of `client.js`. The script asserts the
-    design source still wires row 5 (call site, conjugate transform, visibility windows,
-    timings) **and** that every literal equals the data source (h, pokerRatio, r,
-    pipScale, strokeW, the 73-frame scaleKeys/scaleKeyTimes), plus the axis identity
-    `restAngle == atan(w/h)` (rounded to 4 decimals) — drift on either side fails the run;
-  - **Structure**: the conjugate transform
-    `translate(8,8) → scale(cosθ) → rotate(35.5377°) → translate(-8,-8)`. The scale group
-    flips once every 1.6s (θ crossing 90°/270° swaps front/back at the zero-width edge),
-    and the axis group (`class="tf-step-axis"`) brings the diagonal upright — visually a
-    flip around that real diagonal. Four suit windows plus one back window (6.4s each,
-    `discrete`) form one cycle: ♠ → back → ♥ → back → ♦ → back → ♣ → back → ♠;
-  - **A single card needs no occlusion machinery**: the generated SVG contains no `mask`,
-    `mask-type`, or phase groups (row 3's "two overlapping cards + four dynamic knockout
-    masks" has no object on a single card);
+    **row 3's "flat-rotated" variant** — the five-face rotation itself (`const ANIM_SVG`)
+    plus `svg3dRotated()`: insert `<g class="anim-root-rotation" transform="rotate(angle 8 8)">`
+    right after `</defs>`. The reference's own comment: "rotate the whole visible animation
+    around the 16×16 canvas centre **without touching any keyframe**; `defs` keeps its
+    original coordinates while the outer transform rotates cards, suits and the referenced
+    masks together";
+  - **Angle**: `icons/default.json → pokerSpin.restAngle` (≈35.5377° = `atan(w/h)`, the same
+    data source the Turn bar's axis reads). The generator asserts it rounds to one decimal
+    equal to the reference variant's literal **35.5** ("牌面轮换 · 平面旋转 35.5°" /
+    `const target = toward35 ? 35.5 : 0`) — drift on either side fails the run;
+  - **Generated** by `npm run sync:step-anim` into the `>>> step-running-poker-svg` marker
+    block of `client.js`. The script asserts the reference still wires row 3's rotated variant
+    (`svg3dRotated`, `anim-root-rotation`, `rotate(' + angle + ' 8 8)`, the 35.5 literal) and
+    that the output still carries **5 phase groups / 72 animateTransform / 15 animate /
+    `0.8s`×82 / `4s`×5** — i.e. "rotation added, keyframes untouched" — with the rotation
+    group genuinely wrapping every phase;
+  - **Structure**: the five-face rotation (every 0.8s two full flat cards drift slightly apart
+    on opposite diagonals and merge again, the only rotate being a ±3.1° 2D in-plane tilt; the
+    layer order flips mid-way with `discrete`; four dynamic luminance masks knock the lower
+    card's strokes out under the upper card; five phases form a 4s loop: diamond → club →
+    spade → heart → deepseek → back to diamond) **wrapped in**
+    `<g class="tf-step-flat-rotation" transform="rotate(35.5377 8 8)">`;
   - **Recorded boundary**: this SVG is baked into `client.js` at build time; a runtime
     localStorage icon-pack override does not rewrite it (overrides only reach the Turn-bar
-    flip and the runtime-generated completed two-state faces) — same nature as the old
-    row-3 artifact;
+    flip and the runtime-generated completed two-state faces) — same nature as before;
   - The running look is independent of the card count, and when the step settles the
     shimmer disappears → automatic fallback to the completed two-state icon (collapsed
     stack / expanded fan) — pure CSS cascade, zero JS running state; static suit card
     under reduced motion;
-  - The axis angle lives **only** in the SVG `transform` attribute: **CSS must never
+  - The rotation angle lives **only** in the SVG `transform` attribute: **CSS must never
     restate it** (a CSS transform silently overrides the attribute — the Turn bar hit
-    exactly that bug). The step-side class name `tf-step-axis` is deliberately distinct
-    from the Turn bar's `ccg-axis-rest-rotation`; guards live in
-    `tests/unit.css.test.mjs` ("vertical diagonal axis flip contract");
+    exactly that bug). The step-side class name `tf-step-flat-rotation` is deliberately
+    distinct from the Turn bar's `ccg-axis-rest-rotation`; guards live in
+    `tests/unit.css.test.mjs` ("flat rotation contract");
 - **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
   the skin `<style>` element's `disabled` property (the plugin never writes global
   `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
@@ -238,6 +239,9 @@ The turn bar's leading icon defaults to **animated poker cards** (⚙ gear on th
   upper card's transform; card bodies are transparent (correct over wallpapers);
 - **Data source**: `icons/default.json` (suit paths, card geometry, stack/fan transforms,
   animation templates) — run `npm run sync:icons` to inject, `npm run icons:check` to verify.
+  The **Step running rotation** is a build-time artifact on top of it: `npm run sync:step-anim`
+  regenerates it from the reference design's row-3 rotated variant (see the Step skin section);
+  a runtime `localStorage` pack override does not reach it.
 
 ## Custom icons (Agent Skill)
 
@@ -247,7 +251,9 @@ This plugin ships an **agent skill** `dsh-turn-fold-customize-icons` (the host h
 loads the full workflow:
 
 - **Data source**: `icons/default.json` (single source of truth)
-- **Sync after edits**: `npm run sync:icons` → `npm run icons:check`
+- **Sync after edits**: `npm run sync:icons` → `npm run icons:check`; when the edit touches
+  `pokerSpin` / `pokerPips` / `pokerSpinDeepseek`, also `npm run sync:step-anim` (the Step
+  running rotation is generated from them)
 - **Quick preview**: write `localStorage['dsh-turn-fold:icons']` to override without code changes
 - **Pitfall guide**: environment-specific SVG rendering quirks
 
@@ -353,11 +359,12 @@ git push --follow-tags
     - DSH 0.2.0+ (master, `TextShimmer.tsx`: `data-shimmer={active || undefined}`) →
       `data-shimmer="true"`.
     The plugin supports both: either one present → Running Step Poker animation
-    (`:has()` matching swaps the card mask to the **vertical-diagonal-axis flip SVG** —
-    suits ♠ → ♥ → ♦ → ♣ as faces plus the DeepSeek whale as the fixed back, one flip every
-    1.6s, a 6.4s cycle, no occlusion machinery on a single card); both absent →
+    (`:has()` matching swaps the card mask to the **five-face rotation SVG rotated 35.5°** —
+    ♠ ♥ ♦ ♣ + the DeepSeek whale as five equal faces, one rotation every 0.8s, a 4s loop with
+    dynamic knockout of the lower card, the whole animation rotated around the icon centre);
+    both absent →
     completed two-state fallback (collapsed five-suit stack / expanded fan).
-    **Used only to identify running steps for the poker flip animation**; when the
+    **Used only to identify running steps for the poker rotation animation**; when the
     official turn/step closes the attribute disappears, the animation rule stops
     matching, and the card settles with zero JS. Whether or not the visual hooks
     fail, Step Fold / Tool / Think / Turn Fold and page stability are never affected;

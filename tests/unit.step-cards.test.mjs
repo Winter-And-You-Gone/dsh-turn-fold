@@ -523,17 +523,19 @@ describe('Step 牌数 E：只读视觉桥', () => {
 // F. 回归：running / hover-focus / 双契约 / reduced-motion / Turn 栏
 // ══════════════════════════════════════════════════════════════════════
 describe('Step 牌数 F：零回归', () => {
-  it('running 竖直对角线轴翻牌未受影响（规则、轴角、牌面顺序原样）', () => {
+  it('running 平面旋转轮换未受影响（规则、相位、牌面顺序原样）', () => {
     const css = skinCss()
     const running = css.split('\n').find((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
-    assert.ok(running, 'running 翻牌规则缺失')
+    assert.ok(running, 'running 轮换规则缺失')
     const m = running.match(/-webkit-mask-image:url\("(data:image\/svg\+xml,[^"]+)"\)/)
     const svg = decodeURIComponent(m[1].slice('data:image/svg+xml,'.length))
+    for (let n = 1; n <= 5; n++) assert.ok(svg.includes('<g id="phase-' + n + '">'), 'phase-' + n)
+    assert.equal((svg.match(/type="rotate" values="/g) || []).length >= 20, true)
+    assert.ok(svg.includes('id="card-deepseek"'), '五牌面（含鲸鱼）原样')
+    // 平面旋转 35.5°：整套动画包在旋转组里（角取数据源 pokerSpin.restAngle）
     const spin = T.ICON_DEFAULTS.pokerSpin
-    assert.ok(svg.includes('class="tf-step-axis" transform="rotate(' + spin.restAngle + ')"'), '轴角应取数据源 pokerSpin.restAngle')
-    assert.equal((svg.match(/<animateTransform/g) || []).length, 1, '只应有 1 个 scale 翻面动画')
-    assert.equal((svg.match(/<animate\b/g) || []).length, 5, '四花色 + 牌背共 5 条可见性窗口')
-    assert.ok(svg.includes('id="axis-deepseek-step"'), '牌背鲸鱼 def 原样')
+    assert.ok(svg.includes('<g class="tf-step-flat-rotation" transform="rotate(' + spin.restAngle + ' 8 8)">'),
+      '平面旋转组缺失或角度与数据源不一致')
     // running 与 tool count 无关：规则本身不引用 --tf-stack-3/-fan-3
     assert.ok(!running.includes('--tf-stack-3') && !running.includes('--tf-fan-3'), 'running 动画必须与牌数无关')
   })
