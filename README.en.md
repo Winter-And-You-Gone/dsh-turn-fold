@@ -178,7 +178,10 @@ and search reveal) works untouched; the plugin only reskins it:
   code-block banner (6), the official pinned compaction header (7), the composer (7) and the
   back-to-bottom control (8), so it never covers an official control. **Recorded cost**: on very tall
   content with the reader away from the tail, the pinned step header can cover the plugin's turn bar
-  (both are status surfaces; the running step wins);
+  (both are status surfaces; the running step wins). Also: the official code-block banner (6) outranks
+  this rule (5), so a fenced code block with a pinned Copy bar *inside* the running group would paint
+  over the pinned header (a rare combination, deliberately not "fixed": raising the rule to 7 would
+  instead cover the official pinned compaction header);
 - **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
   the skin `<style>` element's `disabled` property (the plugin never writes global
   `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
