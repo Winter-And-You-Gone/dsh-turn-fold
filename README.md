@@ -212,8 +212,11 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   `button[data-process-activity]::after{content:"…"}`——**不写官方 DOM、不加官方属性、
   不做 DOM 观察**（架构红线见 `tests/unit.compat.test.mjs` 的禁用标识符与
   `tests/unit.step-cards.test.mjs` 的桥守卫）。显示规则：basename 再去重，然后按**整名预算**
-  取舍——最多 3 个、总长不超过 `STEP_FILES_BUDGET`（32 字符），放不下的名字整条折成 ` +N`
-  （**绝不显示半个文件名**；CSS 的 `max-width` + ellipsis 只作超长兜底，正常不触发）；
+  取舍——最多 3 个，逐名累加长度不超过 `STEP_FILES_BUDGET`（32 字符），放不下的名字整条折成
+  ` +N`；**只有第一个名字例外**：为了"至少留一个名字，否则这段就没信息了"，首个名字无条件
+  显示（所以它自身可能超过 32 字符），此时若它长于 CSS 兜底宽度（`max-width:44ch`，CJK 约
+  2ch/字）就会被省略号截断——这是**已知边界**，不要指望"绝不显示半个文件名"在单名超长时成立；
+  正常（名字都 ≤ 预算）不触发 CSS 截断，也不会出现早先那种 `ChatGroup…` 残片；
   `glob/grep/find/ls` 这类目录型工具的 `path` 是搜索根、不当文件名
   （`file_path` 恒采信）；目录（以分隔符结尾）与 `url` 不算文件；运行中与已完成都显示
   （运行中随官方工具数据变化累积，`turnDataSource(turn,'tool-call')` 只作刷新触发器），
@@ -259,6 +262,18 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
     （CSS transform 会压掉同名属性，回合栏踩过这个坑）。步骤侧旋转组类名
     `tf-step-flat-rotation` 与回合栏 `ccg-axis-rest-rotation` 刻意分开，守卫见
     `tests/unit.css.test.mjs` 的「平面旋转契约」；
+- **运行中组头常驻可见**（官方滚动策略的补位，纯 CSS）：官方 transcript 只在"读者贴底"时跟随
+  新内容（`ui-chat` 的 `use-chat-reading`：pending 窗口内忽略 resize，之后用 `nearBottom`
+  重新判定意图），一旦跟随被释放，后续增长不再滚动；而输入框是**滚动容器内部**的 sticky 座位
+  （`position:sticky;bottom:0` + 36px 渐变带），于是最新内容——**正在运行的步骤组头**——会停在
+  输入框覆盖带里看不见（现象：运行中步骤栏"被移到下方"）。插件**不改**官方滚动策略（那是官方
+  语义，官方另有 ↓ 回到底部控件），只把官方 shimmer 命中的组头钉在滚动口顶部：
+  `position:sticky;top:0;z-index:5` + 官方 pinned 行同款底色（`--dsw-alias-bg-base`，
+  与 `MessageItem` 的吸顶压缩头同一做法）。规则放在 **base 表**（不随 `iconStyle` 启停，
+  native 模式同样生效），只匹配官方 shimmer 双契约（钩子失效即整条不命中 → 零副作用）；
+  z-index 5 低于官方代码块吸顶条(6)、官方 pinned 压缩头(7)、输入框(7)与回到底部控件(8)，
+  绝不遮盖官方控件。**代价（如实记录）**：内容很高且用户不在底部时，吸顶的步骤组头会盖住
+  插件的回合栏（两者都是状态面，运行中的步骤优先）；
 - **软依赖**：全部选择器挂在官方 DOM 钩子上，总闸 = 皮肤 `<style>` 元素的
   `disabled` 属性（插件不写任何 `document.body` 全局状态）——DSH 改掉钩子时
   **最坏退化 = 皮消失、官方图标原样显示**，官方折叠行为不受任何影响。
@@ -836,7 +851,7 @@ npm run check      # 语法检查 client.js / index.js
 | `unit.turn-renderer.test.mjs` | Turn 渲染器：`open=false → 点击 → setOpen(true)`、`open=true → 点击 → setOpen(false)`；`foldable=false`/aborted/error → 静态栏无 setOpen 通道；Running Bar 0 秒出现、非交互、不触碰 Fold 状态；回合结束平滑交接；`turnProcess` 缺失降级 |
 | `unit.poker.test.mjs` | 活动→花色映射（官方 ProcessActivity 词表全覆盖）、牌堆/扇形/翻牌 SVG 生成、**运行中翻牌轴 = 竖直对角线轴（轴角 = atan(w/h) + 几何/原点校验 + CSS 覆盖回归守卫）**、组件渲染、reduced-motion 与无 WAAPI 静态降级 |
 | `unit.step-cards.test.mjs` | Step 牌数桥：官方 `counts` 求和 → 3/5 张、3 张 morph 身份连续、逐组 mask 几何、桥全链路（groupSource 订阅、同域规则撤销/恢复、leader 卸载清空）；**步骤文件清单：路径抽取（结算态/运行中/preparing/截断/目录型工具/转义）、basename 去重 + `+N` 截断、会话作用域双支、运行中也输出、参数变化跟随刷新、无 ChatNodeStore 时降级为空** |
-| `unit.css.test.mjs` | Step 皮总闸（`body[data-tf-step-skin]`）与官方 DOM 钩子规则；**平面旋转契约（`tf-step-flat-rotation` 包住全部相位、角 = 数据源 `pokerSpin.restAngle` 且四舍五入 == 参考稿字面量 35.5、五相位/72 animateTransform/15 animate/0.8s×82/4s×5 全部原样、±3.1° 二维小角度、四蒙版挖空、poker 5:7 卡牌）**；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
+| `unit.css.test.mjs` | Step 皮总闸（`body[data-tf-step-skin]`）与官方 DOM 钩子规则；**平面旋转契约（`tf-step-flat-rotation` 包住全部相位、角 = 数据源 `pokerSpin.restAngle` 且四舍五入 == 参考稿字面量 35.5、五相位/72 animateTransform/15 animate/0.8s×82/4s×5 全部原样、±3.1° 二维小角度、四蒙版挖空、poker 5:7 卡牌）**；**运行中组头 sticky 常驻（base 表、只匹配 shimmer 双契约、z-index < 官方控件层）**；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
 | `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫）；**「动态扑克牌」预览的牌面每秒轮换（纯函数位移 + 真实直播时钟驱动 + 关窗退订）** |
 | `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零**；官方四档 transcript 模式渲染兼容 |
 | `regression.test.mjs` | 历史回归：直播时钟空转定时器、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |

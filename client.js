@@ -980,9 +980,12 @@ window.__ModuleLoader__.load({
 			}
 			return shown.join(" \u00b7 ") + " +" + more;
 		}
-		/** CSS 字符串字面量转义（content 里的引号/反斜杠/换行）。 */
+		/** CSS 字符串字面量转义（content 里的引号/反斜杠/换行）。
+		 *  除 `\` 与 `"` 外，把**所有 C0/C1 控制字符**（含 U+000C 换页符——CSS 把它当换行，
+		 *  会直接让整条声明失效、该组清单静默消失）归一为空格；写盘走 style.textContent
+		 *  （不做 HTML 解析），所以这里的目标是"保持样式表有效"，不是防注入。 */
 		function cssStringContent(text) {
-			return String(text).replace(/[\\"]/g, "\\$&").replace(/[\r\n\t]+/g, " ");
+			return String(text).replace(/[\\"]/g, "\\$&").replace(/[\u0000-\u001F\u007F]+/g, " ");
 		}
 		/** 逐组规则的会话作用域前缀（官方锚点 / rc.1 回退 / legacy 面）——牌面覆盖与步骤
 		 *  文件清单两种逐组规则共用同一份作用域事实，避免两份会漂移的拼接逻辑。 */
@@ -1181,9 +1184,12 @@ window.__ModuleLoader__.load({
 				document.head.appendChild(tag);
 			} catch (e) { /* 资产写入失败 → 该组回落默认视觉，官方折叠不受影响 */ }
 		}
-		/** CSS 属性选择器里的字符串转义（groupKey 是 JSON 文本，含引号）。 */
+		/** CSS 属性选择器里的字符串转义（groupKey 是 JSON 文本，含引号）。
+		 *  控制字符同样归一为空格：属性值里带换行会把一条规则拆成多行（选择器失效），
+		 *  归一后最坏是该组规则不命中（惰性），样式表本身始终有效。 */
 		function cssAttrValue(value) {
-			return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+			return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+				.replace(/[\u0000-\u001F\u007F]+/g, " ");
 		}
 		/** groupKey → 逐组牌面覆盖规则（3 张与 5 张都走这里），**按会话作用域**。
 		 *  selector 以"完整 host"为单位逐支生成——逗号两边都是完整 selector：
@@ -3233,7 +3239,24 @@ window.__ModuleLoader__.load({
 				".ccg-preview-bubble-body svg{width:80px;height:80px;display:block}",
 				".ccg-preview-bubble-body .ccg-poker-icon{width:80px;height:80px}",
 				"@media (prefers-reduced-motion:reduce){.ccg-preview-bubble{transition:none!important}}",
-								/* ── Legacy Step 兼容层（hybrid 宿主；插件自有 DOM，见 README）── */
+				/* ── 运行中步骤组头常驻可见（官方滚动策略的补位，纯 CSS） ──
+				   官方 transcript 只在"读者贴底"时跟随新内容（ui-chat use-chat-reading：
+				   pending 窗口内的 resize 被忽略，flushSample 用 nearBottom 重新判定意图）。
+				   一旦跟随被释放，后续增长就不再滚动，而输入框是滚动容器内的 sticky 座位
+				   （position:sticky;bottom:0 + 36px 渐变带），于是**最新内容（正在运行的步骤
+				   组头）会停在输入框覆盖带里看不见**——用户看到的就是"运行中的步骤栏被移到
+				   下方不显示了"。插件不改官方滚动策略（那是官方语义，且官方另有 ↓ 回到底部
+				   控件），只把**运行中**的组头钉在滚动口顶部，让状态栏始终可见：
+				   · 只匹配官方 shimmer 双契约（与皮肤的运行态识别同一钩子，钩子失效即整条
+				     规则不命中 → 完全无副作用）；
+				   · 背景用官方 pinned 行的同款 token（MessageItem 的 pinned header 就是这么
+				     做的：--dsw-alias-bg-base + z-index），否则文字会从下方穿透；
+				   · z-index 5：低于官方代码块吸顶条(6)、官方 pinned 压缩头(7)与输入框(7)、
+				     回到底部控件(8)——只压在滚动内容之上，绝不遮盖任何官方控件。 */
+				"[data-step-process]:has([data-shimmer=\"true\"]) button[data-process-activity]," +
+					"[data-step-process]:has([data-text-shimmer=\"true\"]) button[data-process-activity]" +
+					"{position:sticky;top:0;z-index:5;background:var(--dsw-alias-bg-base,transparent)}",
+				/* ── Legacy Step 兼容层（hybrid 宿主；插件自有 DOM，见 README）── */
 				"[data-tf-legacy-step=node]{display:flex;flex-direction:column;min-width:0}",
 				"[data-tf-legacy-step=header] button{display:flex;align-items:center;gap:6px;width:100%;min-width:0;background:none;border:none;padding:0;margin:0;font:inherit;font-size:14px;line-height:24px;color:var(--dsw-alias-label-secondary,#9ca3af);cursor:pointer;text-align:left}",
 				"[data-tf-legacy-step=header] button:hover{color:var(--dsw-alias-label-primary,#1f2328)}",

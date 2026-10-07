@@ -296,7 +296,7 @@ describe('Session 作用域 F/G/H：零回归', () => {
 // K. 会话作用域输出策略（0.1.7-rc.1 tree-only 安全降级；§41/§42/§43）
 //    official 锚点在场 → 作用域块全部输出（0.1.7-rc.2+ 双树完全隔离）；
 //    无 official 锚点 → 单会话可输出，多会话撤下 session-specific 覆盖，
-//    回落基础 Step Poker（running 竖直对角线轴翻牌在皮肤表，不受影响）。
+//    回落基础 Step Poker（running 平面旋转轮换在皮肤表，不受影响）。
 // ══════════════════════════════════════════════════════════════════════
 describe('Session 作用域 K：tree-only 多会话安全降级', () => {
   it('K0 合并策略单元语义：安全判据是 active session count，不是 chunk 数', () => {
@@ -394,7 +394,7 @@ describe('Session 作用域 K：tree-only 多会话安全降级', () => {
     const assetEl = sharedDocument.querySelector('style[data-plugin-css="' + T.STEP_FACE_CSS_ID + '-' + setA.id + '"]')
     assert.ok(assetEl, '变体样式元素保留（不重复注入、不清除）')
   })
-  it('K5 降级时 running 竖直对角线轴翻牌不受影响（基础皮肤表原样）', async () => {
+  it('K5 降级时 running 平面旋转轮换不受影响（基础皮肤表原样）', async () => {
     seedBag('solo-A', ['spade'])
     seedBag('solo-B', ['heart'])
     const a = makeSession([SAME_KEY])
@@ -404,7 +404,7 @@ describe('Session 作用域 K：tree-only 多会话安全降级', () => {
     ]))
     assert.equal(cardRulesCss(), '', 'completed 覆盖撤下')
     const skin = sharedDocument.querySelector('style[data-plugin-css="' + T.SKIN_CSS_ID + '"]').textContent
-    assert.ok(skin.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before'), 'running 翻牌规则仍在皮肤表')
+    assert.ok(skin.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before'), 'running 轮换规则仍在皮肤表')
     assert.ok(skin.includes(':has([data-text-shimmer="true"]) [data-step-process-icon]::before'), '双契约 running 规则仍在')
     assert.ok(skin.includes('@keyframes tf-step-open'), 'completed 通用双态（默认 5 张）仍在')
   })

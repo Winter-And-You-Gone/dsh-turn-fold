@@ -211,6 +211,21 @@ describe('架构守卫（源码扫描）', () => {
     assert.ok(!/['"]transcriptView['"]/.test(src), '不得以字符串字面量引用 transcriptView')
   })
 
+  it('样式表只经 textContent 写盘（绝不 innerHTML / insertAdjacentHTML）', () => {
+    // 逐组规则里的 content 串来自工具参数（文件名）——只有"永不经过 HTML 解析"才让
+    // 任意字符（含 </style>、引号）保持无害。这条守卫把该前提钉住：
+    assert.ok(!/\.innerHTML\s*=/.test(src), '不得给任何元素写 innerHTML')
+    assert.ok(!src.includes('insertAdjacentHTML'), '不得使用 insertAdjacentHTML')
+    assert.ok(!/\.outerHTML\s*=/.test(src), '不得写 outerHTML')
+    // 唯一允许的 innerHTML 用途是 React 的 dangerouslySetInnerHTML（插件自有 SVG 图标：
+    // 运行中翻牌 + 牌堆/扇形两处，内容是自己的字面量，不含外部输入）——处数与用途必须
+    // 显式列出，防悄悄新增：
+    const danger = src.match(/dangerouslySetInnerHTML/g) || []
+    assert.equal(danger.length, 2, 'dangerouslySetInnerHTML 只允许图标那两处（翻牌 / 牌堆扇形）')
+    const styleWrites = src.match(/\.textContent = /g) || []
+    assert.ok(styleWrites.length >= 6, '样式表写盘必须走 textContent（当前 ' + styleWrites.length + ' 处）')
+  })
+
   it('订阅最小切片：useChat 一律传具名 selector，禁止整快照/内联 selector', () => {
     assert.ok(!src.includes('useChat(s => s)'), 'useChat(s => s) 必须消失')
     // 任何内联函数/箭头作为 useChat 参数都被禁止（等价"返回整个 snapshot"的

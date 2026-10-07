@@ -49,6 +49,13 @@ const ICONS = path.join(root, 'icons', 'default.json')
 const CLIENT = path.join(root, 'client.js')
 
 const icons = JSON.parse(fs.readFileSync(ICONS, 'utf8'))
+// 设计参考稿是**仓库内**资产（npm 包里也随 files 一起发布；若你拿到的是没有 docs/ 的
+// 精简副本，请从仓库 checkout 运行本脚本——脚本不写盘、失败即退出）。
+if (!fs.existsSync(REF)) {
+  throw new Error('找不到设计参考稿：' + REF
+    + '\n本脚本需要仓库内的 docs/ 与 icons/ 才能重生成步骤栏运行 SVG（npm 包已包含这两者，'
+    + '若你的副本缺了它们，请在仓库 checkout 里运行）。')
+}
 const html = fs.readFileSync(REF, 'utf8')
 
 // ── 参考稿结构断言：移植对象必须仍是第三行那条「平面旋转」变体 ──

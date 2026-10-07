@@ -141,6 +141,44 @@ and search reveal) works untouched; the plugin only reskins it:
     exactly that bug). The step-side class name `tf-step-flat-rotation` is deliberately
     distinct from the Turn bar's `ccg-axis-rest-rotation`; guards live in
     `tests/unit.css.test.mjs` ("flat rotation contract");
+- **Step file list** (the "which files did this step touch" text at the group header's tail, pure CSS
+  text): data comes from the official API only — `GroupSnapshot.members` (each member node's key) →
+  the official `ChatNodeStore.get(key)` tool node (`ToolChatData.root` = `name` + `argsRaw`) →
+  `JSON.parse(argsRaw)` for `file_path/filePath/file/target/path`; the outlet is the official header
+  button's `button[data-process-activity]::after{content:"…"}` — **no official DOM writes, no added
+  official attributes, no DOM observation** (architecture red lines: see the banned identifiers in
+  `tests/unit.compat.test.mjs` and the bridge guards in `tests/unit.step-cards.test.mjs`). Display
+  rule: basenames, de-duplicated, then cut by an **integer-name budget** — at most 3 names, adding up
+  to no more than `STEP_FILES_BUDGET` (32 characters), with names that no longer fit folded whole
+  into ` +N`; **the first name is the one exception**: to keep at least one name (otherwise the text
+  carries no information) it is always shown, so it may itself exceed 32 characters — and if it is
+  longer than the CSS fallback width (`max-width:44ch`; CJK counts ≈2ch per character) it gets
+  ellipsized. That is a **recorded boundary**: do not expect "never half a filename" to hold for a
+  single over-long name (the normal case never triggers the CSS clamp, and the earlier `ChatGroup…`
+  fragment problem stays fixed). Directory-ish tools (`glob/grep/find/ls`) contribute no filename
+  from their `path` (it is a search root; `file_path` is always trusted); directories (trailing
+  separator) and `url` values are not files; the list shows for running and completed groups alike
+  (while running it accumulates from official tool data, with `turnDataSource(turn,'tool-call')` as a
+  refresh trigger only), and disappears with the group/session. It lives in its own stylesheet
+  (`style-step-files`) and is **not** toggled by `iconStyle` (information is not skin, so it shows in
+  native mode too); the legacy host surface (0.1.2–0.1.6) produces none;
+- **The running group header stays visible** (a pure-CSS backfill for the official scrolling
+  policy): the official transcript only follows new content while the reader sits at the tail
+  (`ui-chat`'s `use-chat-reading`: resizes are ignored during its pending window, after which
+  `nearBottom` re-decides the intent). Once following is released, later growth no longer scrolls,
+  and the composer is a sticky seat **inside the scrollport** (`position:sticky;bottom:0` plus a
+  36px fade band) — so the newest content, the **running step's group header**, comes to rest inside
+  the composer's covered band (the "running step bar moved below and vanished" symptom). The plugin
+  does **not** change the official policy (official semantics; the official UI ships its own
+  ↓ back-to-bottom control); it only pins the shimmer-matched header to the top of the scrollport:
+  `position:sticky;top:0;z-index:5` plus the official pinned-row background (`--dsw-alias-bg-base`,
+  the treatment `MessageItem`'s pinned compaction header uses). The rule lives in the **base** sheet
+  (not toggled by `iconStyle`, so it holds in native mode too) and matches the official shimmer dual
+  contract only (hook gone → rule inert, zero side effects); z-index 5 stays below the official
+  code-block banner (6), the official pinned compaction header (7), the composer (7) and the
+  back-to-bottom control (8), so it never covers an official control. **Recorded cost**: on very tall
+  content with the reader away from the tail, the pinned step header can cover the plugin's turn bar
+  (both are status surfaces; the running step wins);
 - **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
   the skin `<style>` element's `disabled` property (the plugin never writes global
   `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
@@ -218,9 +256,12 @@ exports — no copy-paste drift):
 | `unit.logic.test.mjs` | Metric pure functions: `turnClockOf` / `computeTurnMetrics` / `readStepUsage` (official TurnLocation / step usage / turn-tail aggregate), formatting, field visibility + localStorage persistence; identical inputs produce byte-identical outputs (no fake growth) |
 | `unit.turn-renderer.test.mjs` | Turn renderer: `open=false → click → setOpen(true)`, `open=true → click → setOpen(false)`; `foldable=false`/aborted/error → static bar with no setOpen path; Running Bar appears at 0s, non-interactive, touches no fold state; smooth handover on turn close; degraded rendering without `turnProcess` |
 | `unit.poker.test.mjs` | Activity→suit mapping (full official ProcessActivity vocabulary), stack/fan/flip SVG generation, component rendering, reduced-motion and no-WAAPI static fallback |
-| `unit.css.test.mjs` | Step skin gate (`body[data-tf-step-skin]`) + official DOM hook rules; **architecture guard: the old engine's `:has()` hiding rules must be gone** |
-| `unit.gear.test.mjs` | Settings popup: field checkboxes, persistence, icon style / step skin selectors (hooks-order guard) |
+| `unit.css.test.mjs` | Step skin gate (`body[data-tf-step-skin]`) + official DOM hook rules; **flat-rotation contract (the `tf-step-flat-rotation` group wrapping every phase, angle taken verbatim from `pokerSpin.restAngle` and asserted to round to the design literal 35.5, five phases / 72 animateTransform / 15 animate / `0.8s`×82 / `4s`×5 untouched, ±3.1° planar tilt, four knockout masks, poker 5:7 card)**; **running header pinned (base sheet, shimmer dual contract only, z-index below every official control layer)**; **architecture guard: the old engine's `:has()` hiding rules must be gone** |
+| `unit.gear.test.mjs` | Settings popup: field checkboxes, persistence, icon style / step skin selectors (hooks-order guard); **the "poker" preview row rotating one face per second (pure shift + the real shared 1s clock + unsubscribe on close)** |
 | `unit.compat.test.mjs` | **Registration audit: only `turn-process` is shadowed**, `exports.inject=['slots']`, priority-conflict yielding, soft degradation of registration errors; **architecture guard: zero old-engine identifiers / official-renderer delegation plumbing / transcriptView writes**; rendering compatibility across the four official transcript modes |
+| `unit.step-cards.test.mjs` | Step card-count bridge: official `counts` summation → 3/5 cards, morph identity continuity, per-group mask geometry, whole bridge chain (groupSource subscription, same-domain rule revocation/restoration, leader unmount cleanup); **step file list: path extraction (settled/running/preparing/truncated/directory-tool/escaped), basename de-dup + `+N` folding, session-scope branches, running-state output, refresh on argument change, empty fallback without ChatNodeStore** |
+| `unit.step-session-scope.test.mjs` | Session scoping: selector prefix and escaping, bare-session branch regression lock, same-groupKey two-tree isolation, tree-only multi-session safe degradation (session-specific rules withdrawn, restored without a refresh, completedFaceSets retained, running rotation unaffected) |
+| `unit.host-compat.test.mjs` | Cross-version capability matrix (three-state semantics, UNKNOWN ≠ LEGACY), registration gating (modern host never activates legacy; legacy host records Turns only), full-host selector generation per branch + jsdom two-tree matching, runtime resolution, metrics/fold decoupling, two-line diagnostics |
 | `regression.test.mjs` | Historical regressions: live-clock orphan timer, **no fake token growth (unchanged data → unchanged digits)**, gear stopPropagation, degradation requirements (corrupt icon pack/settings fall back to defaults) |
 
 > `--test-isolation=none` (built into `npm test`) is required on Windows sandboxes where

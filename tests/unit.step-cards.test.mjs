@@ -364,9 +364,9 @@ describe('Step 牌数 E：只读视觉桥', () => {
     assert.ok(block5[0].includes('--tf-face-' + set5.id + '-stack'), '5 张牌堆规则引用本组 set（不再吃默认固定牌面）')
     assert.ok(block5[1].includes('--tf-face-' + set5.id + '-fan'), '5 张扇形规则引用本组 set')
     assert.ok(block5[1].includes('[data-process-activity][aria-expanded="true"]'), '扇形规则挂在官方展开态上')
-    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不得产出覆盖规则（它走运行中翻牌动画）')
+    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不得产出覆盖规则（它走运行中轮换动画）')
     for (const line of lines) {
-      assert.ok(line.includes(':not(:has([data-shimmer="true"]))'), '规则必须排除 running（否则压掉运行中翻牌动画）')
+      assert.ok(line.includes(':not(:has([data-shimmer="true"]))'), '规则必须排除 running（否则压掉运行中轮换动画）')
       assert.ok(line.includes(':not(:has([data-text-shimmer="true"]))'), '双契约都要排除')
     }
   })
@@ -403,7 +403,7 @@ describe('Step 牌数 E：只读视觉桥', () => {
       assert.ok(!target(selectors[1]).matches(hostSel(selectors[1])), '收起态不得命中扇形规则')
       button.setAttribute('aria-expanded', 'true')
       assert.ok(target(selectors[1]).matches(hostSel(selectors[1])), '展开态应命中 3 张扇形规则')
-      // running（官方 shimmer 在场）→ 两条规则都不得命中（运行中翻牌优先）
+      // running（官方 shimmer 在场）→ 两条规则都不得命中（运行中轮换优先）
       const shimmer = sharedDocument.createElement('span')
       shimmer.setAttribute('data-shimmer', 'true')
       button.appendChild(shimmer)
@@ -449,7 +449,7 @@ describe('Step 牌数 E：只读视觉桥', () => {
     const css = cardRulesCss()
     assert.ok(css.includes('[data-chat-group-key="' + T.cssAttrValue(GROUP3) + '"]'), '3 张组规则已写入')
     assert.ok(css.includes('[data-chat-group-key="' + T.cssAttrValue(GROUP5) + '"]'), '4 张+ 组同样写规则（5 张牌面）')
-    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不写规则（走运行中翻牌动画）')
+    assert.ok(!css.includes(T.cssAttrValue(GROUP_RUNNING)), 'running 组不写规则（走运行中轮换动画）')
     const set3 = T.completedFaceSetFor(3, T.completedStepTopFace(undefined, GROUP3))
     const set5 = T.completedFaceSetFor(5, T.completedStepTopFace(undefined, GROUP5))
     assert.ok(css.includes('--tf-face-' + set3.id + '-stack') && css.includes('--tf-face-' + set5.id + '-stack'), '两组引用各自的牌面 set')
@@ -869,14 +869,20 @@ describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
     assert.equal(T.STEP_FILES_MAX, 3)
   })
 
-  it('stepFilesText：整名策略——超预算的名字整条折进 "+N"，绝不显示半个文件名', () => {
+  it('stepFilesText：整名策略——超预算的名字整条折进 "+N"；单名超长是已记录的例外', () => {
     // 截图回归：client.js · process-groups.ts · ChatGroupSeat.tsx 曾被切成 "ChatGroup…"
     const shots = T.stepFilesText(['X:/p/client.js', 'X:/p/process-groups.ts', 'X:/p/ChatGroupSeat.tsx'])
     assert.equal(shots, 'client.js \u00b7 process-groups.ts +1', '不出现残片名：' + shots)
     assert.ok(!shots.includes('ChatGroup'), '被预算挤掉的名字不得留半截')
-    // 首个名字就超长：仍显示完整名 + 计数（至少留一个完整名，否则这段就没信息了）
-    const long = 'averyverylongfilename-one.ts'
-    assert.equal(T.stepFilesText([long, 'b.ts', 'c.ts']), long + ' +2')
+    // 首个名字无条件显示（"至少留一个名字"）：真·超预算时整名照出、只把后面的名字折成 +N。
+    const long = 'a'.repeat(46) + '.ts'          // 49 字符：既超预算，也超 CSS 兜底宽度 44ch
+    assert.ok(long.length > T.STEP_FILES_BUDGET, '本用例的 long 必须真的超过预算，否则守卫空转')
+    assert.ok(long.length > 44, 'long 还要超过 CSS 兜底宽度，才覆盖"会被省略号截断"这条已知边界')
+    const kept = T.stepFilesText([long, 'b.ts', 'c.ts'])
+    assert.equal(kept, long + ' +2', '首个名字自身超预算时仍整名显示 + 计数')
+    assert.ok(kept.length > T.STEP_FILES_BUDGET,
+      '已知边界（README「步骤文件清单」如实记录）：单名超预算时文本必然超过预算，'
+      + '且该名字在 UI 上会被 CSS ellipsis 截断——不要在文档里声称"绝不显示半个文件名"')
     // 三个短名都放得下 → 全显示，无 +N
     assert.equal(T.stepFilesText(['a.ts', 'b.ts', 'c.ts']), 'a.ts \u00b7 b.ts \u00b7 c.ts')
     assert.ok(T.STEP_FILES_BUDGET > 0 && T.STEP_FILES_BUDGET < 44, '预算必须小于 CSS 兜底宽度')
@@ -891,6 +897,21 @@ describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
     assert.ok(css.includes('text-overflow:ellipsis'), '过长时省略号')
     assert.ok(css.includes('flex:none'), '标题先收缩')
     assert.ok(!css.includes(':has('), '文件清单不参与 running/牌面竞争，无需 shimmer 排除子句')
+  })
+
+  it('buildStepFileRulesCss：控制字符归一——引号/反斜杠/换行/换页符都不会破坏样式表', () => {
+    // 文件名与 groupKey 都来自工具参数（模型给什么就是什么）。写盘走 style.textContent，
+    // 所以 `</style>` 之类不会外泄；真正的风险是**控制字符让声明失效**：
+    // U+000C 在 CSS 里等同换行，会把 content 字符串截断 → 该组清单静默消失。
+    const evilText = 'a\u000Cb.ts \u00b7 c"d\\e.ts'
+    const css = T.buildStepFileRulesCss({ ['k\u000Cn']: { filesText: evilText } })
+    assert.ok(!/[\u0000-\u001F\u007F]/.test(css), '输出里不得残留控制字符：' + JSON.stringify(css))
+    assert.ok(css.includes('content:"a b.ts'), 'U+000C 必须归一为空格')
+    assert.ok(css.includes('c\\"d\\\\e.ts'), '引号与反斜杠仍按 CSS 字符串转义')
+    assert.equal(css.split('\n').filter(Boolean).length, 1, '归一后仍是一条完整规则（没被拆行）')
+    assert.ok(css.includes('[data-chat-group-key="k n"]'), 'groupKey 的控制字符同样归一')
+    // 输出串写进 <style> 元素时不需要 HTML 转义（textContent 路径），但绝不能引入换行：
+    assert.ok(!css.includes('\n'), '单条规则内不得出现换行（否则声明会被拆断）')
   })
 
   it('buildStepFileRulesCss：会话作用域双支 / 无 session 单支 / legacy 面不产出 / 空清单不产出', () => {

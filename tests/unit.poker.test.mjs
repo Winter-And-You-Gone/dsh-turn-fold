@@ -187,6 +187,20 @@ describe('运行中翻牌轴 = 竖直对角线轴', () => {
     const rendered = axisOf(container.querySelector('.ccg-poker-svg').innerHTML)
     assert.ok(Math.abs(rendered - axisDeg) < 1e-3, '渲染出的轴角 = 竖直对角线轴，实际 ' + rendered)
   })
+
+  it('数据源 ↔ 运行时字面量：pokerSpin 的 scaleKeys/scaleKeyTimes/strokeW 仍与 Turn builder 一致', () => {
+    // Turn builder 目前**不读** iconConfig 的这三项（用的是 client.js 里的字面量），而数据源
+    // 也带着同一份值。结果：改 JSON 的关键帧/描边在运行时**静默无效**。这条守卫把"改了 JSON
+    // 没改运行时"变成红灯（而不是无声无息）——要么把 builder 改成读 iconConfig，要么删字段。
+    const spin = T.ICON_DEFAULTS.pokerSpin
+    const svg = T.buildPokerSpinSVG('literal-check')
+    assert.ok(svg.includes('values="' + spin.scaleKeys + '"'),
+      'Flip 关键帧：数据源 pokerSpin.scaleKeys 与 client.js 的字面量已分叉（运行时不会读 JSON）')
+    assert.ok(svg.includes('keyTimes="' + spin.scaleKeyTimes + '"'),
+      'Flip keyTimes：数据源与 client.js 的字面量已分叉（运行时不会读 JSON）')
+    assert.ok(svg.includes('stroke-width="' + spin.strokeW + '"'),
+      'Flip 描边：数据源 pokerSpin.strokeW 与 client.js 的字面量已分叉（运行时不会读 JSON）')
+  })
 })
 
 // ── Turn 顶层牌面：per-session shuffle bag（本轮修复） ──

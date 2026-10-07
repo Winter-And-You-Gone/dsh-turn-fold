@@ -413,7 +413,7 @@ describe('Legacy Step C：组件行为', () => {
     assert.equal(container.querySelectorAll('[data-tf-legacy-step="header"]').length, 0, '非 anchor 不出 header')
     assert.equal(container.querySelector('[data-tf-legacy-step="member"]') !== null, true, '成员本身仍渲染（原地 wrapper）')
   })
-  it('C3 running 组：成员恒可见、header running（data-shimmer 挂插件自有 DOM 驱动运行中翻牌动画）', () => {
+  it('C3 running 组：成员恒可见、header running（data-shimmer 挂插件自有 DOM 驱动运行中轮换动画）', () => {
     const slots = makeSlotsService()
     applyPlugin(slots)
     T.activateLegacyStepEngine()
@@ -421,7 +421,7 @@ describe('Legacy Step C：组件行为', () => {
     renderView(T.LegacyStepToolCallView, { node: snap.nodes.get('r1'), useChat: conv(snap), sessionId: SESSION })
     const header = container.querySelector('[data-tf-legacy-step="header"]')
     const button = header.querySelector('button')
-    assert.equal(button.getAttribute('data-shimmer'), 'true', 'running 翻牌由皮肤 :has([data-shimmer]) 命中')
+    assert.equal(button.getAttribute('data-shimmer'), 'true', 'running 轮换由皮肤 :has([data-shimmer]) 命中')
     assert.equal(button.getAttribute('aria-expanded'), 'true', 'running 恒展开')
     assert.equal(container.querySelector('[data-tf-legacy-step="member"]').getAttribute('data-tf-legacy-hidden'), null, 'running 内容绝不隐藏')
   })

@@ -235,11 +235,11 @@ describe('版本矩阵 D：metrics 数据形状（turn-tail 聚合 + assistant-s
 
 // ══════════════ E. Step DOM：0.1.7 平铺 shimmer / 0.2.0 嵌套 TextShimmer ══════════════
 describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）', () => {
-  // 从皮肤 CSS 提取 running 选择器（与 unit.css.test 同款解析；翻牌 mask 规则）。
+  // 从皮肤 CSS 提取 running 选择器（与 unit.css.test 同款解析；轮换 mask 规则）。
   // :has(...) 后必须紧跟卡牌位——排除 completed fan 规则里的 :not(:has(...)) 排除子句。
   function runningHostSelectors(skin) {
     const line = skin.split('\n').find((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
-    assert.ok(line, 'running 翻牌 mask 规则缺失')
+    assert.ok(line, 'running 轮换 mask 规则缺失')
     return line.slice(0, line.indexOf('{')).split(',')
       .map((sel) => sel.slice(0, sel.lastIndexOf(' [data-step-process-icon]::before')))
   }
@@ -273,7 +273,7 @@ describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）',
   beforeEach(() => { T.settings.iconStyle = 'poker'; T.applyIconStyle() })
 
   for (const shape of ['0.1.7-rc.2', '0.2.0-rc.2']) {
-    it(shape + ' 官方 DOM → running 选择器命中（任一 shimmer 契约），翻牌 mask 规则到位', () => {
+    it(shape + ' 官方 DOM → running 选择器命中（任一 shimmer 契约），轮换 mask 规则到位', () => {
       const skin = document.querySelector('style[data-plugin-css="' + T.SKIN_CSS_ID + '"]').textContent
       const selectors = runningHostSelectors(skin)
       const { host, cleanup } = buildStep(shape)
@@ -286,7 +286,7 @@ describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）',
           assert.equal(hit.length, 1, '0.2.0 只有 data-shimmer 选择器命中')
           assert.ok(hit[0].includes('[data-shimmer="true"]') && !hit[0].includes('data-text-shimmer'))
         }
-        // 双契约 running 规则都在（单一卡牌位；mask 换成竖直对角线轴翻牌 SVG）
+        // 双契约 running 规则都在（单一卡牌位；mask 换成平面旋转轮换 SVG）
         assert.ok(skin.includes(':has([data-text-shimmer="true"]) [data-step-process-icon]::before'), '0.1.7 running 规则缺失')
         assert.ok(skin.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before'), '0.2.0+ running 规则缺失')
       } finally { cleanup() }
