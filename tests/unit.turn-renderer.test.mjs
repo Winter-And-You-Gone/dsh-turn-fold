@@ -625,3 +625,80 @@ describe('Turn owner 契约演进：归一化纯函数与源码守卫', () => {
     assert.ok(!src.includes('turnProcess.foldable'), '禁止 turnProcess.foldable 直接绑定')
   })
 })
+
+// ── 自有行高自愈：插件自己造成的"回合顶端增高"由插件自己补回底部 ──
+// 背景：官方 TurnProcessNodeView 运行中 return null（0px），插件在同一行渲染运行栏（≈37px），
+// 该行在回合顶端（阅读锚点之上）。官方跟随在"归因给读者的移动 + 500ms pending 窗口 +
+// nearBottom(25px) 重判"这条链下会把 followingTail 永久置 false → 运行中步骤栏停在输入框
+// 覆盖带里不再回来（用户实测：关掉插件即无此问题）。插件只在**自己**行高变化后补偿，
+// 且只在观众本来贴底时——读上面的观众绝不被拽。
+describe('自有行高自愈：贴底补偿的边界与挂载行为', () => {
+  const row = (scroller) => ({ closest: (sel) => (sel === '[data-conversation-scroll]' ? scroller : null) })
+  const scrollerOf = (scrollTop, scrollHeight, clientHeight) => ({ scrollTop, scrollHeight, clientHeight })
+
+  it('贴底（窗口内）→ 补到新底部；返回 true', () => {
+    const s = scrollerOf(560, 1000, 400)          // floor = 600，距底 40 ≤ 窗口
+    assert.equal(T.keepTailAfterOwnResize(row(s)), true)
+    assert.equal(s.scrollTop, 600, '补到新底部')
+  })
+
+  it('观众在读上面（超出窗口）→ 绝不动；返回 false', () => {
+    const s = scrollerOf(200, 1000, 400)          // 距底 400 > 窗口
+    assert.equal(T.keepTailAfterOwnResize(row(s)), false)
+    assert.equal(s.scrollTop, 200, '不拽回读者')
+  })
+
+  it('已在底部 → 不做无意义写入；无滚动口 → 安全返回 false', () => {
+    const s = scrollerOf(600, 1000, 400)
+    assert.equal(T.keepTailAfterOwnResize(row(s)), false)
+    assert.equal(s.scrollTop, 600)
+    assert.equal(T.keepTailAfterOwnResize(row(null)), false, '找不到官方滚动口时不抛错、不动作')
+    assert.equal(T.keepTailAfterOwnResize(null), false)
+    assert.equal(T.keepTailAfterOwnResize({}), false, '没有 closest 的节点安全返回')
+  })
+
+  it('窗口是小正数（必须远小于"读者明显在读上面"的距离）', () => {
+    assert.ok(T.TAIL_KEEP_WINDOW > 0 && T.TAIL_KEEP_WINDOW <= 96, '窗口 = ' + T.TAIL_KEEP_WINDOW)
+  })
+
+  it('运行栏挂载这一帧就补底（jsdom 无 ResizeObserver 也走挂载补偿）', () => {
+    const scroller = sharedDocument.createElement('div')
+    scroller.setAttribute('data-conversation-scroll', '')
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    scroller.scrollTop = 580                            // 距底 20：观众贴底
+    const host = sharedDocument.createElement('div')
+    scroller.appendChild(host)
+    sharedDocument.body.appendChild(scroller)
+    const localRoot = createRoot(host)
+    try {
+      const p = subscriptionProps({ status: 'open', startTime: T0, endTime: null, reason: undefined, steps: [], stepsData: [], tail: undefined }, {})
+      act(() => { localRoot.render(react.createElement(T.EnhancedTurnProcessView, { node: p.node, turnProcess: p.turnProcess, useTurnData: p.useTurnData, useChat: p.useChat })) })
+      assert.ok(host.querySelector('[data-tf-running]'), '运行栏已渲染')
+      assert.equal(scroller.scrollTop, 600, '挂载这一帧把尾部补回底部（官方随后按"抵达底部"立即恢复跟随）')
+    } finally {
+      act(() => { localRoot.unmount() })
+      scroller.remove()
+    }
+  })
+
+  it('观众在读上面时，即使运行栏挂载也不补底', () => {
+    const scroller = sharedDocument.createElement('div')
+    scroller.setAttribute('data-conversation-scroll', '')
+    Object.defineProperty(scroller, 'scrollHeight', { value: 5000, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    scroller.scrollTop = 1200                           // 距底 3400：明显在读历史
+    const host = sharedDocument.createElement('div')
+    scroller.appendChild(host)
+    sharedDocument.body.appendChild(scroller)
+    const localRoot = createRoot(host)
+    try {
+      const p = subscriptionProps({ status: 'open', startTime: T0, endTime: null, reason: undefined, steps: [], stepsData: [], tail: undefined }, {})
+      act(() => { localRoot.render(react.createElement(T.EnhancedTurnProcessView, { node: p.node, turnProcess: p.turnProcess, useTurnData: p.useTurnData, useChat: p.useChat })) })
+      assert.equal(scroller.scrollTop, 1200, '读者的阅读位置不被插件改动')
+    } finally {
+      act(() => { localRoot.unmount() })
+      scroller.remove()
+    }
+  })
+})

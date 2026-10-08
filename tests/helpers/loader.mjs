@@ -178,6 +178,8 @@ const TEST_EXPORTS = [
   'buildPokerSVGBase',
   'buildPokerSpinSVG',
   'pokerSpinFrameCsv',
+  'keepTailAfterOwnResize',
+  'TAIL_KEEP_WINDOW',
   'pokerTransforms',
   'pokerPaintOrder',
   'foldSuitFor',

@@ -4323,6 +4323,57 @@ window.__ModuleLoader__.load({
 
 		var turnBarSeq = 0;
 		// ---- Turn 栏（插件渲染器的 UI 核心） ----
+		// ---- 自有行高变化后的「贴底自愈」 ----
+		// 事实（官方源码可核对）：TurnProcessNodeView 在回合**运行中** `return null`（那一行 0px），
+		// 插件在同一行渲染自己的运行栏（24px 行 + 1px 分隔线 + 4/8 边距 ≈ 37px），而该行位于回合
+		// 顶端 = 阅读锚点**之上**。官方跟随策略对这个增高的归因链是：滚动锚定/布局变化 → 一次
+		// scroll 事件被 use-chat-viewport 判为 movedByReader → use-chat-reading 开 500ms pending
+		// 窗口（其间 onResize 不再跟随）→ 窗口结束 flushSample 用 nearBottom(25px) 重判意图。
+		// 结果：观众**永久失去跟随**，正在运行的步骤栏停在输入框（sticky 座位）覆盖带里不再回来
+		// ——用户实测「关掉插件就没有这个问题」。
+		// 插件不碰官方策略，只回收**自己造成的那 37px**：自有行高变化后，若观众本来就在底部附近，
+		// 就把滚动位置补回新的底部。官方会把「抵达底部」当成立即恢复跟随（onScroll 的
+		// top >= floor 分支 → followTail），于是 followingTail 保持为真；观众若在读上面
+		// （距离超过窗口）**绝不**拽回去。
+		var TAIL_KEEP_WINDOW = 48;
+		/** 从插件自有节点向上找官方滚动口（一次 closest；不观察官方 DOM、不写官方属性）。 */
+		function tailKeepScroller(el) {
+			try {
+				return el && typeof el.closest === "function" ? el.closest("[data-conversation-scroll]") : null;
+			} catch (e) { return null; }
+		}
+		/** 观众贴底时才补偿：把滚动位置补回当前底部。返回是否真的补过（便于测试与守卫）。 */
+		function keepTailAfterOwnResize(el) {
+			var scroller = tailKeepScroller(el);
+			if (!scroller) return false;
+			var floor = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+			if (floor - scroller.scrollTop > TAIL_KEEP_WINDOW) return false;   // 观众在读上面：不动
+			if (scroller.scrollTop >= floor) return false;                     // 已在底部：无事可做
+			scroller.scrollTop = floor;
+			return true;
+		}
+		/** 观察插件**自有**行：挂载这一帧先补一次（运行栏 0→37px 正是这一下；脚本写入 scrollTop
+		 *  会抑制同帧的滚动锚定调整，这正是我们要的），此后行高再变也补。 */
+		function useOwnRowTailKeep() {
+			var ref = react.useRef(null);
+			react.useLayoutEffect(function () {
+				var el = ref.current;
+				if (!el) return;
+				keepTailAfterOwnResize(el);
+				if (typeof ResizeObserver === "undefined") return;
+				var last = el.offsetHeight;
+				var observer = new ResizeObserver(function () {
+					var height = el.offsetHeight;
+					if (height === last) return;
+					last = height;
+					keepTailAfterOwnResize(el);
+				});
+				observer.observe(el);
+				return function () { observer.disconnect(); };
+			}, []);
+			return ref;
+		}
+
 		// TurnBarView 是运行中（running）与结束态（closed）共用的单根视觉：
 		//   [前导图标（扑克/native chevron）] [状态词?] [指标文案（运行中滚轮/结束静态）] ...... [第N轮] | [⚙]
 		// 兄弟交互结构：主按钮只负责 Fold toggle、齿轮 <button> 只负责设置——
@@ -4346,6 +4397,8 @@ window.__ModuleLoader__.load({
 			var uidRef = react.useRef(null);
 			if (uidRef.current === null) uidRef.current = "tf-bar-" + (++turnBarSeq);
 			var gearRef = react.useRef(null);
+			// 自有行高变化（运行中 0→有栏、结束态栏形态变化）后按需贴底自愈
+			var wrapRef = useOwnRowTailKeep();
 			var isOpener = popup.open && popup.openerId === uidRef.current;
 			// 卸载时若面板由本栏打开 → 关闭（会话切换不留僵尸 open 状态）
 			react.useEffect(function () {
@@ -4408,7 +4461,7 @@ window.__ModuleLoader__.load({
 			}, GearIconSvg());
 			return react.createElement(
 				"div",
-				{ className: "ccg-turn-wrap", "data-tf-turn": props.turnNumber !== undefined ? String(props.turnNumber) : undefined },
+				{ ref: wrapRef, className: "ccg-turn-wrap", "data-tf-turn": props.turnNumber !== undefined ? String(props.turnNumber) : undefined },
 				react.createElement("div", { className: "ccg-turn-row" }, main, gear),
 				isOpener ? react.createElement(SettingsDialog, { openerRef: gearRef }) : null,
 				react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" })

@@ -836,7 +836,7 @@ npm run check      # 语法检查 client.js / index.js
 | 文件 | 覆盖 |
 | --- | --- |
 | `unit.logic.test.mjs` | 指标纯函数：`turnClockOf` / `computeTurnMetrics` / `readStepUsage`（官方 TurnLocation / step usage / turn-tail 聚合三来源）、格式化、字段显隐与 localStorage 持久化；同一输入两次计算结果逐字段相等（无伪造增长） |
-| `unit.turn-renderer.test.mjs` | Turn 渲染器：`open=false → 点击 → setOpen(true)`、`open=true → 点击 → setOpen(false)`；`foldable=false`/aborted/error → 静态栏无 setOpen 通道；Running Bar 0 秒出现、非交互、不触碰 Fold 状态；回合结束平滑交接；`turnProcess` 缺失降级 |
+| `unit.turn-renderer.test.mjs` | Turn 渲染器：`open=false → 点击 → setOpen(true)`、`open=true → 点击 → setOpen(false)`；`foldable=false`/aborted/error → 静态栏无 setOpen 通道；Running Bar 0 秒出现、非交互、不触碰 Fold 状态；**自有行高自愈（贴底补偿：窗口内才补、读上面的观众绝不被拽、挂载帧即补、找不到滚动口安全返回）**；回合结束平滑交接；`turnProcess` 缺失降级 |
 | `unit.poker.test.mjs` | 活动→花色映射（官方 ProcessActivity 词表全覆盖）、牌堆/扇形/翻牌 SVG 生成、**运行中翻牌轴 = 竖直对角线轴（轴角 = atan(w/h) + 几何/原点校验 + CSS 覆盖回归守卫）**、组件渲染、reduced-motion 与无 WAAPI 静态降级 |
 | `unit.step-cards.test.mjs` | Step 牌数桥：官方 `counts` 求和 → 3/5 张、3 张 morph 身份连续、逐组 mask 几何、桥全链路（groupSource 订阅、同域规则撤销/恢复、leader 卸载清空）；**步骤文件清单：路径抽取（结算态/运行中/preparing/截断/目录型工具/转义）、basename 去重 + `+N` 截断、会话作用域双支、运行中也输出、参数变化跟随刷新、无 ChatNodeStore 时降级为空** |
 | `unit.css.test.mjs` | Step 皮总闸（`body[data-tf-step-skin]`）与官方 DOM 钩子规则；**平面旋转契约（`tf-step-flat-rotation` 包住全部相位、角 = 数据源 `pokerSpin.restAngle` 且四舍五入 == 参考稿字面量 35.5、五相位/72 animateTransform/15 animate/0.8s×82/4s×5 全部原样、±3.1° 二维小角度、四蒙版挖空、poker 5:7 卡牌）**；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
@@ -975,6 +975,20 @@ git push --follow-tags
 - **运行中状态条**：官方 `turn-process` 节点在 `turn/start` 即投影，但官方渲染器在
   回合未结束时返回 null——插件渲染器在此阶段显示 Running Turn Bar（0 秒起、真实
   指标、无折叠行为）。回合结束后同一渲染器切换为完整回合栏，视觉与位置连续。
+- **自有行高自愈（贴底补偿）**：官方那一行在运行中是 **0px**，插件这里约 **37px**
+  （24px 行 + 1px 分隔线 + 4/8 边距），而且位于回合顶端＝阅读锚点**之上**。官方跟随策略
+  对"锚点之上的增高"的归因链是：布局变化 → scroll 事件被判为 `movedByReader`
+  （`use-chat-viewport`）→ 开 500ms pending 窗口、其间 `onResize` 不跟随
+  （`use-chat-reading`）→ 窗口结束用 `nearBottom`（25px）重判意图 → **`followingTail`
+  永久置 false**，正在运行的步骤栏就停在输入框（滚动容器内的 sticky 座位）覆盖带里不再
+  回来——也就是"运行中步骤栏被移到下方不显示了"（用户实测：关掉插件即无此现象）。
+  插件**不改官方策略**，只回收自己造成的那 37px：在**自有**行（`.ccg-turn-wrap`）挂载这一帧
+  与之后每次行高变化时，若观众本来就在底部附近（距底 ≤ `TAIL_KEEP_WINDOW` = 48px）就把滚动
+  位置补回新的底部——官方把"抵达底部"当成立即恢复跟随（`onScroll` 的 `top >= floor` 分支 →
+  `followTail`），于是跟随保持为真；**在读上面的观众距离更远，插件绝不动他们的位置**。
+  权限面被守卫钉死：全插件只有一处写 `scrollTop`、只通过 `closest("[data-conversation-scroll]")`
+  定位、不得 `scrollIntoView`/`scrollTo`/改 `overflow-anchor`，且只有一个 ResizeObserver
+  且只 observe 自有节点（`tests/unit.compat.test.mjs`）。
 - **指标读取面（只读官方数据，不重算折叠成员）**：`node.location.turn`
   （`TurnLocation`：start/end/status/reason/steps）+ turn data store（`get('turn-tail')`
   官方聚合 `tokenUsage`、`get('turn-process')` 官方 spec）+ 每 step 的

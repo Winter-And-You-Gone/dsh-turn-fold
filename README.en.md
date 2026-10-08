@@ -237,7 +237,7 @@ exports — no copy-paste drift):
 | File | Coverage |
 | --- | --- |
 | `unit.logic.test.mjs` | Metric pure functions: `turnClockOf` / `computeTurnMetrics` / `readStepUsage` (official TurnLocation / step usage / turn-tail aggregate), formatting, field visibility + localStorage persistence; identical inputs produce byte-identical outputs (no fake growth) |
-| `unit.turn-renderer.test.mjs` | Turn renderer: `open=false → click → setOpen(true)`, `open=true → click → setOpen(false)`; `foldable=false`/aborted/error → static bar with no setOpen path; Running Bar appears at 0s, non-interactive, touches no fold state; smooth handover on turn close; degraded rendering without `turnProcess` |
+| `unit.turn-renderer.test.mjs` | Turn renderer: `open=false → click → setOpen(true)`, `open=true → click → setOpen(false)`; `foldable=false`/aborted/error → static bar with no setOpen path; Running Bar appears at 0s, non-interactive, touches no fold state; **own-row tail keep (compensates only within the window, never moves a reader further up, compensates on the mount frame, safe when no scrollport is found)**; smooth handover on turn close; degraded rendering without `turnProcess` |
 | `unit.poker.test.mjs` | Activity→suit mapping (full official ProcessActivity vocabulary), stack/fan/flip SVG generation, component rendering, reduced-motion and no-WAAPI static fallback |
 | `unit.css.test.mjs` | Step skin gate (`body[data-tf-step-skin]`) + official DOM hook rules; **flat-rotation contract (the `tf-step-flat-rotation` group wrapping every phase, angle taken verbatim from `pokerSpin.restAngle` and asserted to round to the design literal 35.5, five phases / 72 animateTransform / 15 animate / `0.8s`×82 / `4s`×5 untouched, ±3.1° planar tilt, four knockout masks, poker 5:7 card)**; **architecture guard: the old engine's `:has()` hiding rules must be gone** |
 | `unit.gear.test.mjs` | Settings popup: field checkboxes, persistence, icon style / step skin selectors (hooks-order guard); **the "poker" preview row rotating one face per second (pure shift + the real shared 1s clock + unsubscribe on close)** |
@@ -327,6 +327,25 @@ git push --follow-tags
   but the official renderer returns null until the turn closes — the plugin renderer
   shows the Running Turn Bar in that phase (0s start, real metrics, no folding
   behavior). When the turn closes, the same renderer switches to the full bar.
+- **Own-row-height self-heal (tail keep)**: that row is **0px** while running officially and
+  about **37px** here (24px row + 1px divider + 4/8 margins), and it sits at the top of the
+  turn — i.e. **above the reading anchor**. The official follow policy attributes growth above
+  the anchor like this: layout change → a scroll event judged as `movedByReader`
+  (`use-chat-viewport`) → a 500ms pending window during which `onResize` stops following
+  (`use-chat-reading`) → the window closes with a `nearBottom` (25px) re-decision →
+  **`followingTail` is permanently cleared**, so the running step bar comes to rest inside the
+  composer's (in-scrollport, sticky) covered band and never returns — the "the running step bar
+  moved below and vanished" symptom (the user confirmed: disabling the plugin removes it).
+  The plugin does **not** change the official policy; it only reclaims the 37px it caused: on the
+  mount frame of its **own** row (`.ccg-turn-wrap`) and on every later height change, if the
+  reader was already near the tail (within `TAIL_KEEP_WINDOW` = 48px of the floor) it puts the
+  scroll position back at the new floor — the official reads that as an arrival at the floor
+  (`onScroll`'s `top >= floor` branch → `followTail`), so following stays true, while a reader
+  further up is **never** moved. The permission surface is pinned by guards:
+  exactly one `scrollTop` write, located only through
+  `closest("[data-conversation-scroll]")`, no `scrollIntoView` / `scrollTo` / `overflow-anchor`,
+  and a single ResizeObserver that observes only the plugin's own node
+  (`tests/unit.compat.test.mjs`).
 - **Metrics read surface (read-only official data, no membership recomputation)**:
   `node.location.turn` (`TurnLocation`: start/end/status/reason/steps) + turn data store
   (`get('turn-tail')` official aggregate `tokenUsage`, `get('turn-process')` official
