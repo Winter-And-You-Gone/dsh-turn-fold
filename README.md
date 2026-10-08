@@ -1085,7 +1085,7 @@ git push --follow-tags
   - **Soft style injection（非理想软兼容点，已如实记录）**：插件向 `document.head`
     注入最小 `<style>`：基础样式 + Step 皮 + 牌数桥逐组规则 + 逐组牌面资产（每个
     `(count, topFace)` 变体一个元素，只写一次）+ 步骤文件清单逐组规则（独立元素，
-    与皮肤总闸解耦）。截至当前 DSH master（21638c5631）
+    与皮肤总闸解耦）+ Legacy Step 表（旧宿主兼容层）。截至当前 DSH master（21638c5631）
     官方没有给 plain-JS client plugin 提供样式注册 API（全宿主唯一 `createElement('style')`
     在 web 自身代码里），而 Step 皮必须作用在官方 Header 的官方 DOM 上、无法收敛进
     插件 React 子树——故保留此软兼容点。注入失败的最坏退化 = 无 Turn 栏样式与无
