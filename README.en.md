@@ -261,11 +261,24 @@ The turn bar's leading icon defaults to **animated poker cards** (⚙ gear on th
   SVG animation that survives re-renders;
 - **Occlusion**: luminance mask cuts the overlapped region of lower cards following the
   upper card's transform; card bodies are transparent (correct over wallpapers);
-- **Data source**: `icons/default.json` (suit paths, card geometry, stack/fan transforms,
-  animation templates) — run `npm run sync:icons` to inject, `npm run icons:check` to verify.
+- **Data source**: `icons/default.json` (suit paths, card geometry, stack/fan transforms, and the
+  `pokerSpin` semantic knobs `restAngle` / `strokeW` / `frames` / `flipMs`) — run
+  `npm run sync:icons` to inject, `npm run icons:check` to verify. **Keyframes are not stored in the
+  data source**: `scaleX = cos(2πk/frames)` is a formula (`frames: 72` = 5°/step, byte-identical to
+  the historical literal table, locked by a guard), and the source no longer carries values nothing
+  reads — the old `scaleKeys`/`scaleKeyTimes` (73 values, zero runtime readers) and `pokerAnimSVG`
+  (a 54 KB snapshot, zero consumers) are gone, which alone shrank `client.js` by ~59 KB.
   The **Step running rotation** is a build-time artifact on top of it: `npm run sync:step-anim`
-  regenerates it from the reference design's row-3 rotated variant (see the Step skin section);
-  a runtime `localStorage` pack override does not reach it.
+  regenerates it from the reference design's row-3 rotated variant (see the Step skin section).
+- **What an icon pack (`localStorage['dsh-turn-fold:icons']`) reaches** (the asymmetry is by design):
+
+  | Covered | Not covered |
+  | --- | --- |
+  | Turn-bar running flip + completed stack/fan faces | **Step group-header skin** (card size/masks/suit mapping — generated at build time by `buildStepSkinCss`) |
+  | Settings-preview faces | **Step running five-face rotation** (generated at build time from the design reference) |
+  | Geometry/timing knobs (`restAngle`/`strokeW`/`frames`/`flipMs`/`pokerPips`/stack-fan tables) | Official chevron style (`iconStyle = native`, not part of the data source) |
+
+  To reset: `localStorage.removeItem('dsh-turn-fold:icons')`.
 
 ## Custom icons (Agent Skill)
 

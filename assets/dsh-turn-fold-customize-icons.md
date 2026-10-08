@@ -7,7 +7,7 @@ The plugin's fold-bar icons are **poker cards** (default style) or the **officia
 ```
 dsh-turn-fold/
 ├── icons/default.json        ← 唯一数据源（meta / pokerR / pokerPips / pokerSVGBase /
-│                                pokerTransforms / pokerSpin / pokerAnimSVG / pokerSpinDeepseek）
+│                                pokerTransforms / pokerSpin / pokerSpinDeepseek）
 ├── scripts/sync-icons.mjs    ← --inject 注入到 client.js；无参运行 = 校验一致性
 └── client.js                 ← 内联 `/*__ICON_DEFAULTS__*/` 块承载注入的默认值
 ```
@@ -27,6 +27,17 @@ Remind the user: this project is **web-only** — a browser refresh is what appl
 ### Path B — runtime localStorage override (no code change, session-local)
 Write a complete icon package (same shape as `icons/default.json`, including `meta.compat`) to `localStorage['dsh-turn-fold:icons']`. It wins over the built-in defaults until removed. To reset: `localStorage.removeItem('dsh-turn-fold:icons')`.
 
+**What a pack actually reaches** (asymmetric on purpose — do not promise more):
+
+| | Pack override? | Why |
+| --- | --- | --- |
+| Turn-bar running flip + completed stack/fan faces | **yes** | built at runtime by `buildPokerSpinSVG` / the face pool from `iconConfig` |
+| Settings-preview faces | **yes** | same face pool |
+| Card geometry knobs (`restAngle`, `strokeW`, `frames`, `flipMs`, `pokerPips`, stack/fan tables) | **yes** | read per load |
+| **Step** group-header skin (card size/masks/suit mapping) | **no** | the skin CSS is generated at **build** time (`buildStepSkinCss`) from the data source |
+| **Step** running animation (five-face rotation) | **no** | generated at build time from the design reference by `npm run sync:step-anim` |
+| Official chevron style (`iconStyle = native`) | n/a | not part of the icon data source at all |
+
 ## Icon package structure (icons/default.json)
 
 ```jsonc
@@ -42,11 +53,21 @@ Write a complete icon package (same shape as `icons/default.json`, including `me
                                        //  在 stack 与 fan 里是同一张牌、层级不变——
                                        //  stack 的顶牌（最大 id）在 fan 里必须是最右那张，
                                        //  与 fan5 同构：居中那张不旋转、两侧对称）
-  "pokerSpin":       { ... },          // running-icon flip: restAngle = vertical-diagonal axis ≈35.5377°
-  "pokerAnimSVG":    "...",            // legacy data (largest block) — no longer consumed at runtime
+  "pokerSpin": {                       // running-icon flip — 语义旋钮，运行时真的读
+    "restAngle": 35.5377,              //   竖直对角线轴角 ≈ atan(w/h)
+    "strokeW": 0.84,                   //   卡牌描边宽度
+    "frames": 72,                      //   scaleX(cosθ) 一圈多少步（72 = 5°/步 → 73 个值）
+    "flipMs": 1600,                    //   一次 360° 翻牌时长；四花色整轮 = 4 × 它
+    "h": 9.6, "pokerRatio": 0.714, "r": 1.296, "pipScale": 0.2348
+  },
   "pokerSpinDeepseek":"..."            // DeepSeek face
 }
 ```
+
+> `frames` / `flipMs` replaced the old `scaleKeys` / `scaleKeyTimes` tables (73 values each, no
+> runtime reader — editing them did nothing). The keyframes are now a formula
+> (`scaleX = cos(2πk/frames)`, `keyTimes = k/frames`), and `pokerAnimSVG` (a 54 KB snapshot with no
+> consumer) was deleted. Verified: `frames: 72` reproduces the historical CSV byte-for-byte.
 
 Two different running icons — do not assume they are the same animation:
 - **Turn bar / settings preview — "card flip · vertical diagonal axis"**: the 5:7 card is rotated

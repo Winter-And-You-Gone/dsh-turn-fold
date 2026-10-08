@@ -26,19 +26,6 @@ const heart = extractPath('HEART')
 const diamond = extractPath('DIAMOND')
 const club = extractPath('CLUB')
 
-// 2. 提取 ANIM_SVG（模板字面量，纯字符串）
-// 找到 ANIM_SVG 的起始行（const ANIM_SVG = ` 之后的内容）
-const startIdx = html.indexOf('const ANIM_SVG = `')
-if (startIdx === -1) throw new Error('ANIM_SVG not found')
-const contentStart = html.indexOf('`', startIdx + 17) + 1 // 跳过反引号
-const endIdx = html.indexOf('`', contentStart) // 结束反引号
-const animSVG = html.slice(contentStart, endIdx)
-  .replace(/\r\n/g, '\n')
-  .replace(/\r/g, '\n')
-  // 剔除 HTML 演示用的虚线边框（<rect class="demo-border" .../>），插件内不应渲染
-  .replace(/<rect class="demo-border"[\s\S]*?\/>/g, '')
-  .trim()
-
 // 3. 提取 DeepSeek 路径（pip-deepseek）
 // 在 defs 里找 <path id="pip-deepseek" d="..."（注意匹配 pip-deepseek" 之后的 d=）
 const deepseekStart = html.indexOf('<path id="pip-deepseek" d="')
@@ -65,12 +52,10 @@ const updated = {
   pokerSVGBase: current.pokerSVGBase,
   pokerTransforms: current.pokerTransforms,
   pokerSpin: current.pokerSpin,
-  pokerAnimSVG: animSVG,
   pokerSpinDeepseek: pokerSpinDeepseek,
 }
 
 writeFileSync('icons/default.json', JSON.stringify(updated, null, 2) + '\n')
 console.log('default.json updated')
 console.log('pokerPips: spade, heart, diamond, club updated')
-console.log('pokerAnimSVG: ' + animSVG.length + ' chars')
 console.log('pokerSpinDeepseek: ' + pokerSpinDeepseek.length + ' chars')

@@ -898,12 +898,24 @@ npm run check      # 语法检查 client.js / index.js
   或密码学随机，只保证"一个袋内不重复 + 同一 Turn 稳定"的观感；
 - **运行态**：对角线轴翻牌（四花色循环、Logo 背面），SVG 原生动画，SMIL 不随重渲染重启；
 - **遮挡**：luminance mask 按上层牌变换动态挖空下层覆盖区，牌身透明（壁纸/透明背景下正确）；
-- **数据源**：`icons/default.json`（花色路径、卡牌几何、扇形/牌堆变换表、动画模板），
-  改完 `npm run sync:icons` 注入、`npm run icons:check` 校验；
+- **数据源**：`icons/default.json`（花色路径、卡牌几何、扇形/牌堆变换表、`pokerSpin` 语义旋钮
+  `restAngle` / `strokeW` / `frames` / `flipMs`），改完 `npm run sync:icons` 注入、
+  `npm run icons:check` 校验。**关键帧不存数据源**：`scaleX = cos(2πk/frames)` 是公式
+  （`frames: 72` = 5°/步，与历史字面量表逐字节相同，有守卫锁死）；数据源里不放"没人读的值"
+  ——旧 `scaleKeys`/`scaleKeyTimes`（73 个值、运行时零读取）与 `pokerAnimSVG`（54 KB 快照、
+  零消费者）已删除，client.js 因此瘦了 ~59 KB；
 - **步骤栏运行中轮换（平面旋转 35.5°）**是**构建期**产物（`npm run sync:step-anim` 由参考稿
   第三行「平面旋转」变体生成、旋转角取上面的数据源 `pokerSpin.restAngle`，见「Step 运行态」
   一节）：数据源改了要重跑它，否则运行中旋转角仍是旧值（`npm test` 的生成块守卫会先失败）。
-  运行时 `localStorage['dsh-turn-fold:icons']` 覆盖只作用于回合栏翻牌与 completed 双态牌面。
+- **图标包（`localStorage['dsh-turn-fold:icons']`）的覆盖面**（不对称是设计，不是 bug）：
+
+  | 覆盖 | 不覆盖 |
+  | --- | --- |
+  | 回合栏运行中翻牌 + 完成态牌堆/扇形牌面 | **Step 组头皮**（卡牌尺寸/蒙版/花色映射：构建期 `buildStepSkinCss` 生成） |
+  | 设置弹窗的牌面预览 | **Step 运行中五牌面轮换**（构建期由设计稿生成） |
+  | 几何/时序旋钮（`restAngle`/`strokeW`/`frames`/`flipMs`/`pokerPips`/牌堆扇形表） | 官方 chevron 风格（`iconStyle = native`，不属于数据源） |
+
+  改回来：`localStorage.removeItem('dsh-turn-fold:icons')`。
 
 ## 自定义图标（Agent Skill）
 

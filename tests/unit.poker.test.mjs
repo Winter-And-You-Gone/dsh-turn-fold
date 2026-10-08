@@ -4,6 +4,7 @@
 //   - 组件渲染（PokerIcon / PokerSpinIcon）与 reduced-motion / 无 WAAPI 的静态降级
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
@@ -188,18 +189,49 @@ describe('运行中翻牌轴 = 竖直对角线轴', () => {
     assert.ok(Math.abs(rendered - axisDeg) < 1e-3, '渲染出的轴角 = 竖直对角线轴，实际 ' + rendered)
   })
 
-  it('数据源 ↔ 运行时字面量：pokerSpin 的 scaleKeys/scaleKeyTimes/strokeW 仍与 Turn builder 一致', () => {
-    // Turn builder 目前**不读** iconConfig 的这三项（用的是 client.js 里的字面量），而数据源
-    // 也带着同一份值。结果：改 JSON 的关键帧/描边在运行时**静默无效**。这条守卫把"改了 JSON
-    // 没改运行时"变成红灯（而不是无声无息）——要么把 builder 改成读 iconConfig，要么删字段。
-    const spin = T.ICON_DEFAULTS.pokerSpin
-    const svg = T.buildPokerSpinSVG('literal-check')
-    assert.ok(svg.includes('values="' + spin.scaleKeys + '"'),
-      'Flip 关键帧：数据源 pokerSpin.scaleKeys 与 client.js 的字面量已分叉（运行时不会读 JSON）')
-    assert.ok(svg.includes('keyTimes="' + spin.scaleKeyTimes + '"'),
-      'Flip keyTimes：数据源与 client.js 的字面量已分叉（运行时不会读 JSON）')
-    assert.ok(svg.includes('stroke-width="' + spin.strokeW + '"'),
-      'Flip 描边：数据源 pokerSpin.strokeW 与 client.js 的字面量已分叉（运行时不会读 JSON）')
+  it('数据源没有"假旋钮"：死字段已删，留下的旋钮真的驱动输出', () => {
+    // 背景：数据源曾经带着 pokerAnimSVG / scaleKeys / scaleKeyTimes / strokeW —— 运行时一个都不读
+    // （builder 用 client.js 里的字面量），用户改 JSON 或写图标包**看起来生效、实际无效**。
+    // 现在：关键帧改成公式（frames 旋钮），描边/时长也真的读数据源；这三条守卫把"假旋钮"
+    // 挡在门外。
+    const raw = JSON.parse(readFileSync(new URL('../icons/default.json', import.meta.url), 'utf8'))
+    assert.ok(!('pokerAnimSVG' in raw), 'pokerAnimSVG（54 KB、零消费者）不得回到数据源')
+    for (const dead of ['scaleKeys', 'scaleKeyTimes']) {
+      assert.ok(!(dead in raw.pokerSpin), 'pokerSpin.' + dead + ' 是生成物，不该存进数据源（会与公式分叉）')
+    }
+    // 公式 ↔ 旧表：frames = 72（5°/步）时逐字节等同历史字面量（视觉零变化）
+    const csv = T.pokerSpinFrameCsv(72)
+    assert.equal(csv.scale.split(';').length, 73, '73 个关键帧（72 步转一圈）')
+    assert.ok(csv.scale.startsWith('1 1;0.996195 1;0.984808 1;0.965926 1'), 'cos(5°k) 序列：' + csv.scale.slice(0, 40))
+    assert.ok(csv.scale.includes(';-1 1;'), '经过 -1（背面零宽切面）')
+    assert.equal(csv.keyTimes.split(';').length, 73)
+    assert.ok(csv.keyTimes.startsWith('0;0.013889;0.027778') && csv.keyTimes.endsWith(';1'), 'k/72 时间轴')
+    const svg = T.buildPokerSpinSVG('knob-check')
+    assert.ok(svg.includes('values="' + csv.scale + '"'), 'builder 必须用同一份公式（数据源 frames 驱动）')
+    assert.ok(svg.includes('stroke-width="' + T.ICON_DEFAULTS.pokerSpin.strokeW + '"'), '描边读数据源 strokeW')
+    assert.ok(svg.includes('dur="1.6s"') && svg.includes('dur="6.4s"'), '默认时长：1.6s/翻牌、6.4s/整轮')
+  })
+
+  it('图标包的 pokerSpin 旋钮真的生效（strokeW / frames / flipMs 一路到渲染）', () => {
+    // 这条是"方便用户自定义"的验收：写一个图标包 → 刷新 → 图标真的变，而不是假旋钮。
+    const pack = {
+      meta: T.ICON_DEFAULTS.meta,
+      pokerPips: T.ICON_DEFAULTS.pokerPips,
+      pokerSpin: { strokeW: 2, frames: 36, flipMs: 800 },
+    }
+    sharedWindow.localStorage.setItem('dsh-turn-fold:icons', JSON.stringify(pack))
+    try {
+      const { test: T2 } = loadPlugin({ window: sharedWindow })
+      const svg = T2.buildPokerSpinSVG('pack-check')
+      assert.ok(svg.includes('stroke-width="2"'), 'strokeW 旋钮生效')
+      const csv36 = T2.pokerSpinFrameCsv(36)
+      assert.equal(csv36.scale.split(';').length, 37, 'frames=36 → 37 个值')
+      assert.ok(svg.includes('values="' + csv36.scale + '"'), 'frames 旋钮生效（10°/步的 cos 序列）')
+      assert.ok(svg.includes('dur="0.8s"'), 'flipMs 旋钮生效（800ms）')
+      assert.ok(svg.includes('dur="3.2s"'), '整轮 = 4 × flipMs')
+    } finally {
+      sharedWindow.localStorage.removeItem('dsh-turn-fold:icons')
+    }
   })
 })
 
