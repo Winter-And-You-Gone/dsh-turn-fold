@@ -226,23 +226,19 @@ describe('架构守卫（源码扫描）', () => {
     assert.ok(styleWrites.length >= 6, '样式表写盘必须走 textContent（当前 ' + styleWrites.length + ' 处）')
   })
 
-  it('滚动自愈的权限面最小：一处 scrollTop、只认官方滚动口、别无滚动控制', () => {
-    // 插件唯一被允许碰官方滚动容器的地方 = 「自有行高变化后的贴底自愈」（运行栏在回合顶端
-    // 0→≈37px，会把观众的 followingTail 顶掉）。这条守卫把权限面钉死成"一个写入 + 一个只读
-    // 定位锚点"，并禁止任何更强的滚动控制（它们会与官方跟随策略打架）：
+  it('插件完全不碰官方滚动位置与跟随策略（滚动是官方的事，插件不打补丁）', () => {
+    // 用户 2026-10-09 定调：运行栏自身那点布局影响**不做贴底自愈补丁**——补丁与官方跟随
+    // 策略打架（跨会话误拽、把已释放的读者重新锁进跟随），根因查清前宁可不修。
+    // 守卫把"零滚动权限"钉死（将来谁再加滚动补丁，这里先红）：
     const writers = src.match(/\.scrollTop\s*=/g) || []
-    assert.equal(writers.length, 1, '只允许贴底自愈这一处写 scrollTop，实际 ' + writers.length + ' 处')
-    assert.ok(src.includes('closest("[data-conversation-scroll]")'),
-      '只能通过官方滚动口锚点定位滚动容器（一次 closest，不做观察）')
+    assert.equal(writers.length, 0, '插件不得写官方滚动位置，实际 ' + writers.length + ' 处')
     assert.ok(!src.includes('scrollIntoView'), '不得用 scrollIntoView 移动官方视图')
-    assert.ok(!src.includes('.scrollTo('), '不得调用 scrollTo（平滑滚动会与官方跟随策略打架）')
+    assert.ok(!src.includes('.scrollTo('), '不得调用 scrollTo')
     assert.ok(!src.includes('overflow-anchor'), '不得改官方滚动锚定')
-    assert.ok(src.includes('TAIL_KEEP_WINDOW'), '补偿必须带"观众在读上面就不动"的距离窗口')
-    // 观察面：全插件只允许**一个** ResizeObserver（观察自有行 el），且不允许任何 DOM 观察器
-    const ro = src.match(/new ResizeObserver\(/g) || []
-    assert.equal(ro.length, 1, '只允许一个 ResizeObserver（自有行高自愈），实际 ' + ro.length + ' 处')
-    assert.equal((src.match(/observer\.observe\(/g) || []).length, 1, '只 observe 一个自有节点')
-    assert.ok(src.includes('observer.observe(el)'), '观察目标必须是自有节点 el')
+    assert.ok(!src.includes('data-chat-following-tail'), '不得读官方跟随状态（官方内部策略，插件零依赖）')
+    assert.ok(!src.includes('data-conversation-scroll'), '不得锚定或扫描官方滚动容器')
+    // 观察面：不得有任何 DOM 观察器（连自有行也不需要观察）
+    assert.equal((src.match(/new ResizeObserver\(/g) || []).length, 0, '不得使用 ResizeObserver')
     assert.ok(!src.includes('MutationObserver'), '不得做 DOM 观察（架构红线）')
     assert.ok(!src.includes('IntersectionObserver'), '不得用 IntersectionObserver 观察官方视图')
   })

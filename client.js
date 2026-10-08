@@ -772,12 +772,16 @@ window.__ModuleLoader__.load({
 			//   可见动画（卡牌、花色、以及它们引用的 mask）绕 16×16 画布中心整体旋转，
 			//   关键帧一个字不改（参考稿注释原文：defs 保持原坐标；外层 transform 会让
 			//   卡牌、花色以及引用的 mask 一起旋转）。
+			//   设计源 = 参考稿**第三行的动画本体**（`const ANIM_SVG`）+ **第五行点击切换变体**
+			//   的 35.5° 目标值（「牌面轮换 · 平面旋转 35.5°」标签 / `const target = toward35
+			//   ? 35.5 : 0`）—— 第三行自己的预览按 ANIM_ANGLES=[0,30,45,60,90] 旋转，没有 35.5。
 			//   旋转角来自 icons/default.json → pokerSpin.restAngle（= atan(w/h)，
-			//   与回合栏轴角同一数据源）；生成脚本断言它四舍五入到 1 位小数 ==
-			//   参考稿那条变体的字面量 35.5（「牌面轮换 · 平面旋转 35.5°」）。
-			//   生成 = scripts/sync-step-anim.mjs（逐项断言参考稿第三行变体接线仍在、
-			//   转换后仍带 5 相位 / 72 animateTransform / 15 animate / 0.8s×82 / 4s×5，
-			//   且旋转组真的包住全部相位）。
+			//   与回合栏轴角同一数据源），脚本断言它四舍五入到 1 位小数 == 那个 35.5 字面量。
+			//   生成 = scripts/sync-step-anim.mjs：断言参考稿接线标记仍在（ANIM_SVG /
+			//   svg3dRotated / anim-root-rotation / 35.5 字面量）、转换后结构标记齐全、
+			//   旋转组真的包住全部相位、无禁用标识，并把计数**打印**出来。
+			//   数量不变量（5 相位 / 72 animateTransform / 15 animate / 0.8s×82 / 4s×5）由
+			//   tests/unit.css.test.mjs 断言——生成脚本不守这些数字。
 			//   已知边界（与旧版烘焙式运行动画一致）：本块是**构建期**产物，运行时
 			//   localStorage 图标包覆盖不会改写它（覆盖只作用于回合栏翻牌与已完成
 			//   步骤的双态牌面，那些是运行时按 iconConfig 生成的）。
@@ -851,15 +855,17 @@ window.__ModuleLoader__.load({
 		/** 官方 group snapshot → { count, closed, filesText }；形状异常/缺席 → undefined。
 		 *  closed 取官方 ProcessGroupData.closed：只有已完成的组才分配牌面
 		 *  （running 组既不消费 top-face bag，也不生成逐组覆盖——它归运行中轮换动画）。
-		 *  filesText 需要官方 ChatNodeStore（按成员 key 读工具节点）；缺 store（旧宿主/降级）
-		 *  → 空串 = 不产出文件清单规则，牌数语义完全不受影响。 */
-		function stepCardGroupState(snapshot, nodeStore) {
+		 *  filesText 需要官方 ChatNodeStore（按成员 key 读工具节点）与内容列像素预算
+		 *  （budgetPx，由调用方量一次传下来）；缺 store（旧宿主/降级）→ 空串 = 不产出
+		 *  文件清单规则，牌数语义完全不受影响。 */
+		function stepCardGroupState(snapshot, nodeStore, budgetPx) {
 			if (!snapshot || !snapshot.data || !snapshot.data.summary) return undefined;
 			var total = stepCardToolCallCount(snapshot.data.summary.counts);
 			if (total === undefined) return undefined;
 			var filesText = "";
 			if (nodeStore && typeof nodeStore.get === "function") {
-				filesText = stepFilesText(stepGroupFilePaths(snapshot, function (key) { return nodeStore.get(key); }));
+				filesText = stepFilesText(
+					stepGroupFilePaths(snapshot, function (key) { return nodeStore.get(key); }), budgetPx);
 			}
 			return {
 				count: total <= STEP_CARD_SMALL_MAX ? STEP_CARD_COUNT_SMALL : STEP_CARD_COUNT_LARGE,
@@ -882,10 +888,11 @@ window.__ModuleLoader__.load({
 		// 出口 = 官方组头按钮 [data-process-activity] 的 ::after{content}（纯 CSS 文本）：
 		//   插件不写官方 DOM、不加官方属性、不做 DOM 观察——这是本仓库既定的架构红线
 		//   （见 tests/unit.compat.test.mjs 禁用标识符 + tests/unit.step-cards.test.mjs 桥守卫）。
+		// 已知边界（如实记录）：只读组的**顶层**成员节点；PTC 子调用（ToolCallBlock.subCalls）
+		//   里才出现的文件不进清单。
 		var STEP_FILES_MAX = 3;   // 尾部最多显示几个文件名（完整名，绝不显示半个）
 		// 预算按**内容区宽度**自适应（见 stepFilesBudgetPx）：旧版是固定 32 字符，实测在 680px 的行里
 		// 只用掉 130~167px、右侧白空 231~468px，于是"明明有地方却早早 +N"。下面这几个是它的口径：
-		var STEP_FILES_BUDGET = 32;             // 窄窗口的**回落**字符预算（等价 192px）
 		var STEP_FILES_LABEL_RESERVE = 300;     // 给标签/图标/齿轮/间距留的像素（最长标签实测 252px + 46px）
 		var STEP_FILES_MIN_PX = 150;            // 再窄也得给清单留一点
 		var STEP_FILES_MAX_PX = 380;            // 再宽也不吃满（44ch ≈ 305px，留出字体放大余量）
@@ -961,25 +968,39 @@ window.__ModuleLoader__.load({
 			}
 			return out;
 		}
-		/** 官方内容区宽度（px）：优先读官方 CSS token `--dsh-chat-content-width`，缺失时按视口宽保守
-		 *  估算。这是**全局排版事实**（插件自己的 CSS 本来就在消费同一个 token），不是读官方组件 DOM。 */
-		function stepFilesContentWidth() {
+		/** 官方内容列宽度（px）：**量官方内容列里那一行的布局宽度**——`--dsh-chat-content-width`
+		 *  声明在会话内容元素上（不是 :root），而且它的计算值是 `var()/clamp()` 文本，
+		 *  `parseFloat` 拿不到数值，所以它不能当数值源；内容列里的一行（Process Group 根）
+		 *  宽度就等于内容列宽，浏览器已经算好了。量不到（旧宿主 / jsdom 无布局）→ 视口估算。
+		 *  sessionId 只用作用域限定（多会话并存时量自己那张会话的行）。 */
+		function stepFilesContentWidth(sessionId) {
 			try {
-				if (typeof document !== "undefined" && document.documentElement && typeof getComputedStyle === "function") {
-					var px = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dsh-chat-content-width"));
-					if (isFinite(px) && px > 0) return px;
+				if (typeof document !== "undefined") {
+					var scopes = stepRuleScopePrefixes(sessionId, "modern");
+					// 依次尝试：官方会话锚点 → rc.1 tree-only 回退 → 全局（旧宿主/单会话）。
+					// 前两档要求元素真的在那个作用域里；找不到就退下一档，绝不因此量不到。
+					var prefixes = [];
+					if (scopes.official) prefixes.push(scopes.official);
+					if (scopes.fallback) prefixes.push(scopes.fallback);
+					prefixes.push("");
+					for (var p = 0; p < prefixes.length; p++) {
+						var rows = document.querySelectorAll(prefixes[p] + "[data-chat-group-key]");
+						for (var i = 0; i < rows.length; i++) {
+							if (rows[i].clientWidth > 0) return rows[i].clientWidth;   // 隐藏/未布局的行不算
+						}
+					}
 				}
 				if (typeof window !== "undefined" && window.innerWidth) {
 					return Math.max(320, window.innerWidth - 312);   // 实测：992px 滚动口 → 680px 内容区
 				}
-			} catch (e) { /* 读不到就回落常量 */ }
+			} catch (e) { /* 量不到就回落常量 */ }
 			return 680;
 		}
 		/** 清单可用像素 = 内容宽 − 标签等预留，夹在 [STEP_FILES_MIN_PX, STEP_FILES_MAX_PX]。
-		 *  传 contentWidth 便于测试；不传则现读。 */
-		function stepFilesBudgetPx(contentWidth) {
+		 *  传 contentWidth 便于测试；不传则现量（sessionId 只用于作用域限定）。 */
+		function stepFilesBudgetPx(contentWidth, sessionId) {
 			var w = (typeof contentWidth === "number" && isFinite(contentWidth) && contentWidth > 0)
-				? contentWidth : stepFilesContentWidth();
+				? contentWidth : stepFilesContentWidth(sessionId);
 			var px = w - STEP_FILES_LABEL_RESERVE;
 			if (px < STEP_FILES_MIN_PX) px = STEP_FILES_MIN_PX;
 			if (px > STEP_FILES_MAX_PX) px = STEP_FILES_MAX_PX;
@@ -993,15 +1014,15 @@ window.__ModuleLoader__.load({
 			return total;
 		}
 		/** 一次写入用的像素预算：显式传入则直接采用（测试/固定口径），否则按当前内容区宽度现算。 */
-		function stepFilesBudgetPxOf(budgetPx) {
+		function stepFilesBudgetPxOf(budgetPx, sessionId) {
 			return (typeof budgetPx === "number" && isFinite(budgetPx) && budgetPx > 0)
-				? budgetPx : stepFilesBudgetPx();
+				? budgetPx : stepFilesBudgetPx(undefined, sessionId);
 		}
 		/** 文件路径 → 步骤栏尾部文本：basename 再去重、最多 STEP_FILES_MAX 个，其余折成 " +N"。
 		 *  **整名策略**：超出预算的名字整条折进 "+N"，绝不显示半个文件名——早先靠 CSS
 		 *  ellipsis 兜底，会把 "ChatGroupSeat.tsx" 切成 "ChatGroup…" 这种看不懂的残片。
 		 *  budgetPx 省略时按当前内容区宽度现算（stepFilesBudgetPx）。 */
-		function stepFilesText(paths, budgetPx) {
+		function stepFilesText(paths, budgetPx, sessionId) {
 			if (!paths || typeof paths.length !== "number") return "";
 			var names = [];
 			var seen = Object.create(null);
@@ -1012,7 +1033,7 @@ window.__ModuleLoader__.load({
 				names.push(base);
 			}
 			if (names.length === 0) return "";
-			var budgetChars = Math.floor(stepFilesBudgetPxOf(budgetPx) / STEP_FILES_CHAR_PX);
+			var budgetChars = Math.floor(stepFilesBudgetPxOf(budgetPx, sessionId) / STEP_FILES_CHAR_PX);
 			var shown = [];
 			var used = 0;
 			for (var j = 0; j < names.length && shown.length < STEP_FILES_MAX; j++) {
@@ -1064,12 +1085,12 @@ window.__ModuleLoader__.load({
 		}
 		/** groupKey → 步骤文件清单规则（挂官方组头按钮的 ::after）。
 		 *  运行中与已完成都输出：运行中随 counts/members 变化刷新，完成后成为稳定清单。
-		 *  legacy 面（插件自有 LegacyStepHeader，宿主 0.1.2~0.1.6）本轮不产出。 */
-		function buildStepFileRulesCss(map, sessionId, surface) {
-			var scopes = stepRuleScopePrefixes(sessionId, surface);
-			if (scopes.legacySurface) return "";
+		 *  只有 modern 面（0.1.7+ 官方组头）：legacy 面（插件自有 LegacyStepHeader，宿主
+		 *  0.1.2~0.1.6）没有调用点，因此这里不做 surface 分支。 */
+		function buildStepFileRulesCss(map, sessionId, budgetPx) {
+			var scopes = stepRuleScopePrefixes(sessionId, "modern");
 			// 一次写完：同一份像素预算既决定"显示几个名字"，也写进 max-width（两边不允许分叉）
-			var decl = stepFilesDecl();
+			var decl = stepFilesDecl(budgetPx);
 			var rules = [];
 			if (map) {
 				for (var key in map) {
@@ -1241,7 +1262,6 @@ window.__ModuleLoader__.load({
 				tag.dataset.pluginCss = STEP_FACE_CSS_ID + "-" + set.id;
 				tag.textContent = completedFaceSetCss(set);
 				document.head.appendChild(tag);
-				keepTailAfterOwnChange();   // 几百 KB 的插入会动布局：贴底观众补回底部
 			} catch (e) { /* 资产写入失败 → 该组回落默认视觉，官方折叠不受影响 */ }
 		}
 		/** CSS 属性选择器里的字符串转义（groupKey 是 JSON 文本，含引号）。
@@ -1375,17 +1395,16 @@ window.__ModuleLoader__.load({
 				if (out === stepCardRulesCache) return;
 				stepCardRulesCache = out;
 				stepCardStyleEl.textContent = out;
-				keepTailAfterOwnChange();
 			} catch (e) { /* 同上 */ }
 		}
 		/** 更新某个 session 的步骤文件清单规则块（幂等：内容不变不写）。
 		 *  与牌面规则同样的分块/作用域策略，只是写进独立样式表——文件清单是"信息"不是
 		 *  "皮肤"，因此在 iconStyle = native 时也照常显示（牌面覆盖表随皮肤启停）。 */
-		function writeStepFilesRules(map, sessionId) {
+		function writeStepFilesRules(map, sessionId, budgetPx) {
 			try {
 				if (!stepFilesStyleEl) return;
 				var sessionKey = sessionKeyOf(sessionId);
-				var css = map ? buildStepFileRulesCss(map, sessionId) : "";
+				var css = map ? buildStepFileRulesCss(map, sessionId, budgetPx) : "";
 				if ((stepFilesRulesBySession.get(sessionKey) || "") === css) return;
 				stepFilesRulesBySession.set(sessionKey, css);
 				writeStepFilesRulesMerged();
@@ -1399,7 +1418,6 @@ window.__ModuleLoader__.load({
 				if (out === stepFilesRulesCache) return;
 				stepFilesRulesCache = out;
 				stepFilesStyleEl.textContent = out;
-				keepTailAfterOwnChange();
 			} catch (e) { /* 同上 */ }
 		}
 		// ---- 官方会话作用域探针（一次性 DOM 契约读取；结果只落 capability controller） ----
@@ -1579,6 +1597,7 @@ window.__ModuleLoader__.load({
 			var report = props.report;
 			var grouped = props.grouped;
 			var nodeStore = props.nodeStore;
+			var budgetPx = props.budgetPx;
 			var source = react.useMemo(function () {
 				try {
 					return grouped && typeof grouped.groupSource === "function" ? grouped.groupSource(groupKey) : undefined;
@@ -1599,7 +1618,7 @@ window.__ModuleLoader__.load({
 				toolSource && typeof toolSource.subscribe === "function" ? toolSource.subscribe : subscribeNothing,
 				toolSource && typeof toolSource.getSnapshot === "function" ? toolSource.getSnapshot : getUndefinedSnapshot
 			);
-			var state = stepCardGroupState(snapshot, nodeStore);
+			var state = stepCardGroupState(snapshot, nodeStore, budgetPx);
 			react.useEffect(function () {
 				report(groupKey, state === undefined ? null : state);
 				return function () { report(groupKey, null); };
@@ -1638,6 +1657,22 @@ window.__ModuleLoader__.load({
 			var countsRef = react.useRef({});
 			var versionPair = react.useState(0);
 			var version = versionPair[0], setVersion = versionPair[1];
+			// 内容列宽度（文件清单预算的唯一输入）：首次渲染 lazy init 量一次，此后只在 effect
+			// 里量（post-commit）且变化才 setState；entries 变化时重量（首个组出现前只能按视口估算），
+			// 窗口缩放同步重量。预算与 max-width 都由这个值算出，宽度变化后两边一起更新，不会分叉。
+			var widthPair = react.useState(function () { return stepFilesContentWidth(props.sessionId); });
+			var contentWidth = widthPair[0], setContentWidth = widthPair[1];
+			react.useEffect(function () {
+				function remeasure() {
+					var next = stepFilesContentWidth(props.sessionId);
+					setContentWidth(function (prev) { return prev === next ? prev : next; });
+				}
+				remeasure();
+				if (typeof window === "undefined" || typeof window.addEventListener !== "function") return undefined;
+				window.addEventListener("resize", remeasure);
+				return function () { window.removeEventListener("resize", remeasure); };
+			}, [props.sessionId, entries]);
+			var filesBudgetPx = stepFilesBudgetPx(contentWidth);
 			var report = react.useCallback(function (groupKey, state) {
 				var map = countsRef.current;
 				var had = Object.prototype.hasOwnProperty.call(map, groupKey);
@@ -1656,15 +1691,16 @@ window.__ModuleLoader__.load({
 			// 这里同时兜一次（防 entries 变了但计数没变的边界）。
 			react.useEffect(function () {
 				writeStepCardRules(countsRef.current, props.sessionId);
-				writeStepFilesRules(countsRef.current, props.sessionId);
-			}, [version, entries, props.sessionId]);
+				writeStepFilesRules(countsRef.current, props.sessionId, filesBudgetPx);
+			}, [version, entries, props.sessionId, filesBudgetPx]);
 			var probes = [];
 			if (entries && grouped) {
 				for (var i = 0; i < entries.length; i++) {
 					var entry = entries[i];
 					if (!entry || entry.kind !== "group") continue;
 					probes.push(react.createElement(StepCardGroupProbe, {
-						key: entry.key, groupKey: entry.key, grouped: grouped, nodeStore: nodeStore, report: report
+						key: entry.key, groupKey: entry.key, grouped: grouped, nodeStore: nodeStore,
+						budgetPx: filesBudgetPx, report: report
 					}));
 				}
 			}
@@ -4389,98 +4425,6 @@ window.__ModuleLoader__.load({
 
 		var turnBarSeq = 0;
 		// ---- Turn 栏（插件渲染器的 UI 核心） ----
-		// ---- 自有行高变化后的「贴底自愈」 ----
-		// 事实（官方源码可核对）：TurnProcessNodeView 在回合**运行中** `return null`（那一行 0px），
-		// 插件在同一行渲染自己的运行栏（24px 行 + 1px 分隔线 + 4/8 边距 ≈ 37px），而该行位于回合
-		// 顶端 = 阅读锚点**之上**。官方跟随策略对这个增高的归因链是：滚动锚定/布局变化 → 一次
-		// scroll 事件被 use-chat-viewport 判为 movedByReader → use-chat-reading 开 500ms pending
-		// 窗口（其间 onResize 不再跟随）→ 窗口结束 flushSample 用 nearBottom(25px) 重判意图。
-		// 结果：观众**永久失去跟随**，正在运行的步骤栏停在输入框（sticky 座位）覆盖带里不再回来
-		// ——用户实测「关掉插件就没有这个问题」。
-		// 插件不碰官方策略，只回收**自己造成的那 37px**：自有行高变化后，若观众本来就在底部附近，
-		// 就把滚动位置补回新的底部。官方会把「抵达底部」当成立即恢复跟随（onScroll 的
-		// top >= floor 分支 → followTail），于是 followingTail 保持为真；观众若在读上面
-		// （距离超过窗口）**绝不**拽回去。
-		var TAIL_KEEP_WINDOW = 48;
-		/** 从插件自有节点向上找官方滚动口（一次 closest；不观察官方 DOM、不写官方属性）。 */
-		function tailKeepScroller(el) {
-			try {
-				return el && typeof el.closest === "function" ? el.closest("[data-conversation-scroll]") : null;
-			} catch (e) { return null; }
-		}
-		/** 官方此刻是否仍认为"读者在跟随尾部"——就是官方自己挂在会话根上的
-		 *  `data-chat-following-tail`（ChatView.tsx）。这是**读官方 DOM 事实**，不是观察/写属性：
-		 *  它比任何像素阈值都准——官方还认为在跟随，读者的意图就是看尾部（官方 500ms 后才改判）；
-		 *  官方已经释放时，我们才退回像素窗口保护读者。 */
-		function officialFollowingTail() {
-			try {
-				return typeof document !== "undefined" && document.querySelector("[data-chat-following-tail]") !== null;
-			} catch (e) { return false; }
-		}
-		/** 把滚动位置补回当前底部（返回是否真的补过，便于测试与守卫）。
-		 *  两条判据：
-		 *   · 官方仍认为在跟随 → 不论距离都补（这正是官方自己的语义；真机上那个 81px 位移就是
-		 *     官方跟随没补上，而我的 48px 窗口当初太小、压根没触发——2026-10-08 实测修正）；
-		 *   · 官方已释放 → 只有距底 ≤ TAIL_KEEP_WINDOW 才补（读上面的观众绝不被拽）。 */
-		function keepTailAfterOwnResize(el) {
-			var scroller = tailKeepScroller(el);
-			if (!scroller) return false;
-			var floor = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-			if (scroller.scrollTop >= floor) return false;                     // 已在底部：无事可做
-			if (!officialFollowingTail() && floor - scroller.scrollTop > TAIL_KEEP_WINDOW) return false;
-			scroller.scrollTop = floor;
-			return true;
-		}
-		/** 观察插件**自有**行：挂载这一帧先补一次（运行栏 0→37px 正是这一下；脚本写入 scrollTop
-		 *  会抑制同帧的滚动锚定调整，这正是我们要的），此后行高再变也补。 */
-		function useOwnRowTailKeep() {
-			var ref = react.useRef(null);
-			react.useLayoutEffect(function () {
-				var el = ref.current;
-				if (!el) return;
-				keepTailAfterOwnResize(el);
-				if (typeof ResizeObserver === "undefined") return;
-				var last = el.offsetHeight;
-				var observer = new ResizeObserver(function () {
-					var height = el.offsetHeight;
-					if (height === last) return;
-					last = height;
-					// 行高变化（运行 37px ↔ 结束 33px 等）也走"短窗口稳住"：在官方 500ms 窗口内补到位
-					keepTailAfterOwnChange();
-				});
-				observer.observe(el);
-				return function () { observer.disconnect(); };
-			}, []);
-			return ref;
-		}
-		/** 插件**自己的改动**之后稳住尾部（真机实测的触发链，2026-10-08）：
-		 *  链条一：变体牌面资产是"每个新变体追加一张 220~390 KB 的 <style>、永不重写"，一次插入
-		 *  即强制全文档重算布局，浏览器可能重选滚动锚点、把 scrollTop 挪走几十像素；
-		 *  链条二（实测更常见）：**回合结束**那一瞬官方布局先缩 ~81px 再弹回，官方跟随没能补上，
-		 *  距离停在 81px。
-		 *  两条都以同样方式收场：位移/增长被 use-chat-viewport 归因成 movedByReader → 开 500ms
-		 *  pending（其间 onResize 不跟随）→ flushSample 用 nearBottom(25px) 重判 → **释放跟随**，
-		 *  最新内容停在输入框覆盖带里（用户实拍"步骤栏被吃掉"）。
-		 *  所以补底不能只补一帧：自有改动后按 0 / 120 / 320ms 各补一次，正好覆盖官方那 500ms 窗口
-		 *  （窗口结束时距离已是 0 → following 保持为真）。读上面的观众仍受 48px 距离窗口保护。 */
-		var TAIL_KEEP_SETTLE_MS = [120, 320];
-		function runTailKeep() {
-			try {
-				var scrollers = document.querySelectorAll("[data-conversation-scroll]");
-				for (var i = 0; i < scrollers.length; i++) keepTailAfterOwnResize(scrollers[i]);
-			} catch (e) { /* 视觉增强可以坏，官方折叠不受影响 */ }
-		}
-		function keepTailAfterOwnChange() {
-			// 第一枪放在下一帧（不强制同步布局、补在绘制前）；宿主没有 rAF（老环境 / jsdom）时退到 setTimeout
-			var raf = (typeof requestAnimationFrame === "function")
-				? requestAnimationFrame
-				: function (fn) { return setTimeout(fn, 0); };
-			raf(runTailKeep);
-			for (var i = 0; i < TAIL_KEEP_SETTLE_MS.length; i++) {
-				setTimeout(runTailKeep, TAIL_KEEP_SETTLE_MS[i]);
-			}
-		}
-
 		// TurnBarView 是运行中（running）与结束态（closed）共用的单根视觉：
 		//   [前导图标（扑克/native chevron）] [状态词?] [指标文案（运行中滚轮/结束静态）] ...... [第N轮] | [⚙]
 		// 兄弟交互结构：主按钮只负责 Fold toggle、齿轮 <button> 只负责设置——
@@ -4504,8 +4448,6 @@ window.__ModuleLoader__.load({
 			var uidRef = react.useRef(null);
 			if (uidRef.current === null) uidRef.current = "tf-bar-" + (++turnBarSeq);
 			var gearRef = react.useRef(null);
-			// 自有行高变化（运行中 0→有栏、结束态栏形态变化）后按需贴底自愈
-			var wrapRef = useOwnRowTailKeep();
 			var isOpener = popup.open && popup.openerId === uidRef.current;
 			// 卸载时若面板由本栏打开 → 关闭（会话切换不留僵尸 open 状态）
 			react.useEffect(function () {
@@ -4568,7 +4510,7 @@ window.__ModuleLoader__.load({
 			}, GearIconSvg());
 			return react.createElement(
 				"div",
-				{ ref: wrapRef, className: "ccg-turn-wrap", "data-tf-turn": props.turnNumber !== undefined ? String(props.turnNumber) : undefined },
+				{ className: "ccg-turn-wrap", "data-tf-turn": props.turnNumber !== undefined ? String(props.turnNumber) : undefined },
 				react.createElement("div", { className: "ccg-turn-row" }, main, gear),
 				isOpener ? react.createElement(SettingsDialog, { openerRef: gearRef }) : null,
 				react.createElement("div", { className: "ccg-turn-divider", "aria-hidden": "true" })

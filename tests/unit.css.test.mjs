@@ -36,11 +36,17 @@ describe('Turn 栏样式（兄弟交互结构）', () => {
 
   it('图标盒子与官方 leading 同尺寸（16px）：Turn 栏与 Step 栏的字距/缩进逐像素同款', () => {
     const css = baseCss()
-    const icon = css.split('\n').find((l) => l.includes('.ccg-poker-icon{'))
-    assert.ok(icon, '缺少 .ccg-poker-icon 规则')
+    // 基座规则**恰好一条**：后置的同特异性 `.ccg-poker-icon{…}` 会在 CSS 里胜出，
+    // 把 24px 盒子悄悄带回来（用户实拍的 4px 字距 bug）——所以按"类名开头的那些行"全扫，
+    // 不用 find 只看第一条。
+    const bases = css.split('\n').filter((l) => /^\s*\.ccg-poker-icon\{/.test(l))
+    assert.equal(bases.length, 1, '基座 .ccg-poker-icon 规则必须恰好一条，实际 ' + bases.length + ' 条')
+    const icon = bases[0]
     // 官方组头 .leading 是 16×16（ChatGroupSeat.module.css）——插件必须与它同尺寸，
     // 否则 24px 图案居中后左右各空 5.3px：Turn 栏字距比 Step 栏宽 4px、牌也右移 4px
     // （用户实拍指出；实测视觉间隙 11.3px vs 7.3px）。图案画布仍是 24×24（居中溢出）。
+    // 边界：官方 leading 是 calc(16px + var(--dsh-content-font-delta))，所以"逐像素同款"
+    // 只在默认内容字号下成立；插件自己的栏字号也是定值（见 .ccg-turn-bar-main），不随字号放大。
     assert.ok(icon.includes('width:16px') && icon.includes('height:16px'),
       'Turn 栏图标盒子必须是 16×16（与官方 .leading 一致），实际：' + icon)
     assert.ok(!icon.includes('width:24px'), '不得回到 24px 盒子（会让两侧字距不一致）')
@@ -500,9 +506,11 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     } finally { cleanup() }
   })
 
-  // ══════ 平面旋转契约（机械移植自参考实现 docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html 第三行变体） ══════
-  // 设计源 = 第三行的五牌面轮换动画本体 + svg3dRotated() 那一步：
-  //          「牌面轮换 · 平面旋转 35.5°」（把整套可见动画绕 16×16 画布中心整体旋转，关键帧不改）。
+  // ══════ 平面旋转契约（机械移植自参考实现 docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html） ══════
+  // 设计源 = **第三行的五牌面轮换动画本体** + `svg3dRotated()` 包装（把整套可见动画绕
+  //          16×16 画布中心整体旋转，关键帧不改）；旋转角 35.5 的设计字面量在**第五行**
+  //          点击切换变体（`const target = toward35 ? 35.5 : 0`；第三行预览只按
+  //          ANIM_ANGLES=[0,30,45,60,90] 旋转）。
   // 旋转角 = icons/default.json → pokerSpin.restAngle（= atan(w/h)），断言其四舍五入 == 参考稿字面量 35.5。
   const referenceHtml = readFileSync(new URL('../docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html', import.meta.url), 'utf8')
 

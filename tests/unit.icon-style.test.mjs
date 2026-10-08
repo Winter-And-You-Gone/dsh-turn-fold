@@ -26,6 +26,9 @@ function skinEl() {
 function cardEl() {
   return sharedDocument.querySelector('style[data-plugin-css="' + T.STEP_CARD_CSS_ID + '"]')
 }
+function filesEl() {
+  return sharedDocument.querySelector('style[data-plugin-css="' + T.STEP_FILES_CSS_ID + '"]')
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // A. 旧设置迁移（load 层一次性）
@@ -73,6 +76,9 @@ describe('iconStyle B：统一状态（单一来源）', () => {
     assert.equal(T.getIconStyle(), 'native')
     assert.equal(skinEl().disabled, true, 'Step 皮肤样式表禁用（官方图标恢复）')
     assert.equal(cardEl().disabled, true, '牌数桥样式表禁用')
+    // 第三张表（步骤文件清单）是"信息"不是"皮肤"：native 下必须**照常启用**，
+    // 否则切到官方图标风格会让文件清单静默消失。守卫钉住这条解耦。
+    assert.equal(filesEl().disabled, false, '文件清单样式表在 native 下仍启用（信息不是皮肤）')
   })
   it('setIconStyle("poker") → Turn poker 且 Step 两张样式表同时启用', () => {
     T.setIconStyle('native')
@@ -80,6 +86,7 @@ describe('iconStyle B：统一状态（单一来源）', () => {
     assert.equal(T.getIconStyle(), 'poker')
     assert.equal(skinEl().disabled, false)
     assert.equal(cardEl().disabled, false)
+    assert.equal(filesEl().disabled, false)
   })
   it('应用函数幂等：native 下重复 apply 不翻转状态', () => {
     T.setIconStyle('native')
@@ -87,6 +94,7 @@ describe('iconStyle B：统一状态（单一来源）', () => {
     T.applyIconStyle()
     assert.equal(skinEl().disabled, true)
     assert.equal(cardEl().disabled, true)
+    assert.equal(filesEl().disabled, false, '重复 apply 也不得连带禁用文件清单表')
     T.setIconStyle('poker')
   })
   it('运行时状态对象里不再存在 foldIcon / stepSkin（双状态已删除）', () => {

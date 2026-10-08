@@ -152,13 +152,20 @@ describe('运行中翻牌轴 = 竖直对角线轴', () => {
     assert.ok(Math.abs(angle - 35.5377) < 0.01, '真实扑克牌比例下竖直对角线轴 ≈ 35.5377°，实际 ' + angle)
   })
 
-  it('几何：绕卡牌中心转该角后，左上→右下对角线竖直（dx≈0 且过中心）', () => {
-    const th = axisDeg * Math.PI / 180
-    const rot = (x, y) => [x * Math.cos(th) - y * Math.sin(th), x * Math.sin(th) + y * Math.cos(th)]
-    const tl = rot(-cardW / 2, -spin.h / 2)
-    const br = rot(cardW / 2, spin.h / 2)
-    assert.ok(Math.abs(tl[0] - br[0]) < 1e-9, '对角线两端必须落在同一条竖直线上')
-    assert.ok(Math.abs(tl[0]) < 1e-9, '这条竖直线必须过卡牌中心')
+  it('几何：生成物里那条轴角确实把卡牌左上→右下对角线转成竖直线（用产物自己的 w/h 算）', () => {
+    const svg = T.buildPokerSpinSVG('axis-geo')
+    const rect = (svg.match(/<rect class="anim-card axis-spin-card"[^>]*>/) || [''])[0]
+    const w = Number((rect.match(/width="([0-9.]+)"/) || [])[1])
+    const h = Number((rect.match(/height="([0-9.]+)"/) || [])[1])
+    assert.ok(w > 0 && h > 0, '生成物必须带卡牌 rect 的 w/h：' + w + '×' + h + '（' + rect.slice(0, 120) + '）')
+    const angle = axisOf(svg)
+    const th = angle * Math.PI / 180
+    // 轴角 θ 满足 tanθ = w/h ⟺ 旋转后对角线两端 x 相同（= 竖直线）；用产物里的 w/h 与
+    // 产物里的角度一起验，几何结论就绑定在真实输出上（而不是测试自己算一遍三角函数）。
+    // 容差 1e-3：数据源里的 restAngle 只保留 4 位小数（35.5377 vs atan 真值 35.53769…），
+    // 但 1° 的错角会带来 ~0.2 的残差，所以这个口径照样能抓住"轴角写错"。
+    assert.ok(Math.abs(w * Math.cos(th) - h * Math.sin(th)) < 1e-3,
+      '轴角必须满足 tanθ = w/h（' + w + '×' + h + '，θ=' + angle + '°）')
   })
 
   it('结构：squash 在根坐标系（横轴）→ 翻转轴就是这条竖直对角线；原点 = 卡牌中心', () => {

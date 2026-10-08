@@ -3,20 +3,24 @@
  * 生成步骤折叠栏「运行中」图标的动画 SVG，并写入 client.js 的
  * `>>> step-running-poker-svg` / `<<< step-running-poker-svg` 标记块。
  *
- * 设计源（唯一）：docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html **第三行的
- *   「牌面轮换 · 平面旋转 35.5°」变体** —— 第三行的五牌面轮换动画本体
- *   （`const ANIM_SVG` 模板：每 0.8s 一组、五相位 4s 一整轮、动态蒙版挖空下层牌）
- *   加上参考稿 svg3dRotated() 那一步：在 </defs> 之后插入
+ * 设计源（唯一）：docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html ——
+ *   **第三行的五牌面轮换动画本体**（`const ANIM_SVG` 模板：每 0.8s 一组、五相位 4s 一整轮、
+ *   动态蒙版挖空下层牌）加上 `svg3dRotated()` 那一步：在 </defs> 之后插入
  *   `<g transform="rotate(angle 8 8)">`，把卡牌、花色与它们引用的 mask **整体**绕
  *   16×16 画布中心旋转 —— 关键帧一个字不改（参考稿注释：「在不改动动画关键帧的前提下，
  *   把整套可见动画绕 16×16 画布中心旋转。defs 保持原坐标；外层 transform 会让卡牌、
  *   花色以及引用的 mask 一起旋转。」）。
- *   **不是**第四/五行的「牌面翻转 · 竖直对角线轴」——那是回合栏运行中的图标，两者刻意不同。
+ *   旋转角的设计出处是**第五行「点击切换型」变体**的目标值（标签「牌面轮换 · 平面旋转
+ *   35.5°」、`const target = toward35 ? 35.5 : 0`）——第三行自己的预览按
+ *   ANIM_ANGLES=[0,30,45,60,90] 旋转，第三行里没有 35.5。
+ *   **不是**第四行的「牌面翻转 · 竖直对角线轴」——那是回合栏运行中的图标，两者刻意不同。
  *
  * 旋转角 = icons/default.json → pokerSpin.restAngle（≈35.5377° = atan(w/h)，与回合栏轴角
- *   同一数据源）：脚本断言它四舍五入到 1 位小数 == 参考稿那条变体的字面量 35.5
+ *   同一数据源）：脚本断言它四舍五入到 1 位小数 == 参考稿第五行那条变体的字面量 35.5
  *   （「牌面轮换 · 平面旋转 35.5°」标签、`const target = toward35 ? 35.5 : 0`）——
  *   设计值与数据源同源，任一边漂移都在这里失败。若只想钉死设计字面量，把 ANGLE 换成 35.5 即可。
+ *   注意：本脚本只从数据源读 `pokerSpin.restAngle`；改 pokerPips / pokerSpinDeepseek
+ *   **不需要**重跑它（花色与鲸鱼路径都来自参考稿本体）。
  *
  * 转换规则（与参考页自身保持一致，不改任何 SMIL 关键帧/时序）：
  *   1) 只取 `const ANIM_SVG = \`...\`` 模板内容；去掉页面预览用的 demo-border 虚线框；
@@ -58,17 +62,17 @@ if (!fs.existsSync(REF)) {
 }
 const html = fs.readFileSync(REF, 'utf8')
 
-// ── 参考稿结构断言：移植对象必须仍是第三行那条「平面旋转」变体 ──
+// ── 参考稿结构断言：本体取第三行，旋转包装 + 35.5° 目标值来自第五行点击切换变体 ──
 const guardTokens = [
-  'const ANIM_SVG = `',                                   // 第三行动画本体
-  'function svg3dRotated(s, angle',                       // 平面旋转变体
+  'const ANIM_SVG = `',                                   // 第三行：动画本体
+  'function svg3dRotated(s, angle',                       // 旋转包装（第三行预览与第五行切换共用）
   'class="anim-root-rotation" transform="rotate(\' + angle + \' 8 8)"',
   '牌面轮换 · 平面旋转 ${angle}°',
-  'const target = toward35 ? 35.5 : 0',
+  'const target = toward35 ? 35.5 : 0',                   // 第五行：35.5 目标值
   '当前：牌面轮换 · 平面旋转 35.5° · 点击切换',
 ]
 for (const token of guardTokens) {
-  if (!html.includes(token)) throw new Error('参考稿第三行「平面旋转」变体结构漂移，缺少标记: ' + token)
+  if (!html.includes(token)) throw new Error('参考稿「平面旋转」接线漂移（第三行本体 + 第五行 35.5 目标值），缺少标记: ' + token)
 }
 // 设计字面量（35.5）↔ 数据源轴角（≈35.5377）双向对齐
 const refAngle = Number(html.match(/const target = toward35 \? ([\d.]+) : 0/)[1])
@@ -142,7 +146,7 @@ const block = '/* >>> step-running-poker-svg (generated; do not edit; regenerate
   + '\t\t'
 fs.writeFileSync(CLIENT, client.slice(0, mStart) + block + client.slice(mEnd))
 
-console.log('[sync-step-anim] 牌面轮换 · 平面旋转 ' + Number(ANGLE.toFixed(1)) + '°（参考稿第三行变体；角取自 pokerSpin.restAngle = ' + ANGLE + '）',
+console.log('[sync-step-anim] 牌面轮换 · 平面旋转 ' + Number(ANGLE.toFixed(1)) + '°（参考稿第三行本体 + 第五行 35.5° 目标值；角取自 pokerSpin.restAngle = ' + ANGLE + '）',
   '| svg length:', svg.length,
   '| animateTransform:', (svg.match(/<animateTransform/g) || []).length,
   '| animate:', (svg.match(/<animate\b/g) || []).length,

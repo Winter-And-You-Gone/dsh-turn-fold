@@ -869,16 +869,28 @@ describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
     assert.equal(T.STEP_FILES_MAX, 3)
   })
 
-  it('预算按内容区宽度自适应（窄窗口才回落 32 字符；宽窗口把空间用起来）', () => {
+  it('预算按内容列宽度自适应：量官方内容列那一行（不解析 CSS 变量），永远落在 [MIN, MAX]', () => {
     // 实测：内容区 680px、最长标签 252px、旧固定 32 字符只用掉 130~167px、右侧白空 231~468px
-    assert.equal(T.stepFilesBudgetPx(680), 380, '680px 内容区 → 吃满上限 380px')
+    assert.equal(T.stepFilesBudgetPx(680), 380, '680px 内容列 → 吃满上限 380px')
     assert.equal(T.stepFilesBudgetPx(4000), 380, '更宽也不超过上限（不吃满整行）')
     assert.equal(T.stepFilesBudgetPx(500), 200, '500px → 500-300=200')
-    assert.equal(T.stepFilesBudgetPx(400), T.STEP_FILES_MIN_PX, '窄窗口夹到下限 150px')
+    assert.equal(T.stepFilesBudgetPx(400), T.STEP_FILES_MIN_PX, '窄内容列夹到下限 150px')
     assert.equal(T.stepFilesBudgetPx(200), T.STEP_FILES_MIN_PX, '更窄仍保底')
-    // 环境读不到 token 时用视口宽保守估算，且永远落在 [MIN, MAX]
+    // 宽度来源 = 官方内容列里那一行的 clientWidth（`--dsh-chat-content-width` 的计算值是
+    // var()/clamp() 文本，parseFloat 解析不出数值，所以只能量布局）。
+    // jsdom 没有布局：未 stub 的行 clientWidth=0 → 跳过；量不到才回落视口估算。
+    const holder = sharedDocument.createElement('div')
+    holder.setAttribute('data-chat-group-key', 'g-width-probe')
+    Object.defineProperty(holder, 'clientWidth', { value: 500, configurable: true })
+    sharedDocument.body.appendChild(holder)
+    try {
+      assert.equal(T.stepFilesContentWidth(), 500, '必须量到官方内容列那一行的宽度')
+      assert.equal(T.stepFilesBudgetPx(), 200, '量到 500 → 预算 200（与显式口径同一条公式）')
+    } finally {
+      holder.remove()
+    }
     const auto = T.stepFilesBudgetPx()
-    assert.ok(auto >= T.STEP_FILES_MIN_PX && auto <= T.STEP_FILES_MAX_PX, '自动预算 = ' + auto)
+    assert.ok(auto >= T.STEP_FILES_MIN_PX && auto <= T.STEP_FILES_MAX_PX, '量不到时的回落预算 = ' + auto)
     // 等效字符口径：中文/全角按 2.4 个 ASCII 计（避免被 ch 口径骗过去）
     assert.equal(T.stepFilesWeight('abc.ts'), 6)
     assert.equal(T.stepFilesWeight('中文.ts'), 2 * 2.4 + 3)
@@ -898,27 +910,26 @@ describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
     const long2 = 'b'.repeat(46) + '.ts'
     const kept = T.stepFilesText([long, long2, 'c.ts'], narrow)
     assert.equal(kept, long + ' +2', '首个名字自身超预算时仍整名显示 + 计数')
-    assert.ok(kept.length > T.STEP_FILES_BUDGET,
-      '已知边界（README「步骤文件清单」如实记录）：单名超预算时文本必然超过预算，'
-      + '且该名字在 UI 上会被 CSS ellipsis 截断——不要在文档里声称"绝不显示半个文件名"')
+    // 已知边界（README「步骤文件清单」如实记录）：首个名字自身超过预算时文本必然超过预算，
+    // 且该名字在 UI 上会被 CSS ellipsis 截断——不要在文档里声称"绝不显示半个文件名"
+    assert.ok(kept.length * 6 > narrow, '单名超预算是已记录的例外：' + kept.length + ' 字符 > ' + narrow / 6)
     // 三个短名都放得下 → 全显示，无 +N
     assert.equal(T.stepFilesText(['a.ts', 'b.ts', 'c.ts'], narrow), 'a.ts \u00b7 b.ts \u00b7 c.ts')
-    assert.ok(T.STEP_FILES_BUDGET > 0 && T.STEP_FILES_BUDGET * 6 <= T.STEP_FILES_MAX_PX,
-      '回落预算不得大于自适应上限（否则"宽窗口放宽"就没意义）')
+    assert.ok(T.STEP_FILES_MIN_PX < T.STEP_FILES_MAX_PX, '窄/宽两端必须真的不同（否则"自适应"没有意义）')
   })
 
   it('buildStepFileRulesCss：规则挂在官方组头按钮的 ::after 上，内容为纯文本', () => {
     const map = { [GROUP_A]: { count: 3, closed: true, filesText: 'a.ts \u00b7 b.ts' } }
-    const css = T.buildStepFileRulesCss(map)
+    const budget = 380                       // 显式预算：同一份值同时进数据层与 CSS
+    const css = T.buildStepFileRulesCss(map, undefined, budget)
     assert.equal(css.split('\n').filter(Boolean).length, 1, '一个组一条规则')
     assert.ok(css.includes('[data-step-process][data-chat-group-key="' + T.cssAttrValue(GROUP_A) + '"] button[data-process-activity]::after{'))
     assert.ok(css.includes('content:"a.ts \u00b7 b.ts"'))
     assert.ok(css.includes('text-overflow:ellipsis'), '过长时省略号')
     assert.ok(css.includes('flex:none'), '标题先收缩')
     // 关键不变量：写进 CSS 的 max-width 与数据层用的是**同一个像素预算**（分叉 = 半个名字回归）
-    const budget = T.stepFilesBudgetPx()
     assert.ok(css.includes('max-width:' + Math.round(budget) + 'px'),
-      'CSS 兜底宽度必须等于数据层预算（' + budget + 'px），实际：' + css.match(/max-width:[^;]+/))
+      'CSS 兜底宽度必须等于传入的数据层预算（' + budget + 'px），实际：' + css.match(/max-width:[^;]+/))
     assert.ok(!css.includes('44ch'), '不得回退到与数据层口径不同的 ch 兜底')
     assert.ok(!css.includes(':has('), '文件清单不参与 running/牌面竞争，无需 shimmer 排除子句')
   })
@@ -938,14 +949,16 @@ describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
     assert.ok(!css.includes('\n'), '单条规则内不得出现换行（否则声明会被拆断）')
   })
 
-  it('buildStepFileRulesCss：会话作用域双支 / 无 session 单支 / legacy 面不产出 / 空清单不产出', () => {
+  it('buildStepFileRulesCss：会话作用域双支 / 无 session 单支 / 空清单不产出', () => {
     const map = { [GROUP_A]: { filesText: 'a.ts' } }
     const scoped = T.buildStepFileRulesCss(map, 'sess-1')
     assert.ok(scoped.includes('[data-conversation-session="sess-1"] [data-step-process]'), '官方锚点支')
     assert.ok(scoped.includes('[data-conversation-content]:not([data-conversation-session]) [data-step-process]'), 'rc.1 回退支')
     assert.equal(scoped.split('{').length - 1, 1, '两支共享一个声明块（同一行）')
     assert.ok(!T.buildStepFileRulesCss(map, 'sess-1').includes('undefined'))
-    assert.equal(T.buildStepFileRulesCss(map, 'sess-1', 'legacy'), '', 'legacy 面本轮不产出')
+    // 只有 modern 面：legacy 面（插件自有 LegacyStepHeader）没有调用点，因此这里的签名
+    // 不再有 surface 参数（写错成 legacy 也不会静默产出别的面的规则）。
+    assert.equal(T.buildStepFileRulesCss.length, 3, '签名 = (map, sessionId, budgetPx)')
     assert.equal(T.buildStepFileRulesCss({ [GROUP_A]: { filesText: '' } }), '', '空清单 → 无规则')
     assert.equal(T.buildStepFileRulesCss({ [GROUP_A]: { count: 3, closed: true } }), '', '缺 filesText → 无规则')
     assert.equal(T.buildStepFileRulesCss({}), '')
@@ -1089,6 +1102,29 @@ describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
       const emptyGrouped = { entries: [], groupSource: () => undefined }
       act(() => { store.set({ views: { grouped: () => emptyGrouped }, nodes }) })
       assert.equal(filesCss(), '', '组消失后不得残留文件清单规则')
+    })
+
+    it('内容列宽度变化 → resize 后重量并重写（预算与 CSS max-width 同源，不分叉）', () => {
+      const nodes = makeNodes([['n1', settledCall('read', { file_path: 'X:\\proj\\client.js' })]])
+      const sources = new Map([[
+        GROUP_A,
+        makeSource({ key: GROUP_A, members: [nodeRef('n1')], data: groupData([{ kind: 'read', count: 1 }], true) }),
+      ]])
+      const store = makeStore({ entries: [{ kind: 'group', key: GROUP_A }], sources, nodes })
+      renderWith(store)
+      // jsdom 没有布局：官方内容列那一行量不到（clientWidth=0）→ 视口估算落在上限 380px
+      assert.ok(filesCss().includes('max-width:380px'), '量不到内容列时用视口估算：' + filesCss())
+      const row = sharedDocument.createElement('div')
+      row.setAttribute('data-chat-group-key', 'width-probe')
+      Object.defineProperty(row, 'clientWidth', { value: 500, configurable: true })
+      sharedDocument.body.appendChild(row)
+      try {
+        act(() => { sharedWindow.dispatchEvent(new sharedWindow.Event('resize')) })
+        assert.ok(filesCss().includes('max-width:200px'),
+          'resize 后必须按量到的 500px 重写预算（500-300=200）：' + filesCss())
+      } finally {
+        row.remove()
+      }
     })
 
     it('拿不到官方 ChatNodeStore（旧宿主/降级）→ 只写牌数规则，文件清单表保持空', () => {

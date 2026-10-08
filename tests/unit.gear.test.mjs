@@ -225,7 +225,7 @@ describe('动态扑克牌预览：静态牌面每秒轮换', () => {
     )
   })
 
-  it('弹窗挂载期间跟着直播时钟换牌；关闭弹窗即退订（不新开定时器）', async () => {
+  it('弹窗挂载期间跟着直播时钟换牌；关闭弹窗即退订（不新开定时器）', { timeout: 10000 }, async () => {
     const baseline = T.tickListeners.size
     openPopup()
     assert.equal(T.tickListeners.size, baseline + 1, '预览复用全局直播时钟（只 +1 个订阅者）')

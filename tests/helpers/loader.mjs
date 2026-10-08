@@ -62,7 +62,6 @@ const TEST_EXPORTS = [
   // 步骤文件清单（同一 group snapshot + 官方 ChatNodeStore → 组头 ::after 文本）
   'STEP_FILES_CSS_ID',
   'STEP_FILES_MAX',
-  'STEP_FILES_BUDGET',
   'STEP_FILES_MIN_PX',
   'STEP_FILES_MAX_PX',
   'stepFilesContentWidth',
@@ -184,10 +183,6 @@ const TEST_EXPORTS = [
   'buildPokerSVGBase',
   'buildPokerSpinSVG',
   'pokerSpinFrameCsv',
-  'keepTailAfterOwnResize',
-  'keepTailAfterOwnChange',
-  'officialFollowingTail',
-  'TAIL_KEEP_WINDOW',
   'pokerTransforms',
   'pokerPaintOrder',
   'foldSuitFor',
