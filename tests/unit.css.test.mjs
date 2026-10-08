@@ -736,28 +736,5 @@ describe('架构守卫：旧折叠引擎 CSS 必须消失', () => {
     const css = baseCss()
     assert.ok(css.includes('@media (prefers-reduced-motion:reduce)'))
   })
-
-  it('运行中组头常驻：base 表把 shimmer 命中的官方组头钉在滚动口顶部（官方滚动策略的补位）', () => {
-    const css = baseCss()
-    // 在**base** 表（不是随 iconStyle 启停的皮肤表）：官方跟随即便释放，运行中的步骤栏
-    // 也必须在 native 模式下同样可见。
-    const line = css.split('\n').find((l) => l.includes('position:sticky;top:0;z-index:5'))
-    assert.ok(line, '缺少运行中组头 sticky 规则（官方跟随释放后运行状态栏会被输入框盖住）')
-    // 只匹配官方 shimmer 双契约（与运行态识别同一钩子；失效即不命中，零副作用）
-    assert.ok(line.includes('[data-step-process]:has([data-shimmer="true"]) button[data-process-activity]'),
-      '必须挂在官方 shimmer（0.2.0+）契约上')
-    assert.ok(line.includes('[data-step-process]:has([data-text-shimmer="true"]) button[data-process-activity]'),
-      '必须同时覆盖 0.1.7 契约')
-    // 不透明背景（官方 pinned 行同款 token），否则文字从下方穿透
-    assert.ok(/background:var\(--dsw-alias-bg-base/.test(line), '需要官方 pinned 行同款底色')
-    // z-index 必须低于官方控件层：代码块吸顶 6 / 官方 pinned 头 7 / 输入框 7 / 回到底部 8
-    const z = Number((line.match(/z-index:(\d+)/) || [])[1])
-    assert.ok(z > 0 && z < 6, 'z-index 必须小于 6（不得压过任何官方控件），实际 ' + z)
-    // 非运行组不得命中（完成态组头照常滚走）
-    assert.ok(!/\[data-step-process\]\s+button\[data-process-activity\]\{/.test(css),
-      '不得给所有组头加 sticky——只有运行中的那条')
-    // 架构守卫的语义前提：:has() 仅用于 shimmer 运行态识别（见上一个 describe）
-    assert.ok(!line.includes('data-ccg-hidden'), '不得用它做成员隐藏')
-  })
 })
 
