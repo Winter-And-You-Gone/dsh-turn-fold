@@ -701,4 +701,56 @@ describe('自有行高自愈：贴底补偿的边界与挂载行为', () => {
       scroller.remove()
     }
   })
+
+  it('自有改动后短窗口稳住尾部：贴底观众回到底部；读上面的观众不动；无 rAF 时安全返回', async () => {
+    // 真机链条：自有样式写入（几百 KB 变体资产）/ 回合结束布局抖动（sh 先缩 81px 再弹回）
+    //   → 位移或增长被官方归因成"读者移动" → 开 500ms pending（其间不跟随）→
+    //   flushSample 用 nearBottom(25px) 重判 → 释放跟随（最新内容停在输入框覆盖带里）。
+    // 所以补底按 0 / 120 / 320ms 各补一次，正好覆盖那 500ms 窗口。
+    const scroller = sharedDocument.createElement('div')
+    scroller.setAttribute('data-conversation-scroll', '')
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    scroller.scrollTop = 930                              // 距底 70 → 先读上面的观众
+    sharedDocument.body.appendChild(scroller)
+    try {
+      // 观众在读上面（> TAIL_KEEP_WINDOW）→ 补底不动他
+      T.keepTailAfterOwnChange()
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      assert.equal(scroller.scrollTop, 930, '读上面的观众不被拽')
+
+      // 贴底观众被布局挪走 40px → 第一枪（下一帧）就补回底部
+      scroller.scrollTop = 560                            // floor 600，距底 40 ≤ 窗口
+      T.keepTailAfterOwnChange()
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      assert.equal(scroller.scrollTop, 600, '贴底观众被补回新的底部')
+
+      // 短窗口内的后续两枪：期间再次被挪走（模拟回合结束后的 81px 抖动）也能补回来
+      scroller.scrollTop = 570
+      await new Promise((resolve) => setTimeout(resolve, 150))   // 越过 120ms 那一枪
+      assert.equal(scroller.scrollTop, 600, '120ms 那一枪同样补回底部')
+    } finally {
+      scroller.remove()
+    }
+    // 没有 rAF 的宿主（jsdom / 老环境）→ 退到 setTimeout，同样不抛错
+    const savedRaf = sharedWindow.requestAnimationFrame
+    try {
+      delete sharedWindow.requestAnimationFrame
+      assert.doesNotThrow(() => T.keepTailAfterOwnChange())
+    } finally {
+      if (savedRaf) sharedWindow.requestAnimationFrame = savedRaf
+    }
+  })
+
+  it('源码守卫：自有样式写入与行高变化都接了"短窗口稳住"钩子（新增一处漂移即红灯）', () => {
+    const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+    const calls = src.match(/keepTailAfterOwnChange\(\)/g) || []
+    // 1 处定义 + 4 处调用（变体资产追加 / 牌面表重写 / 文件清单表重写 / 自有行高变化）
+    assert.equal(calls.length, 5, 'keepTailAfterOwnChange 应有 1 处定义 + 4 处调用，实际 ' + calls.length)
+    assert.ok(/appendChild\(tag\);\s*\n\s*keepTailAfterOwnChange\(\);/.test(src), '变体资产追加后必须稳住尾部')
+    assert.ok(/stepCardStyleEl\.textContent = out;\s*\n\s*keepTailAfterOwnChange\(\);/.test(src), '牌面表重写后必须稳住尾部')
+    assert.ok(/stepFilesStyleEl\.textContent = out;\s*\n\s*keepTailAfterOwnChange\(\);/.test(src), '文件清单表重写后必须稳住尾部')
+    assert.ok(/last = height;[\s\S]{0,220}?keepTailAfterOwnChange\(\);/.test(src), '自有行高变化后必须稳住尾部')
+    assert.ok(src.includes('TAIL_KEEP_SETTLE_MS'), '短窗口补底必须显式列出补底时刻')
+  })
 })

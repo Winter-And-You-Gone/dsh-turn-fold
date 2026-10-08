@@ -1241,6 +1241,7 @@ window.__ModuleLoader__.load({
 				tag.dataset.pluginCss = STEP_FACE_CSS_ID + "-" + set.id;
 				tag.textContent = completedFaceSetCss(set);
 				document.head.appendChild(tag);
+				keepTailAfterOwnChange();   // 几百 KB 的插入会动布局：贴底观众补回底部
 			} catch (e) { /* 资产写入失败 → 该组回落默认视觉，官方折叠不受影响 */ }
 		}
 		/** CSS 属性选择器里的字符串转义（groupKey 是 JSON 文本，含引号）。
@@ -1374,6 +1375,7 @@ window.__ModuleLoader__.load({
 				if (out === stepCardRulesCache) return;
 				stepCardRulesCache = out;
 				stepCardStyleEl.textContent = out;
+				keepTailAfterOwnChange();
 			} catch (e) { /* 同上 */ }
 		}
 		/** 更新某个 session 的步骤文件清单规则块（幂等：内容不变不写）。
@@ -1397,6 +1399,7 @@ window.__ModuleLoader__.load({
 				if (out === stepFilesRulesCache) return;
 				stepFilesRulesCache = out;
 				stepFilesStyleEl.textContent = out;
+				keepTailAfterOwnChange();
 			} catch (e) { /* 同上 */ }
 		}
 		// ---- 官方会话作用域探针（一次性 DOM 契约读取；结果只落 capability controller） ----
@@ -4429,12 +4432,40 @@ window.__ModuleLoader__.load({
 					var height = el.offsetHeight;
 					if (height === last) return;
 					last = height;
-					keepTailAfterOwnResize(el);
+					// 行高变化（运行 37px ↔ 结束 33px 等）也走"短窗口稳住"：在官方 500ms 窗口内补到位
+					keepTailAfterOwnChange();
 				});
 				observer.observe(el);
 				return function () { observer.disconnect(); };
 			}, []);
 			return ref;
+		}
+		/** 插件**自己的改动**之后稳住尾部（真机实测的触发链，2026-10-08）：
+		 *  链条一：变体牌面资产是"每个新变体追加一张 220~390 KB 的 <style>、永不重写"，一次插入
+		 *  即强制全文档重算布局，浏览器可能重选滚动锚点、把 scrollTop 挪走几十像素；
+		 *  链条二（实测更常见）：**回合结束**那一瞬官方布局先缩 ~81px 再弹回，官方跟随没能补上，
+		 *  距离停在 81px。
+		 *  两条都以同样方式收场：位移/增长被 use-chat-viewport 归因成 movedByReader → 开 500ms
+		 *  pending（其间 onResize 不跟随）→ flushSample 用 nearBottom(25px) 重判 → **释放跟随**，
+		 *  最新内容停在输入框覆盖带里（用户实拍"步骤栏被吃掉"）。
+		 *  所以补底不能只补一帧：自有改动后按 0 / 120 / 320ms 各补一次，正好覆盖官方那 500ms 窗口
+		 *  （窗口结束时距离已是 0 → following 保持为真）。读上面的观众仍受 48px 距离窗口保护。 */
+		var TAIL_KEEP_SETTLE_MS = [120, 320];
+		function runTailKeep() {
+			try {
+				var scrollers = document.querySelectorAll("[data-conversation-scroll]");
+				for (var i = 0; i < scrollers.length; i++) keepTailAfterOwnResize(scrollers[i]);
+			} catch (e) { /* 视觉增强可以坏，官方折叠不受影响 */ }
+		}
+		function keepTailAfterOwnChange() {
+			// 第一枪放在下一帧（不强制同步布局、补在绘制前）；宿主没有 rAF（老环境 / jsdom）时退到 setTimeout
+			var raf = (typeof requestAnimationFrame === "function")
+				? requestAnimationFrame
+				: function (fn) { return setTimeout(fn, 0); };
+			raf(runTailKeep);
+			for (var i = 0; i < TAIL_KEEP_SETTLE_MS.length; i++) {
+				setTimeout(runTailKeep, TAIL_KEEP_SETTLE_MS[i]);
+			}
 		}
 
 		// TurnBarView 是运行中（running）与结束态（closed）共用的单根视觉：

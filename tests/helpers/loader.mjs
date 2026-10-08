@@ -185,6 +185,7 @@ const TEST_EXPORTS = [
   'buildPokerSpinSVG',
   'pokerSpinFrameCsv',
   'keepTailAfterOwnResize',
+  'keepTailAfterOwnChange',
   'TAIL_KEEP_WINDOW',
   'pokerTransforms',
   'pokerPaintOrder',
