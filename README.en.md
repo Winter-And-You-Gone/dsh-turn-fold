@@ -348,16 +348,22 @@ git push --follow-tags
   **`followingTail` is permanently cleared**, so the running step bar comes to rest inside the
   composer's (in-scrollport, sticky) covered band and never returns — the "the running step bar
   moved below and vanished" symptom (the user confirmed: disabling the plugin removes it).
-  The plugin does **not** change the official policy; it only reclaims the 37px it caused: on the
-  mount frame of its **own** row (`.ccg-turn-wrap`) and on every later height change, if the
-  reader was already near the tail (within `TAIL_KEEP_WINDOW` = 48px of the floor) it puts the
-  scroll position back at the new floor — the official reads that as an arrival at the floor
-  (`onScroll`'s `top >= floor` branch → `followTail`), so following stays true, while a reader
-  further up is **never** moved. The permission surface is pinned by guards:
+  The plugin does **not** change the official policy; it only reclaims the layout it caused: on the
+  mount frame of its **own** row (`.ccg-turn-wrap`), on every later height change, and after every
+  stylesheet **it** writes (variant assets / card table / file-list table), it puts the tail back —
+  three shots at the **next frame + 120ms + 320ms**, which spans the official 500ms pending window.
+  Two tiers decide whether to act: **while the official still advertises
+  `data-chat-following-tail`** (it believes the reader is following) the tail is restored *whatever
+  the distance* — that is the official's own intent, it just failed to complete it (measured: an
+  81px turn-start displacement the official follow never absorbed, released 500ms later; the older
+  48px-only pixel window never even fired); **once the official has released**, only readers within
+  `TAIL_KEEP_WINDOW` (48px) of the floor are moved, so a reader further up is **never** dragged.
+  The permission surface is pinned by guards:
   exactly one `scrollTop` write, located only through
-  `closest("[data-conversation-scroll]")`, no `scrollIntoView` / `scrollTo` / `overflow-anchor`,
+  `closest("[data-conversation-scroll]")`, a single read of the official
+  `data-chat-following-tail` fact, no `scrollIntoView` / `scrollTo` / `overflow-anchor`,
   and a single ResizeObserver that observes only the plugin's own node
-  (`tests/unit.compat.test.mjs`).
+  (`tests/unit.compat.test.mjs` / `tests/unit.turn-renderer.test.mjs`).
 - **Metrics read surface (read-only official data, no membership recomputation)**:
   `node.location.turn` (`TurnLocation`: start/end/status/reason/steps) + turn data store
   (`get('turn-tail')` official aggregate `tokenUsage`, `get('turn-process')` official

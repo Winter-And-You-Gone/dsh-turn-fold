@@ -186,6 +186,7 @@ const TEST_EXPORTS = [
   'pokerSpinFrameCsv',
   'keepTailAfterOwnResize',
   'keepTailAfterOwnChange',
+  'officialFollowingTail',
   'TAIL_KEEP_WINDOW',
   'pokerTransforms',
   'pokerPaintOrder',

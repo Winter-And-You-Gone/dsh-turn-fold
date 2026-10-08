@@ -4408,13 +4408,26 @@ window.__ModuleLoader__.load({
 				return el && typeof el.closest === "function" ? el.closest("[data-conversation-scroll]") : null;
 			} catch (e) { return null; }
 		}
-		/** 观众贴底时才补偿：把滚动位置补回当前底部。返回是否真的补过（便于测试与守卫）。 */
+		/** 官方此刻是否仍认为"读者在跟随尾部"——就是官方自己挂在会话根上的
+		 *  `data-chat-following-tail`（ChatView.tsx）。这是**读官方 DOM 事实**，不是观察/写属性：
+		 *  它比任何像素阈值都准——官方还认为在跟随，读者的意图就是看尾部（官方 500ms 后才改判）；
+		 *  官方已经释放时，我们才退回像素窗口保护读者。 */
+		function officialFollowingTail() {
+			try {
+				return typeof document !== "undefined" && document.querySelector("[data-chat-following-tail]") !== null;
+			} catch (e) { return false; }
+		}
+		/** 把滚动位置补回当前底部（返回是否真的补过，便于测试与守卫）。
+		 *  两条判据：
+		 *   · 官方仍认为在跟随 → 不论距离都补（这正是官方自己的语义；真机上那个 81px 位移就是
+		 *     官方跟随没补上，而我的 48px 窗口当初太小、压根没触发——2026-10-08 实测修正）；
+		 *   · 官方已释放 → 只有距底 ≤ TAIL_KEEP_WINDOW 才补（读上面的观众绝不被拽）。 */
 		function keepTailAfterOwnResize(el) {
 			var scroller = tailKeepScroller(el);
 			if (!scroller) return false;
 			var floor = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-			if (floor - scroller.scrollTop > TAIL_KEEP_WINDOW) return false;   // 观众在读上面：不动
 			if (scroller.scrollTop >= floor) return false;                     // 已在底部：无事可做
+			if (!officialFollowingTail() && floor - scroller.scrollTop > TAIL_KEEP_WINDOW) return false;
 			scroller.scrollTop = floor;
 			return true;
 		}

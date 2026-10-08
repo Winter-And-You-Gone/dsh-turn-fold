@@ -990,13 +990,17 @@ git push --follow-tags
   （`use-chat-reading`）→ 窗口结束用 `nearBottom`（25px）重判意图 → **`followingTail`
   永久置 false**，正在运行的步骤栏就停在输入框（滚动容器内的 sticky 座位）覆盖带里不再
   回来——也就是"运行中步骤栏被移到下方不显示了"（用户实测：关掉插件即无此现象）。
-  插件**不改官方策略**，只回收自己造成的那 37px：在**自有**行（`.ccg-turn-wrap`）挂载这一帧
-  与之后每次行高变化时，若观众本来就在底部附近（距底 ≤ `TAIL_KEEP_WINDOW` = 48px）就把滚动
-  位置补回新的底部——官方把"抵达底部"当成立即恢复跟随（`onScroll` 的 `top >= floor` 分支 →
-  `followTail`），于是跟随保持为真；**在读上面的观众距离更远，插件绝不动他们的位置**。
+  插件**不改官方策略**，只回收自己造成的那 37px：在**自有**行（`.ccg-turn-wrap`）挂载这一帧、
+  之后每次行高变化、以及每次自己写样式表（变体资产/牌面表/文件清单表）之后，按
+  **下一帧 + 120ms + 320ms** 各补一次底（正好覆盖官方那 500ms pending 窗口）。判据分两档：
+  **官方仍挂着 `data-chat-following-tail`（它认为读者还在跟随）→ 不论距底多远都补回底部**
+  —— 这正是官方自己的语义，只是它那次没补上（真机实测：回合开始的瞬时位移 81px，官方跟随没
+  跟上，500ms 后 `nearBottom` 判负即永久释放；早期只用 48px 像素窗口，压根没触发）；
+  **官方已释放 → 只有距底 ≤ `TAIL_KEEP_WINDOW`（48px）才补**，读上面的观众绝不被拽。
   权限面被守卫钉死：全插件只有一处写 `scrollTop`、只通过 `closest("[data-conversation-scroll]")`
-  定位、不得 `scrollIntoView`/`scrollTo`/改 `overflow-anchor`，且只有一个 ResizeObserver
-  且只 observe 自有节点（`tests/unit.compat.test.mjs`）。
+  定位、只读官方 `data-chat-following-tail` 这一个状态事实、不得 `scrollIntoView`/`scrollTo`/
+  改 `overflow-anchor`，且只有一个 ResizeObserver 且只 observe 自有节点
+  （`tests/unit.compat.test.mjs` / `tests/unit.turn-renderer.test.mjs`）。
 - **指标读取面（只读官方数据，不重算折叠成员）**：`node.location.turn`
   （`TurnLocation`：start/end/status/reason/steps）+ turn data store（`get('turn-tail')`
   官方聚合 `tokenUsage`、`get('turn-process')` 官方 spec）+ 每 step 的

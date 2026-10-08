@@ -661,6 +661,37 @@ describe('自有行高自愈：贴底补偿的边界与挂载行为', () => {
     assert.ok(T.TAIL_KEEP_WINDOW > 0 && T.TAIL_KEEP_WINDOW <= 96, '窗口 = ' + T.TAIL_KEEP_WINDOW)
   })
 
+  it('官方仍认为在跟随时不论距离都补底（真机 81px 位移那次就是窗口太小没触发）', () => {
+    const scroller = sharedDocument.createElement('div')
+    scroller.setAttribute('data-conversation-scroll', '')
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true })
+    sharedDocument.body.appendChild(scroller)
+    const el = { closest: (sel) => (sel === '[data-conversation-scroll]' ? scroller : null) }
+    // 官方"在跟随"标记挂在会话根上（ChatView.tsx: data-chat-following-tail）
+    const tailFlag = sharedDocument.createElement('div')
+    tailFlag.setAttribute('data-chat-following-tail', '')
+    sharedDocument.body.appendChild(tailFlag)
+    try {
+      // 官方已释放 + 距底 300px（> 窗口）→ 不动读者
+      tailFlag.removeAttribute('data-chat-following-tail')
+      scroller.scrollTop = 300
+      assert.equal(T.keepTailAfterOwnResize(el), false, '官方已释放且超出窗口 → 不动')
+      assert.equal(scroller.scrollTop, 300)
+
+      // 官方仍认为在跟随 → 即使距底 300px（81px 那次的量级）也补回底部
+      tailFlag.setAttribute('data-chat-following-tail', '')
+      assert.equal(T.keepTailAfterOwnResize(el), true, '官方在跟随 → 补回底部')
+      assert.equal(scroller.scrollTop, 600, '补到新的底部')
+
+      // 官方在跟随但已在底部 → 不做无意义写入
+      assert.equal(T.keepTailAfterOwnResize(el), false)
+    } finally {
+      tailFlag.remove()
+      scroller.remove()
+    }
+  })
+
   it('运行栏挂载这一帧就补底（jsdom 无 ResizeObserver 也走挂载补偿）', () => {
     const scroller = sharedDocument.createElement('div')
     scroller.setAttribute('data-conversation-scroll', '')
