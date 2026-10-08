@@ -470,8 +470,12 @@ git push --follow-tags
     official turn/step closes the attribute disappears, the animation rule stops
     matching, and the card settles with zero JS. Whether or not the visual hooks
     fail, Step Fold / Tool / Think / Turn Fold and page stability are never affected;
-  - **Soft style injection (non-ideal, recorded as-is)**: the plugin injects two minimal
-    `<style>` elements into `document.head` (base styles + the step skin). As of the
+  - **Soft style injection (non-ideal, recorded as-is)**: the plugin injects minimal
+    `<style>` elements into `document.head` — base styles, the step skin, the per-group
+    step-count overlay rules, the per-group completed-face assets (one element per
+    `(count, topFace)` variant, written once), and the per-group step file-list rules
+    (its own element, decoupled from the skin gate; the legacy Step layer adds one more).
+    As of the
     current DSH master (21638c5631) there is no style-registration API for plain-JS
     client plugins (the only `createElement('style')` in the tree belongs to the web app
     itself), while the step skin must target the official DOM inside the official header
