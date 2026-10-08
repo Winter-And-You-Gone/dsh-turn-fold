@@ -881,7 +881,14 @@ window.__ModuleLoader__.load({
 		//   插件不写官方 DOM、不加官方属性、不做 DOM 观察——这是本仓库既定的架构红线
 		//   （见 tests/unit.compat.test.mjs 禁用标识符 + tests/unit.step-cards.test.mjs 桥守卫）。
 		var STEP_FILES_MAX = 3;   // 尾部最多显示几个文件名（完整名，绝不显示半个）
-		var STEP_FILES_BUDGET = 32;   // 显示文本的字符预算（含 " · " 分隔符）；超出整名折进 " +N"
+		// 预算按**内容区宽度**自适应（见 stepFilesBudgetPx）：旧版是固定 32 字符，实测在 680px 的行里
+		// 只用掉 130~167px、右侧白空 231~468px，于是"明明有地方却早早 +N"。下面这几个是它的口径：
+		var STEP_FILES_BUDGET = 32;             // 窄窗口的**回落**字符预算（等价 192px）
+		var STEP_FILES_LABEL_RESERVE = 300;     // 给标签/图标/齿轮/间距留的像素（最长标签实测 252px + 46px）
+		var STEP_FILES_MIN_PX = 150;            // 再窄也得给清单留一点
+		var STEP_FILES_MAX_PX = 380;            // 再宽也不吃满（44ch ≈ 305px，留出字体放大余量）
+		var STEP_FILES_CHAR_PX = 6;             // ASCII 名字实测 5.2~6.05 px/字符（14px 字号）
+		var STEP_FILES_WIDE_WEIGHT = 2.4;       // 非 ASCII（中文/全角）≈1em≈14px ≈ 2.4 个 ASCII 字符
 		// 目录型工具：它们的 path 参数是搜索根不是文件（本步骤"处理"的是命中结果，
 		// 拿根目录冒充文件名会误导）——只对 path 键生效，file_path/file/target 恒采信。
 		var STEP_FILES_DIRECTORY_TOOLS = ["glob", "grep", "find", "ls", "list_directory"];
@@ -952,10 +959,47 @@ window.__ModuleLoader__.load({
 			}
 			return out;
 		}
+		/** 官方内容区宽度（px）：优先读官方 CSS token `--dsh-chat-content-width`，缺失时按视口宽保守
+		 *  估算。这是**全局排版事实**（插件自己的 CSS 本来就在消费同一个 token），不是读官方组件 DOM。 */
+		function stepFilesContentWidth() {
+			try {
+				if (typeof document !== "undefined" && document.documentElement && typeof getComputedStyle === "function") {
+					var px = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dsh-chat-content-width"));
+					if (isFinite(px) && px > 0) return px;
+				}
+				if (typeof window !== "undefined" && window.innerWidth) {
+					return Math.max(320, window.innerWidth - 312);   // 实测：992px 滚动口 → 680px 内容区
+				}
+			} catch (e) { /* 读不到就回落常量 */ }
+			return 680;
+		}
+		/** 清单可用像素 = 内容宽 − 标签等预留，夹在 [STEP_FILES_MIN_PX, STEP_FILES_MAX_PX]。
+		 *  传 contentWidth 便于测试；不传则现读。 */
+		function stepFilesBudgetPx(contentWidth) {
+			var w = (typeof contentWidth === "number" && isFinite(contentWidth) && contentWidth > 0)
+				? contentWidth : stepFilesContentWidth();
+			var px = w - STEP_FILES_LABEL_RESERVE;
+			if (px < STEP_FILES_MIN_PX) px = STEP_FILES_MIN_PX;
+			if (px > STEP_FILES_MAX_PX) px = STEP_FILES_MAX_PX;
+			return px;
+		}
+		/** 名字的"等效 ASCII 字符数"（中文/全角按 STEP_FILES_WIDE_WEIGHT 计）——预算按它比较，
+		 *  这样中文名不会被 `ch` 口径骗过去、也不会让 CSS 侧再去截（截了就又是半个名字）。 */
+		function stepFilesWeight(text) {
+			var s = String(text), total = 0;
+			for (var i = 0; i < s.length; i++) total += s.charCodeAt(i) > 0x2e80 ? STEP_FILES_WIDE_WEIGHT : 1;
+			return total;
+		}
+		/** 一次写入用的像素预算：显式传入则直接采用（测试/固定口径），否则按当前内容区宽度现算。 */
+		function stepFilesBudgetPxOf(budgetPx) {
+			return (typeof budgetPx === "number" && isFinite(budgetPx) && budgetPx > 0)
+				? budgetPx : stepFilesBudgetPx();
+		}
 		/** 文件路径 → 步骤栏尾部文本：basename 再去重、最多 STEP_FILES_MAX 个，其余折成 " +N"。
-		 *  **整名策略**：超出字符预算的名字整条折进 "+N"，绝不显示半个文件名——早先靠 CSS
-		 *  ellipsis 兜底，会把 "ChatGroupSeat.tsx" 切成 "ChatGroup…" 这种看不懂的残片。 */
-		function stepFilesText(paths) {
+		 *  **整名策略**：超出预算的名字整条折进 "+N"，绝不显示半个文件名——早先靠 CSS
+		 *  ellipsis 兜底，会把 "ChatGroupSeat.tsx" 切成 "ChatGroup…" 这种看不懂的残片。
+		 *  budgetPx 省略时按当前内容区宽度现算（stepFilesBudgetPx）。 */
+		function stepFilesText(paths, budgetPx) {
 			if (!paths || typeof paths.length !== "number") return "";
 			var names = [];
 			var seen = Object.create(null);
@@ -966,17 +1010,24 @@ window.__ModuleLoader__.load({
 				names.push(base);
 			}
 			if (names.length === 0) return "";
+			var budgetChars = Math.floor(stepFilesBudgetPxOf(budgetPx) / STEP_FILES_CHAR_PX);
 			var shown = [];
+			var used = 0;
 			for (var j = 0; j < names.length && shown.length < STEP_FILES_MAX; j++) {
-				if (shown.length > 0 && shown.concat([names[j]]).join(" \u00b7 ").length > STEP_FILES_BUDGET) break;
+				var w = stepFilesWeight(names[j]);
+				var next = shown.length === 0 ? w : used + 3 + w;   // 3 = " · "
+				if (shown.length > 0 && next > budgetChars) break;
 				shown.push(names[j]);
+				used = next;
 			}
 			var more = names.length - shown.length;
 			if (more <= 0) return shown.join(" \u00b7 ");
 			// 预算里还要留出 " +N"：从尾部整名挤掉（至少保留一个名字，否则这一段就没信息了）
-			while (shown.length > 1 && shown.join(" \u00b7 ").length + (" +" + more).length > STEP_FILES_BUDGET) {
+			while (shown.length > 1 && used + (" +" + more).length > budgetChars) {
 				shown.pop();
 				more = names.length - shown.length;
+				used = 0;
+				for (var k = 0; k < shown.length; k++) used += (k === 0 ? 0 : 3) + stepFilesWeight(shown[k]);
 			}
 			return shown.join(" \u00b7 ") + " +" + more;
 		}
@@ -1001,16 +1052,22 @@ window.__ModuleLoader__.load({
 			};
 		}
 		/** 步骤文件清单的 ::after 声明块（尾部纯文本；标题用 ellipsis 让位）。
-		 *  max-width 只是兜底（数据层已按 STEP_FILES_BUDGET 整名取舍，正常不会触发），
-		 *  留足余量是因为 ch 是"0"的宽度：名字里混中文时实际占用约 2ch/字。 */
-		var STEP_FILES_DECL = "flex:none;margin-left:2px;max-width:44ch;overflow:hidden;" +
-			"text-overflow:ellipsis;white-space:nowrap;font-size:.92em;opacity:.85";
+		 *  `max-width` 与数据层**同一个像素预算**（stepFilesBudgetPx）——两边必须一致：数据层按
+		 *  等效字符预算整名取舍，CSS 只是同值的兜底（字体被设置放大等极端情况下才可能触发）。
+		 *  早先用固定 44ch 兜底，既与数据层口径不同（ch 是"0"的宽度，中文≈2ch/字），也在宽窗口下
+		 *  白白浪费一半空间。 */
+		function stepFilesDecl(budgetPx) {
+			return "flex:none;margin-left:2px;max-width:" + Math.round(stepFilesBudgetPxOf(budgetPx)) + "px;" +
+				"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.92em;opacity:.85";
+		}
 		/** groupKey → 步骤文件清单规则（挂官方组头按钮的 ::after）。
 		 *  运行中与已完成都输出：运行中随 counts/members 变化刷新，完成后成为稳定清单。
 		 *  legacy 面（插件自有 LegacyStepHeader，宿主 0.1.2~0.1.6）本轮不产出。 */
 		function buildStepFileRulesCss(map, sessionId, surface) {
 			var scopes = stepRuleScopePrefixes(sessionId, surface);
 			if (scopes.legacySurface) return "";
+			// 一次写完：同一份像素预算既决定"显示几个名字"，也写进 max-width（两边不允许分叉）
+			var decl = stepFilesDecl();
 			var rules = [];
 			if (map) {
 				for (var key in map) {
@@ -1020,11 +1077,11 @@ window.__ModuleLoader__.load({
 					if (typeof text !== "string" || text === "") continue;
 					var sel = '[data-step-process][data-chat-group-key="' + cssAttrValue(key) +
 						'"] button[data-process-activity]::after';
-					var decl = '{content:"' + cssStringContent(text) + '";' + STEP_FILES_DECL + '}';
+					var body = '{content:"' + cssStringContent(text) + '";' + decl + '}';
 					// 两支 = 各自完整的 selector（rc.2+ 官方锚点 / rc.1 回退），与牌面规则同款约定
 					rules.push(scopes.hasSession
-						? scopes.official + sel + ',' + scopes.fallback + sel + decl
-						: sel + decl);
+						? scopes.official + sel + ',' + scopes.fallback + sel + body
+						: sel + body);
 				}
 			}
 			return rules.join("\n");

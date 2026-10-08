@@ -869,23 +869,42 @@ describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
     assert.equal(T.STEP_FILES_MAX, 3)
   })
 
+  it('预算按内容区宽度自适应（窄窗口才回落 32 字符；宽窗口把空间用起来）', () => {
+    // 实测：内容区 680px、最长标签 252px、旧固定 32 字符只用掉 130~167px、右侧白空 231~468px
+    assert.equal(T.stepFilesBudgetPx(680), 380, '680px 内容区 → 吃满上限 380px')
+    assert.equal(T.stepFilesBudgetPx(4000), 380, '更宽也不超过上限（不吃满整行）')
+    assert.equal(T.stepFilesBudgetPx(500), 200, '500px → 500-300=200')
+    assert.equal(T.stepFilesBudgetPx(400), T.STEP_FILES_MIN_PX, '窄窗口夹到下限 150px')
+    assert.equal(T.stepFilesBudgetPx(200), T.STEP_FILES_MIN_PX, '更窄仍保底')
+    // 环境读不到 token 时用视口宽保守估算，且永远落在 [MIN, MAX]
+    const auto = T.stepFilesBudgetPx()
+    assert.ok(auto >= T.STEP_FILES_MIN_PX && auto <= T.STEP_FILES_MAX_PX, '自动预算 = ' + auto)
+    // 等效字符口径：中文/全角按 2.4 个 ASCII 计（避免被 ch 口径骗过去）
+    assert.equal(T.stepFilesWeight('abc.ts'), 6)
+    assert.equal(T.stepFilesWeight('中文.ts'), 2 * 2.4 + 3)
+  })
+
   it('stepFilesText：整名策略——超预算的名字整条折进 "+N"；单名超长是已记录的例外', () => {
-    // 截图回归：client.js · process-groups.ts · ChatGroupSeat.tsx 曾被切成 "ChatGroup…"
-    const shots = T.stepFilesText(['X:/p/client.js', 'X:/p/process-groups.ts', 'X:/p/ChatGroupSeat.tsx'])
+    const narrow = 32 * 6      // 与旧版行为等价的窄预算（192px = 32 等效字符）
+    // 截图回归：非宽窗口下 client.js · process-groups.ts 显示、第三个整名折进 +1（不出现 "ChatGroup…"）
+    const shots = T.stepFilesText(['X:/p/client.js', 'X:/p/process-groups.ts', 'X:/p/ChatGroupSeat.tsx'], narrow)
     assert.equal(shots, 'client.js \u00b7 process-groups.ts +1', '不出现残片名：' + shots)
     assert.ok(!shots.includes('ChatGroup'), '被预算挤掉的名字不得留半截')
+    // 同样三个名字在宽窗口下应该都显示出来（这就是"明明有地方却 +1"的修复）
+    const wide = T.stepFilesText(['X:/p/client.js', 'X:/p/process-groups.ts', 'X:/p/ChatGroupSeat.tsx'], 380)
+    assert.equal(wide, 'client.js \u00b7 process-groups.ts \u00b7 ChatGroupSeat.tsx', '宽窗口不再白折')
     // 首个名字无条件显示（"至少留一个名字"）：真·超预算时整名照出、只把后面的名字折成 +N。
-    const long = 'a'.repeat(46) + '.ts'          // 49 字符：既超预算，也超 CSS 兜底宽度 44ch
-    assert.ok(long.length > T.STEP_FILES_BUDGET, '本用例的 long 必须真的超过预算，否则守卫空转')
-    assert.ok(long.length > 44, 'long 还要超过 CSS 兜底宽度，才覆盖"会被省略号截断"这条已知边界')
-    const kept = T.stepFilesText([long, 'b.ts', 'c.ts'])
+    const long = 'a'.repeat(46) + '.ts'          // 49 字符：自身就超过任何预算
+    const long2 = 'b'.repeat(46) + '.ts'
+    const kept = T.stepFilesText([long, long2, 'c.ts'], narrow)
     assert.equal(kept, long + ' +2', '首个名字自身超预算时仍整名显示 + 计数')
     assert.ok(kept.length > T.STEP_FILES_BUDGET,
       '已知边界（README「步骤文件清单」如实记录）：单名超预算时文本必然超过预算，'
       + '且该名字在 UI 上会被 CSS ellipsis 截断——不要在文档里声称"绝不显示半个文件名"')
     // 三个短名都放得下 → 全显示，无 +N
-    assert.equal(T.stepFilesText(['a.ts', 'b.ts', 'c.ts']), 'a.ts \u00b7 b.ts \u00b7 c.ts')
-    assert.ok(T.STEP_FILES_BUDGET > 0 && T.STEP_FILES_BUDGET < 44, '预算必须小于 CSS 兜底宽度')
+    assert.equal(T.stepFilesText(['a.ts', 'b.ts', 'c.ts'], narrow), 'a.ts \u00b7 b.ts \u00b7 c.ts')
+    assert.ok(T.STEP_FILES_BUDGET > 0 && T.STEP_FILES_BUDGET * 6 <= T.STEP_FILES_MAX_PX,
+      '回落预算不得大于自适应上限（否则"宽窗口放宽"就没意义）')
   })
 
   it('buildStepFileRulesCss：规则挂在官方组头按钮的 ::after 上，内容为纯文本', () => {
@@ -896,6 +915,11 @@ describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
     assert.ok(css.includes('content:"a.ts \u00b7 b.ts"'))
     assert.ok(css.includes('text-overflow:ellipsis'), '过长时省略号')
     assert.ok(css.includes('flex:none'), '标题先收缩')
+    // 关键不变量：写进 CSS 的 max-width 与数据层用的是**同一个像素预算**（分叉 = 半个名字回归）
+    const budget = T.stepFilesBudgetPx()
+    assert.ok(css.includes('max-width:' + Math.round(budget) + 'px'),
+      'CSS 兜底宽度必须等于数据层预算（' + budget + 'px），实际：' + css.match(/max-width:[^;]+/))
+    assert.ok(!css.includes('44ch'), '不得回退到与数据层口径不同的 ch 兜底')
     assert.ok(!css.includes(':has('), '文件清单不参与 running/牌面竞争，无需 shimmer 排除子句')
   })
 

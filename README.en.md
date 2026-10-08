@@ -148,14 +148,22 @@ and search reveal) works untouched; the plugin only reskins it:
   button's `button[data-process-activity]::after{content:"…"}` — **no official DOM writes, no added
   official attributes, no DOM observation** (architecture red lines: see the banned identifiers in
   `tests/unit.compat.test.mjs` and the bridge guards in `tests/unit.step-cards.test.mjs`). Display
-  rule: basenames, de-duplicated, then cut by an **integer-name budget** — at most 3 names, adding up
-  to no more than `STEP_FILES_BUDGET` (32 characters), with names that no longer fit folded whole
-  into ` +N`; **the first name is the one exception**: to keep at least one name (otherwise the text
-  carries no information) it is always shown, so it may itself exceed 32 characters — and if it is
-  longer than the CSS fallback width (`max-width:44ch`; CJK counts ≈2ch per character) it gets
-  ellipsized. That is a **recorded boundary**: do not expect "never half a filename" to hold for a
-  single over-long name (the normal case never triggers the CSS clamp, and the earlier `ChatGroup…`
-  fragment problem stays fixed). Directory-ish tools (`glob/grep/find/ls`) contribute no filename
+  rule: basenames, de-duplicated, then cut by a **whole-name budget** — at most 3 names, with the
+  budget **derived from the content width** (`stepFilesBudgetPx()` =
+  `clamp(content width − 300px, 150px, 380px)`, where the 300px reserves room for the label, icon and
+  gear; the content width comes from the official `--dsh-chat-content-width` token, falling back to a
+  conservative viewport estimate) and measured in **ASCII-equivalent characters** (ASCII 1, CJK/full
+  width 2.4 ≈ 1em/6px) ⇒ ≈63 characters on wide windows (filling 380px) and the `STEP_FILES_BUDGET`
+  fallback (32 characters ≈ 192px) on narrow ones. Names that no longer fit are folded whole into
+  ` +N`, which must itself fit the budget. **The first name is the one exception**: to keep at least
+  one name (otherwise the text carries no information) it is always shown, so it may itself exceed
+  the budget — and if it is wider than the `max-width` it gets ellipsized. That is a **recorded
+  boundary**: do not expect "never half a filename" to hold for a single over-long name. The
+  `max-width` written into CSS is **the same pixel value** the data layer used (the old fixed `44ch`
+  fallback used a different yardstick *and* wasted half the available space — measured: on a 680px row
+  the old rule spent only 130–167px with 231–468px left empty); the normal case never triggers the CSS
+  clamp, and the earlier `ChatGroup…` fragment problem stays fixed. Directory-ish tools
+  (`glob/grep/find/ls`) contribute no filename
   from their `path` (it is a search root; `file_path` is always trusted); directories (trailing
   separator) and `url` values are not files; the list shows for running and completed groups alike
   (while running it accumulates from official tool data, with `turnDataSource(turn,'tool-call')` as a
