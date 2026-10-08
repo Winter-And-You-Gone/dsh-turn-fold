@@ -34,6 +34,23 @@ describe('Turn 栏样式（兄弟交互结构）', () => {
     }
   })
 
+  it('图标盒子与官方 leading 同尺寸（16px）：Turn 栏与 Step 栏的字距/缩进逐像素同款', () => {
+    const css = baseCss()
+    const icon = css.split('\n').find((l) => l.includes('.ccg-poker-icon{'))
+    assert.ok(icon, '缺少 .ccg-poker-icon 规则')
+    // 官方组头 .leading 是 16×16（ChatGroupSeat.module.css）——插件必须与它同尺寸，
+    // 否则 24px 图案居中后左右各空 5.3px：Turn 栏字距比 Step 栏宽 4px、牌也右移 4px
+    // （用户实拍指出；实测视觉间隙 11.3px vs 7.3px）。图案画布仍是 24×24（居中溢出）。
+    assert.ok(icon.includes('width:16px') && icon.includes('height:16px'),
+      'Turn 栏图标盒子必须是 16×16（与官方 .leading 一致），实际：' + icon)
+    assert.ok(!icon.includes('width:24px'), '不得回到 24px 盒子（会让两侧字距不一致）')
+    assert.ok(icon.includes('display:inline-flex') && icon.includes('justify-content:center'),
+      '24px 图案必须靠 flex 居中溢出（不参与官方布局）')
+    // 设置弹窗/预览里的独立尺寸覆盖不受影响
+    assert.ok(css.includes('.ccg-gear-icon-option-preview-item .ccg-poker-icon{width:20px;height:20px}'))
+    assert.ok(css.includes('.ccg-preview-bubble-body .ccg-poker-icon{width:80px;height:80px}'))
+  })
+
   it('旧的单按钮结构类已删除；非交互态钩子保留；右侧折叠箭头 CSS 已彻底移除', () => {
     const css = baseCss()
     assert.ok(!css.includes('.ccg-turn-bar{'), '旧 .ccg-turn-bar 单按钮类必须删除')
@@ -138,7 +155,7 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
     const skin = skinEl().textContent
     const base = skin.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
     assert.ok(base, '基础规则缺失')
-    assert.ok(base.includes('width:24px') && base.includes('height:24px'), '伪元素应为 24×24（Turn 容器同款）')
+    assert.ok(base.includes('width:24px') && base.includes('height:24px'), '伪元素画布应为 24×24（与 Turn 栏图案同款；两侧盒子都是官方 16px leading）')
     assert.ok(base.includes('center/24px 24px no-repeat'), '基础 mask 尺寸应为 24px（16 视箱 @1.5px/单位）')
     const svg = decodedMaskSvg(base)
     assert.equal((svg.match(/id="scc-g\d"/g) || []).length, 5, '牌堆应为五张牌 glyph')
@@ -611,8 +628,8 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     const base = skin.split('\n').find((l) => l.includes('[data-step-process-icon]::before{content:""'))
     assert.ok(base, '单伪元素基座规则缺失')
     assert.ok(base.includes('position:absolute') && base.includes('inset:0') && base.includes('margin:auto'), '伪元素必须 absolute + inset:0 + margin:auto（不参与官方布局）')
-    // 伪元素 24×24 = Turn 栏 .ccg-poker-icon 容器同款；基础 mask = completed 收起牌堆
-    assert.ok(base.includes('width:24px') && base.includes('height:24px'), '伪元素盒子应为 24×24（与 Turn 容器一致，右缘不触标题起点）')
+    // 伪元素画布 24×24（与 Turn 栏图案同尺寸，两边都居中溢出官方 16px leading）；基础 mask = completed 收起牌堆
+    assert.ok(base.includes('width:24px') && base.includes('height:24px'), '伪元素画布应为 24×24（与 Turn 栏图案一致，右缘不触标题起点）')
     assert.ok(base.includes('center/24px 24px no-repeat'), '基础 mask 应为牌堆（16 视箱 @24px = Turn 渲染比例 1.5px/单位）')
     const declaration = runningDeclarationOf(skin)
     assert.ok(declaration.includes('mask-size:24px 24px'), 'running mask 尺寸应显式为 24×24（16 单位视箱 → 牌外缘 ≈9.62×13.05，与 Turn 牌逐像素一致）')

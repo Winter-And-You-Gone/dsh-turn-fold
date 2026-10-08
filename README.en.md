@@ -73,9 +73,13 @@ and search reveal) works untouched; the plugin only reskins it:
 
 - A **transparent-bodied** poker card (CSS mask, current-color stroke + suit pip,
   wallpaper shows through) replaces the official activity icon. The card shares **one
-  design language** with the Turn-bar poker icon: a 24×24 pseudo-element (= the Turn
-  container), a 16-unit mask rendered at 24px (1.5px/unit) → card outer edge ≈9.62×13.05px
-  with a 1.05px stroke, pixel-identical on both sides;
+  design language** with the Turn-bar poker icon: a 24×24 artwork canvas, a 16-unit mask
+  rendered at 24px (1.5px/unit) → card outer edge ≈9.62×13.05px with a 1.05px stroke; and
+  **both sides put that 24px canvas inside the official 16×16 leading box, centred and
+  overflowing** (the Turn bar's `.ccg-poker-icon` is 16×16, the same size as the official
+  `.leading`) ⇒ ink indent 1.3px and a 6(gap)+1.3 = 7.3px gap to the text, pixel-identical
+  on both bars (the earlier 24px box left 5.3px of empty space on each side, making the Turn
+  bar's letter spacing 4px wider and shifting its card 4px right — verified by measurement);
 - **Completed two-state icon** (fold-state aware): collapsed = a five-suit stack
   (♠ ♥ ♦ ♣ + whale, closed = cards put away), expanded = a five-card fan (open = cards
   looked through) — same plugin face pool as the completed step faces, with the

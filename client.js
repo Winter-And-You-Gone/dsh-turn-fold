@@ -673,11 +673,13 @@ window.__ModuleLoader__.load({
 		 *  生成（buildStepCardRulesCss），资产（--tf-stack-3 / --tf-fan-3 / 3 张帧序）在这里预置。 */
 		function buildStepSkinCss() {
 			var rules = [];
-			// 统一牌规格（与 Turn 栏 .ccg-poker-icon 完全同款）：伪元素 24×24 = Turn 容器；
-			// 16 视箱 mask 按 24px 渲染（1 单位 = 1.5px）→ 牌外缘 ≈9.62×13.05px、stroke 1.05px，
-			// 与 Turn 栏扑克牌逐像素一致。官方 leading 16×16 与标题位置不动——伪元素
-			// absolute + inset:0 + margin:auto 居中、不参与 flex 布局，24px 盒右缘 x≈20
-			// 仍在标题起点（leading 16 + gap 6 = x22）左侧，轮换/扇形的运动包络不压标题。
+			// 统一牌规格（与 Turn 栏 .ccg-poker-icon 完全同款）：伪元素 24×24 是**图案的画布**，
+			// 两边都放在官方 16×16 的 leading 盒子里居中溢出（Turn 栏的 .ccg-poker-icon 也是
+			// 16×16）⇒ 两侧墨迹左缩进 1.3px、与文字间隙 7.3px，逐像素同款；
+			// 16 视箱 mask 按 24px 渲染（1 单位 = 1.5px）→ 牌外缘 ≈9.62×13.05px、stroke 1.05px。
+			// 官方 leading 16×16 与标题位置不动——伪元素 absolute + inset:0 + margin:auto
+			// 居中、不参与 flex 布局，24px 画布右缘 x≈20 仍在标题起点（leading 16 + gap 6 = x22）
+			// 左侧，轮换/扇形的运动包络不压标题。
 			var cfgB = iconConfig && iconConfig.pokerSVGBase;
 			var cardH = (cfgB && cfgB.hFive) || 8;
 			var cardW = cardH * ((cfgB && cfgB.pokerRatio) || 0.7142857142857143);
@@ -3233,8 +3235,12 @@ window.__ModuleLoader__.load({
 				/* 回合栏下常驻分隔线（收起/展开/运行中都显示）：--dsw-alias-line-secondary
 				   在部分版本无定义（官方自身也有悬空引用），链式兜底到 border-l1 与字面量 */
 				".ccg-turn-divider{height:1px;flex:none;background:var(--dsw-alias-line-secondary,var(--dsw-alias-border-l1,#d1d5db));margin:4px 0 8px}",
-				/* ── 扑克牌图标（Turn 栏 React 组件 + 选择器预览共用） ── */
-				".ccg-poker-icon{display:inline-flex;align-items:center;justify-content:center;position:relative;width:24px;height:24px;flex:none;color:var(--dsw-alias-label-secondary,#9ca3af)}",
+				/* ── 扑克牌图标（Turn 栏 React 组件 + 选择器预览共用） ──
+				   盒子 16×16 = **官方 .leading 同尺寸**：24×24 的图案在其中居中溢出，与 Step 组头
+				   （官方 16px leading 里那个 24px 伪元素）逐像素同款——墨迹左缩进 1.3px、
+				   与文字间隙 6(gap)+1.3 = 7.3px。曾用 24px 盒子：墨迹居中后左右各空 5.3px，
+				   于是 Turn 栏的字距看起来比 Step 栏宽 4px、牌也右移 4px（用户实拍指出）。 */
+				".ccg-poker-icon{display:inline-flex;align-items:center;justify-content:center;position:relative;width:16px;height:16px;flex:none;color:var(--dsw-alias-label-secondary,#9ca3af)}",
 				".ccg-poker-svg{display:flex;align-items:center}",
 				/* mask 遮挡方案：真实牌与 mask 里的 occluder 用同一套绝对 transform，
 				   同样的过渡曲线 → 开合动画期间遮挡逐帧对齐。rect 不填充（纯轮廓，
