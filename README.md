@@ -146,7 +146,10 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   牌尺寸与 Turn 栏扑克图标**同一设计语言**：图案画布 24×24、16 视箱 mask 按 24px 渲染
   （1.5px/单位）→ 牌外缘 ≈9.62×13.05px、描边 1.05px；**两侧都把这张 24px 画布放进官方
   16×16 的 leading 盒子里居中溢出**（Turn 栏的 `.ccg-poker-icon` 就是 16×16，与官方
-  `.leading` 同尺寸）⇒ 墨迹左缩进 1.3px、与文字间隙 6(gap)+1.3 = 7.3px，两条栏逐像素同款
+  `.leading` 同尺寸）⇒ 墨迹左缩进 1.3px、与文字间隙 6(gap)+1.3 = 7.3px，两条栏**在默认内容
+  字号下**逐像素同款。**边界（如实记录）**：官方 `.leading` 是
+  `calc(16px + var(--dsh-content-font-delta, 0px))`，内容字号被放大时它会跟着变宽；插件的
+  `.ccg-poker-icon` 与栏文字都是定值（16px / 14px），不随字号放大，此时两侧不再逐像素相等
   （曾用 24px 盒子：墨迹居中后左右各空 5.3px，Turn 栏字距比 Step 栏宽 4px、牌也右移 4px）；
 - **completed 双态图标**（Fold-state aware）：收起 = 花色牌堆（closed = 牌收好未翻看），
   展开 = 扇形（open = 牌已翻看）——与运行态牌面同序同构，几何直接复用 Turn 栏的
@@ -216,10 +219,16 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   不做 DOM 观察**（架构红线见 `tests/unit.compat.test.mjs` 的禁用标识符与
   `tests/unit.step-cards.test.mjs` 的桥守卫）。显示规则：basename 再去重，然后按**整名预算**
   取舍——最多 3 个；预算**按内容区宽度自适应**（`stepFilesBudgetPx()` =
-  `clamp(内容宽 − 300px, 150px, 380px)`，那 300px 是给标签/图标/齿轮留的位置；内容宽优先取官方
-  CSS token `--dsh-chat-content-width`，读不到才按视口宽保守估算），再按**等效 ASCII 字符**折算
-  （ASCII 记 1、中文/全角记 2.4 ≈ 1em/6px）⇒ 宽窗口约 63 字符（吃满 380px），窄窗口回落到
-  `STEP_FILES_BUDGET`（32 字符 ≈ 192px）。放不下的名字整条折成 ` +N`，` +N` 自己也要挤进预算；
+  `clamp(内容宽 − 300px, 150px, 380px)`，那 300px 是给标签/图标/齿轮留的位置）。内容宽是
+  **实测**出来的：取官方内容列里一行的 `clientWidth`（`[data-chat-group-key]` 组根，有会话
+  锚点时按会话限定，宽度 0 的隐藏/未布局行跳过）——官方 `--dsh-chat-content-width` 声明在
+  会话内容元素上（不是 `:root`，自定义属性也不会向上继承），而且它的计算值是 `var()/clamp()`
+  文本、`parseFloat` 读不出数值，所以不作数值源；一次也量不到才回落到视口估算
+  （`window.innerWidth − 312`，下限 320，最后 680）；窗口 resize 与组条目列表变化时重量一次。
+  名字再按**等效 ASCII 字符**折算（ASCII 记 1、中文/全角记 2.4 ≈ 1em/6px）⇒ 宽窗口约 63 字符
+  （吃满 380px），窄窗口夹在 `STEP_FILES_MIN_PX`（150px ≈ 25 个等效 ASCII 字符；旧版的固定
+  回落常量 `STEP_FILES_BUDGET`（32 字符 ≈ 192px）已删除）。放不下的名字整条折成 ` +N`，
+  ` +N` 自己也要挤进预算；
   **只有第一个名字例外**：为了"至少留一个名字，否则这段就没信息了"，它无条件显示，所以它自身
   可能超过预算，这时若宽于 `max-width` 就会被省略号截断——这是**已知边界**。写进 CSS 的
   `max-width` 与数据层用的是**同一个像素值**（早期用固定 44ch 兜底：口径不同，而且在宽窗口下
@@ -229,7 +238,9 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   （`file_path` 恒采信）；目录（以分隔符结尾）与 `url` 不算文件；运行中与已完成都显示
   （运行中随官方工具数据变化累积，`turnDataSource(turn,'tool-call')` 只作刷新触发器），
   条目消失/会话卸载即撤下规则。独立样式表 `style-step-files`，**不随 iconStyle 启停**
-  （信息不是皮肤，native 模式同样显示）；旧宿主（0.1.2~0.1.6 legacy 面）不产出；
+  （信息不是皮肤，native 模式同样显示）；旧宿主（0.1.2~0.1.6 legacy 面）不产出；**已知边界
+  （如实记录）**：只读组的**顶层**成员节点——PTC 子调用（`ToolCallBlock.subCalls`）里才出现的
+  文件不进清单；
 - 花色按官方 `data-process-activity` 值映射（`ACTIVITY_SUIT` 单一数据源生成 CSS）：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
@@ -241,20 +252,25 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   （♠ ♥ ♦ ♣ + DeepSeek 鲸鱼五张地位相同的牌面，无正/背面），再把整套可见动画
   （卡牌、花色、以及它们引用的 mask）**绕图标中心整体旋转 35.5°**。自运行 SVG（SMIL）
   作为卡牌的 CSS mask，牌线颜色仍由 `currentColor` 跟随主题：
-  - **设计源** = 参考实现 `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html`
-    **第三行的「平面旋转」变体**：五牌面轮换本体（`const ANIM_SVG`）+ `svg3dRotated()` 那一步
-    （在 `</defs>` 之后插入 `<g class="anim-root-rotation" transform="rotate(angle 8 8)">`，
+  - **设计源** = 参考实现 `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html`：动画本体取自
+    **第三行**（`── 第三行：五牌面轮换动画 ──`）的 `const ANIM_SVG`，再加上 `svg3dRotated()`
+    那一步（在 `</defs>` 之后插入 `<g class="anim-root-rotation" transform="rotate(angle 8 8)">`，
     参考稿注释原文：「在不改动动画关键帧的前提下，把整套可见动画绕 16×16 画布中心旋转。
-    defs 保持原坐标；外层 transform 会让卡牌、花色以及引用的 mask 一起旋转。」）；
+    defs 保持原坐标；外层 transform 会让卡牌、花色以及引用的 mask 一起旋转。」）；而 **35.5°
+    这个目标角与设计标签本身来自第五行**——`── 第五行：两个"点击切换型"动画 ──` 的点击切换
+    变体（「牌面轮换 · 平面旋转 35.5°」/ `const target = toward35 ? 35.5 : 0`；第三行自己的
+    预览按 `ANIM_ANGLES = [0, 30, 45, 60, 90]` 渲染，不带 35.5 字面量）；
   - **旋转角** = `icons/default.json → pokerSpin.restAngle`（≈35.5377° = `atan(w/h)`，
-    与回合栏轴角同一数据源）；生成脚本断言它四舍五入到 1 位小数 == 参考稿那条变体的
-    字面量 **35.5**（「牌面轮换 · 平面旋转 35.5°」/ `const target = toward35 ? 35.5 : 0`），
-    设计值与数据源任一边漂移即生成失败；
+    与回合栏轴角同一数据源）；生成脚本断言它四舍五入到 1 位小数 == 参考稿第五行那条变体的
+    字面量 **35.5**，设计值与数据源任一边漂移即生成失败；
   - **生成** = `npm run sync:step-anim` 写入 `client.js` 的
-    `>>> step-running-poker-svg` 标记块。脚本逐项断言：参考稿第三行「平面旋转」变体接线仍在
-    （`svg3dRotated` / `anim-root-rotation` / `rotate(' + angle + ' 8 8)` / 35.5 字面量），
-    转换后仍带 **5 组相位 / 72 个 animateTransform / 15 个 animate / `0.8s`×82 / `4s`×5**
-    （即「只加旋转、不动关键帧」），且旋转组真的包住全部相位；
+    `>>> step-running-poker-svg` 标记块。脚本断言的是**接线与结构**：参考稿第三行的动画本体与
+    平面旋转接线仍在（`const ANIM_SVG` / `svg3dRotated` / `anim-root-rotation` /
+    `rotate(' + angle + ' 8 8)`）、第五行的 35.5 字面量仍在，旋转组真的包住全部相位、产物不含
+    第四/五行轴旋转时代的禁用标识，并把产物计数**打到 stdout**。**5 组相位 / 72 个
+    animateTransform / 15 个 animate / `0.8s`×82 / `4s`×5 这些计数不变量由
+    `tests/unit.css.test.mjs` 的「平面旋转契约」断言**（即「只加旋转、不动关键帧」）——
+    脚本不是这些数字的 pre-commit 守卫；
   - **结构** = 五牌面轮换（每 0.8s 一组：两张完整平面牌对角轻微错开再合拢，唯一的 rotate 是
     ±3.1° 二维平面小角度；中途 `discrete` 在中点换层；四个动态 luminance 蒙版把下层牌与
     上层牌重叠处的线条挖空；五组相位连成 4s 完整循环：
@@ -844,12 +860,12 @@ npm run check      # 语法检查 client.js / index.js
 | 文件 | 覆盖 |
 | --- | --- |
 | `unit.logic.test.mjs` | 指标纯函数：`turnClockOf` / `computeTurnMetrics` / `readStepUsage`（官方 TurnLocation / step usage / turn-tail 聚合三来源）、格式化、字段显隐与 localStorage 持久化；同一输入两次计算结果逐字段相等（无伪造增长） |
-| `unit.turn-renderer.test.mjs` | Turn 渲染器：`open=false → 点击 → setOpen(true)`、`open=true → 点击 → setOpen(false)`；`foldable=false`/aborted/error → 静态栏无 setOpen 通道；Running Bar 0 秒出现、非交互、不触碰 Fold 状态；**自有行高自愈（贴底补偿：窗口内才补、读上面的观众绝不被拽、挂载帧即补、找不到滚动口安全返回）**；回合结束平滑交接；`turnProcess` 缺失降级 |
+| `unit.turn-renderer.test.mjs` | Turn 渲染器：`open=false → 点击 → setOpen(true)`、`open=true → 点击 → setOpen(false)`；`foldable=false`/aborted/error → 静态栏无 setOpen 通道；Running Bar 0 秒出现、非交互、不触碰 Fold 状态；回合结束平滑交接；`turnProcess` 缺失降级 |
 | `unit.poker.test.mjs` | 活动→花色映射（官方 ProcessActivity 词表全覆盖）、牌堆/扇形/翻牌 SVG 生成、**运行中翻牌轴 = 竖直对角线轴（轴角 = atan(w/h) + 几何/原点校验 + CSS 覆盖回归守卫）**、组件渲染、reduced-motion 与无 WAAPI 静态降级 |
 | `unit.step-cards.test.mjs` | Step 牌数桥：官方 `counts` 求和 → 3/5 张、3 张 morph 身份连续、逐组 mask 几何、桥全链路（groupSource 订阅、同域规则撤销/恢复、leader 卸载清空）；**步骤文件清单：路径抽取（结算态/运行中/preparing/截断/目录型工具/转义）、basename 去重 + `+N` 截断、会话作用域双支、运行中也输出、参数变化跟随刷新、无 ChatNodeStore 时降级为空** |
 | `unit.css.test.mjs` | Step 皮总闸（`body[data-tf-step-skin]`）与官方 DOM 钩子规则；**平面旋转契约（`tf-step-flat-rotation` 包住全部相位、角 = 数据源 `pokerSpin.restAngle` 且四舍五入 == 参考稿字面量 35.5、五相位/72 animateTransform/15 animate/0.8s×82/4s×5 全部原样、±3.1° 二维小角度、四蒙版挖空、poker 5:7 卡牌）**；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
 | `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫）；**「动态扑克牌」预览的牌面每秒轮换（纯函数位移 + 真实直播时钟驱动 + 关窗退订）** |
-| `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零**；官方四档 transcript 模式渲染兼容 |
+| `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零；插件零滚动权限（`.scrollTop` 写入 0 处、无 `scrollIntoView`/`scrollTo`/`overflow-anchor`、不读 `data-chat-following-tail`、不扫 `data-conversation-scroll`、无任何 DOM 观察器）**；官方四档 transcript 模式渲染兼容 |
 | `regression.test.mjs` | 历史回归：直播时钟空转定时器、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
 | `unit.host-compat.test.mjs` | 跨版本能力矩阵（三态语义、UNKNOWN ≠ LEGACY）、注册门控（Modern 宿主 legacy 激活恒 0；legacy 宿主注册期只记 Turn）、selector 完整 host 逐支生成 + jsdom 双树命中、运行时 resolution（未就绪保持 unknown / 契约缺失才 legacy / 已定论不翻转）、metrics 与 Turn fold 解耦（reactive/fallback/unknown）、诊断两行制（probing → resolved） |
 | `unit.step-session-scope.test.mjs` | 会话作用域：selector 前缀与转义、裸会话分支回归锁定、same groupKey 双树隔离、tree-only 多会话安全降级（撤下 session-specific 覆盖、恢复无需刷新、completedFaceSets 保留、running 轮换不受影响） |
@@ -913,15 +929,18 @@ npm run check      # 语法检查 client.js / index.js
   ——旧 `scaleKeys`/`scaleKeyTimes`（73 个值、运行时零读取）与 `pokerAnimSVG`（54 KB 快照、
   零消费者）已删除，client.js 因此瘦了 ~59 KB；
 - **步骤栏运行中轮换（平面旋转 35.5°）**是**构建期**产物（`npm run sync:step-anim` 由参考稿
-  第三行「平面旋转」变体生成、旋转角取上面的数据源 `pokerSpin.restAngle`，见「Step 运行态」
-  一节）：数据源改了要重跑它，否则运行中旋转角仍是旧值（`npm test` 的生成块守卫会先失败）。
+  第三行动画本体 + 第五行的 35.5° 设计标签生成、旋转角取上面的数据源 `pokerSpin.restAngle`，
+  见「Step 运行态」一节）：脚本**只读 `pokerSpin.restAngle`**（外加参考稿 HTML）——改
+  `pokerPips` / `pokerSpinDeepseek` **不需要**重跑它；改了 `restAngle` 忘了重跑，运行中旋转角
+  仍是旧值（`npm test` 的生成块守卫会先失败）。
 - **图标包（`localStorage['dsh-turn-fold:icons']`）的覆盖面**（不对称是设计，不是 bug）：
 
   | 覆盖 | 不覆盖 |
   | --- | --- |
-  | 回合栏运行中翻牌 + 完成态牌堆/扇形牌面 | **Step 组头皮**（卡牌尺寸/蒙版/花色映射：构建期 `buildStepSkinCss` 生成） |
-  | 设置弹窗的牌面预览 | **Step 运行中五牌面轮换**（构建期由设计稿生成） |
-  | 几何/时序旋钮（`restAngle`/`strokeW`/`frames`/`flipMs`/`pokerPips`/牌堆扇形表） | 官方 chevron 风格（`iconStyle = native`，不属于数据源） |
+  | 回合栏运行中翻牌 + 完成态牌堆/扇形牌面 | **Step 运行中五牌面轮换**（构建期 `npm run sync:step-anim` 从设计稿烘焙进 client.js，改图标包无效） |
+  | 设置弹窗的牌面预览 | 官方 chevron 风格（`iconStyle = native`，不属于数据源） |
+  | **Step 组头皮**（卡牌尺寸/蒙版/花色映射：插件激活时 `buildStepSkinCss` 读**实时** `iconConfig` 生成，**刷新页面后**生效） | — |
+  | 几何/时序旋钮（`restAngle`/`strokeW`/`frames`/`flipMs`/`pokerPips`/牌堆扇形表） | — |
 
   改回来：`localStorage.removeItem('dsh-turn-fold:icons')`。
 
@@ -983,24 +1002,23 @@ git push --follow-tags
 - **运行中状态条**：官方 `turn-process` 节点在 `turn/start` 即投影，但官方渲染器在
   回合未结束时返回 null——插件渲染器在此阶段显示 Running Turn Bar（0 秒起、真实
   指标、无折叠行为）。回合结束后同一渲染器切换为完整回合栏，视觉与位置连续。
-- **自有行高自愈（贴底补偿）**：官方那一行在运行中是 **0px**，插件这里约 **37px**
-  （24px 行 + 1px 分隔线 + 4/8 边距），而且位于回合顶端＝阅读锚点**之上**。官方跟随策略
-  对"锚点之上的增高"的归因链是：布局变化 → scroll 事件被判为 `movedByReader`
-  （`use-chat-viewport`）→ 开 500ms pending 窗口、其间 `onResize` 不跟随
-  （`use-chat-reading`）→ 窗口结束用 `nearBottom`（25px）重判意图 → **`followingTail`
-  永久置 false**，正在运行的步骤栏就停在输入框（滚动容器内的 sticky 座位）覆盖带里不再
-  回来——也就是"运行中步骤栏被移到下方不显示了"（用户实测：关掉插件即无此现象）。
-  插件**不改官方策略**，只回收自己造成的那 37px：在**自有**行（`.ccg-turn-wrap`）挂载这一帧、
-  之后每次行高变化、以及每次自己写样式表（变体资产/牌面表/文件清单表）之后，按
-  **下一帧 + 120ms + 320ms** 各补一次底（正好覆盖官方那 500ms pending 窗口）。判据分两档：
-  **官方仍挂着 `data-chat-following-tail`（它认为读者还在跟随）→ 不论距底多远都补回底部**
-  —— 这正是官方自己的语义，只是它那次没补上（真机实测：回合开始的瞬时位移 81px，官方跟随没
-  跟上，500ms 后 `nearBottom` 判负即永久释放；早期只用 48px 像素窗口，压根没触发）；
-  **官方已释放 → 只有距底 ≤ `TAIL_KEEP_WINDOW`（48px）才补**，读上面的观众绝不被拽。
-  权限面被守卫钉死：全插件只有一处写 `scrollTop`、只通过 `closest("[data-conversation-scroll]")`
-  定位、只读官方 `data-chat-following-tail` 这一个状态事实、不得 `scrollIntoView`/`scrollTo`/
-  改 `overflow-anchor`，且只有一个 ResizeObserver 且只 observe 自有节点
-  （`tests/unit.compat.test.mjs` / `tests/unit.turn-renderer.test.mjs`）。
+- **已知问题：运行栏造成的跟随释放（根因未定，插件不打补丁）**：官方那一行在运行中是
+  **0px**，插件这里约 **37px**（24px 行 + 1px 分隔线 + 4/8 边距），而且位于回合顶端＝阅读锚点
+  **之上**。**观察到的链路**：回合边界的布局变化 → 官方开 500ms 的读者采样窗口
+  （`use-chat-viewport` 把 scroll 事件判为 `movedByReader`，其间 `use-chat-reading` 的
+  `onResize` 不跟随）→ 下一回合的增长正落在这个窗口里 → 窗口结束用 `nearBottom`（25px）
+  重判意图 → 跟随被释放，正在运行的步骤栏就可能停在输入框（滚动容器内的 sticky 座位）
+  覆盖带里。**真机证据**：关掉插件这个现象就消失——所以插件自己那 37px 的行高变化
+  （0 → ≈37px，位置在回合顶端）**是贡献者之一**；但**根因尚未查清**（官方跟随策略与插件
+  布局变化之间的交互没有被完整归因）。**按用户定的规则，插件不加任何补偿/补丁**（不写官方
+  滚动位置、不读官方跟随状态、不做 DOM 观察），并由守卫测试把"零滚动写入"钉死
+  （`.scrollTop` 写入 0 处、无 `scrollIntoView`/`scrollTo`/`overflow-anchor`、无
+  `data-chat-following-tail` / `data-conversation-scroll`、无 ResizeObserver /
+  MutationObserver / IntersectionObserver，见 `tests/unit.compat.test.mjs`），以免临时
+  workaround 又悄悄长回来。**目前最可疑的线索（不是修复方案）**：插件自己在回合边界的
+  **布局变化**——每个新的 `(count, topFace)` 变体都会**追加**一个 220~390 KB 的 `<style>`
+  （实测：3 张 ≈218~235 KB、5 张 ≈378 KB，10 个变体 ≈3 MB），且只写一次、**永不重写**；
+  此外逐组规则表（`style-step-cards` / `style-step-files`）在内容变化时整表重写。
 - **指标读取面（只读官方数据，不重算折叠成员）**：`node.location.turn`
   （`TurnLocation`：start/end/status/reason/steps）+ turn data store（`get('turn-tail')`
   官方聚合 `tokenUsage`、`get('turn-process')` 官方 spec）+ 每 step 的

@@ -78,7 +78,11 @@ and search reveal) works untouched; the plugin only reskins it:
   **both sides put that 24px canvas inside the official 16×16 leading box, centred and
   overflowing** (the Turn bar's `.ccg-poker-icon` is 16×16, the same size as the official
   `.leading`) ⇒ ink indent 1.3px and a 6(gap)+1.3 = 7.3px gap to the text, pixel-identical
-  on both bars (the earlier 24px box left 5.3px of empty space on each side, making the Turn
+  on both bars **at the default content font size**. **Recorded boundary**: the official
+  `.leading` is `calc(16px + var(--dsh-content-font-delta, 0px))`, so it grows with a larger
+  content font, while the plugin's `.ccg-poker-icon` and bar label are fixed (16px / 14px) and
+  do not scale — at other font sizes the two bars are no longer pixel-equal
+  (the earlier 24px box left 5.3px of empty space on each side, making the Turn
   bar's letter spacing 4px wider and shifting its card 4px right — verified by measurement);
 - **Completed two-state icon** (fold-state aware): collapsed = a five-suit stack
   (♠ ♥ ♦ ♣ + whale, closed = cards put away), expanded = a five-card fan (open = cards
@@ -110,23 +114,30 @@ and search reveal) works untouched; the plugin only reskins it:
   rotates the whole visible animation (cards, suits, and the masks they reference) **around
   the icon centre by 35.5°**. A self-running SVG (SMIL) is used as the card's CSS mask, so
   the stroke color keeps following `currentColor`:
-  - **Design source**: the reference `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html`
-    **row 3's "flat-rotated" variant** — the five-face rotation itself (`const ANIM_SVG`)
-    plus `svg3dRotated()`: insert `<g class="anim-root-rotation" transform="rotate(angle 8 8)">`
-    right after `</defs>`. The reference's own comment: "rotate the whole visible animation
-    around the 16×16 canvas centre **without touching any keyframe**; `defs` keeps its
-    original coordinates while the outer transform rotates cards, suits and the referenced
-    masks together";
+  - **Design source**: the reference `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html` — the
+    animation body comes from **row 3** (`── 第三行：五牌面轮换动画 ──`): the five-face rotation
+    itself (`const ANIM_SVG`) plus `svg3dRotated()`: insert
+    `<g class="anim-root-rotation" transform="rotate(angle 8 8)">` right after `</defs>`. The
+    reference's own comment: "rotate the whole visible animation around the 16×16 canvas centre
+    **without touching any keyframe**; `defs` keeps its original coordinates while the outer
+    transform rotates cards, suits and the referenced masks together". The **35.5° target angle
+    and the design label themselves come from row 5** — the click-toggle variant under
+    `── 第五行：两个"点击切换型"动画 ──` ("牌面轮换 · 平面旋转 35.5°" /
+    `const target = toward35 ? 35.5 : 0`; row 3's own previews are rendered at
+    `ANIM_ANGLES = [0, 30, 45, 60, 90]` and carry no 35.5 literal);
   - **Angle**: `icons/default.json → pokerSpin.restAngle` (≈35.5377° = `atan(w/h)`, the same
     data source the Turn bar's axis reads). The generator asserts it rounds to one decimal
-    equal to the reference variant's literal **35.5** ("牌面轮换 · 平面旋转 35.5°" /
-    `const target = toward35 ? 35.5 : 0`) — drift on either side fails the run;
+    equal to the row-5 variant's literal **35.5** — drift on either side fails the run;
   - **Generated** by `npm run sync:step-anim` into the `>>> step-running-poker-svg` marker
-    block of `client.js`. The script asserts the reference still wires row 3's rotated variant
-    (`svg3dRotated`, `anim-root-rotation`, `rotate(' + angle + ' 8 8)`, the 35.5 literal) and
-    that the output still carries **5 phase groups / 72 animateTransform / 15 animate /
-    `0.8s`×82 / `4s`×5** — i.e. "rotation added, keyframes untouched" — with the rotation
-    group genuinely wrapping every phase;
+    block of `client.js`. What the script asserts is the **wiring and structure**: row 3's
+    animation body and flat-rotation wiring are still there (`const ANIM_SVG`, `svg3dRotated`,
+    `anim-root-rotation`, `rotate(' + angle + ' 8 8)`), row 5's 35.5 literal is still there, the
+    rotation group genuinely wraps every phase, and the output carries none of the banned
+    identifiers from the row-4/5 axis-rotation era; it also **prints** the output's counts to
+    stdout. The count invariants themselves — **5 phase groups / 72 animateTransform /
+    15 animate / `0.8s`×82 / `4s`×5** — are asserted by `tests/unit.css.test.mjs`'s
+    "flat rotation contract" (i.e. "rotation added, keyframes untouched"); the script is not a
+    pre-commit guard for those numbers;
   - **Structure**: the five-face rotation (every 0.8s two full flat cards drift slightly apart
     on opposite diagonals and merge again, the only rotate being a ±3.1° 2D in-plane tilt; the
     layer order flips mid-way with `discrete`; four dynamic luminance masks knock the lower
@@ -155,14 +166,22 @@ and search reveal) works untouched; the plugin only reskins it:
   rule: basenames, de-duplicated, then cut by a **whole-name budget** — at most 3 names, with the
   budget **derived from the content width** (`stepFilesBudgetPx()` =
   `clamp(content width − 300px, 150px, 380px)`, where the 300px reserves room for the label, icon and
-  gear; the content width comes from the official `--dsh-chat-content-width` token, falling back to a
-  conservative viewport estimate) and measured in **ASCII-equivalent characters** (ASCII 1, CJK/full
-  width 2.4 ≈ 1em/6px) ⇒ ≈63 characters on wide windows (filling 380px) and the `STEP_FILES_BUDGET`
-  fallback (32 characters ≈ 192px) on narrow ones. Names that no longer fit are folded whole into
-  ` +N`, which must itself fit the budget. **The first name is the one exception**: to keep at least
-  one name (otherwise the text carries no information) it is always shown, so it may itself exceed
-  the budget — and if it is wider than the `max-width` it gets ellipsized. That is a **recorded
-  boundary**: do not expect "never half a filename" to hold for a single over-long name. The
+  gear). The content width is **measured**: it takes the `clientWidth` of a row inside the official
+  content column (`[data-chat-group-key]` group roots, session-scoped when a session anchor exists,
+  rows with width 0 skipped) — the official `--dsh-chat-content-width` is declared on the
+  conversation content element (not `:root`, and custom properties do not inherit upward) *and* its
+  computed value is `var()/clamp()` text that `parseFloat` cannot read a number from, so it is not a
+  usable numeric source. Only when nothing at all can be measured does it fall back to the viewport
+  estimate (`window.innerWidth − 312`, floor 320, finally 680), and it is re-measured on window
+  resize and when the group entry list changes. Names are then compared in **ASCII-equivalent
+  characters** (ASCII 1, CJK/full width 2.4 ≈ 1em/6px) ⇒ ≈63 characters on wide windows (filling
+  380px), while narrow windows clamp at `STEP_FILES_MIN_PX` (150px ≈ 25 equivalent ASCII characters;
+  the old fixed fallback constant `STEP_FILES_BUDGET` (32 characters ≈ 192px) is deleted). Names that
+  no longer fit are folded whole into ` +N`, which must itself fit the budget. **The first name is the
+  one exception**: to keep at least one name (otherwise the text carries no information) it is always
+  shown, so it may itself exceed the budget — and if it is wider than the `max-width` it gets
+  ellipsized. That is a **recorded boundary**: do not expect "never half a filename" to hold for a
+  single over-long name. The
   `max-width` written into CSS is **the same pixel value** the data layer used (the old fixed `44ch`
   fallback used a different yardstick *and* wasted half the available space — measured: on a 680px row
   the old rule spent only 130–167px with 231–468px left empty); the normal case never triggers the CSS
@@ -173,7 +192,9 @@ and search reveal) works untouched; the plugin only reskins it:
   (while running it accumulates from official tool data, with `turnDataSource(turn,'tool-call')` as a
   refresh trigger only), and disappears with the group/session. It lives in its own stylesheet
   (`style-step-files`) and is **not** toggled by `iconStyle` (information is not skin, so it shows in
-  native mode too); the legacy host surface (0.1.2–0.1.6) produces none;
+  native mode too); the legacy host surface (0.1.2–0.1.6) produces none; **recorded boundary**: only
+  the **top-level** member nodes of the group are read — files that appear exclusively in PTC child
+  calls (`ToolCallBlock.subCalls`) are not included;
 - **Soft dependency**: every selector is pinned to the official DOM hooks; the gate is
   the skin `<style>` element's `disabled` property (the plugin never writes global
   `document.body` state) — if DSH renames the hooks, the **worst degradation is the skin
@@ -249,11 +270,11 @@ exports — no copy-paste drift):
 | File | Coverage |
 | --- | --- |
 | `unit.logic.test.mjs` | Metric pure functions: `turnClockOf` / `computeTurnMetrics` / `readStepUsage` (official TurnLocation / step usage / turn-tail aggregate), formatting, field visibility + localStorage persistence; identical inputs produce byte-identical outputs (no fake growth) |
-| `unit.turn-renderer.test.mjs` | Turn renderer: `open=false → click → setOpen(true)`, `open=true → click → setOpen(false)`; `foldable=false`/aborted/error → static bar with no setOpen path; Running Bar appears at 0s, non-interactive, touches no fold state; **own-row tail keep (compensates only within the window, never moves a reader further up, compensates on the mount frame, safe when no scrollport is found)**; smooth handover on turn close; degraded rendering without `turnProcess` |
-| `unit.poker.test.mjs` | Activity→suit mapping (full official ProcessActivity vocabulary), stack/fan/flip SVG generation, component rendering, reduced-motion and no-WAAPI static fallback |
+| `unit.turn-renderer.test.mjs` | Turn renderer: `open=false → click → setOpen(true)`, `open=true → click → setOpen(false)`; `foldable=false`/aborted/error → static bar with no setOpen path; Running Bar appears at 0s, non-interactive, touches no fold state; smooth handover on turn close; degraded rendering without `turnProcess` |
+| `unit.poker.test.mjs` | Activity→suit mapping (full official ProcessActivity vocabulary), stack/fan/flip SVG generation, **running flip axis = vertical diagonal axis (axis angle = `atan(w/h)` + geometry/origin checks + a CSS-override regression guard)**, component rendering, reduced-motion and no-WAAPI static fallback |
 | `unit.css.test.mjs` | Step skin gate (`body[data-tf-step-skin]`) + official DOM hook rules; **flat-rotation contract (the `tf-step-flat-rotation` group wrapping every phase, angle taken verbatim from `pokerSpin.restAngle` and asserted to round to the design literal 35.5, five phases / 72 animateTransform / 15 animate / `0.8s`×82 / `4s`×5 untouched, ±3.1° planar tilt, four knockout masks, poker 5:7 card)**; **architecture guard: the old engine's `:has()` hiding rules must be gone** |
 | `unit.gear.test.mjs` | Settings popup: field checkboxes, persistence, icon style / step skin selectors (hooks-order guard); **the "poker" preview row rotating one face per second (pure shift + the real shared 1s clock + unsubscribe on close)** |
-| `unit.compat.test.mjs` | **Registration audit: only `turn-process` is shadowed**, `exports.inject=['slots']`, priority-conflict yielding, soft degradation of registration errors; **architecture guard: zero old-engine identifiers / official-renderer delegation plumbing / transcriptView writes**; rendering compatibility across the four official transcript modes |
+| `unit.compat.test.mjs` | **Registration audit: only `turn-process` is shadowed**, `exports.inject=['slots']`, priority-conflict yielding, soft degradation of registration errors; **architecture guard: zero old-engine identifiers / official-renderer delegation plumbing / transcriptView writes; the plugin has zero scroll permission (0 `.scrollTop` writes, no `scrollIntoView`/`scrollTo`/`overflow-anchor`, no `data-chat-following-tail` read, no `data-conversation-scroll` sweep, no DOM observers at all)**; rendering compatibility across the four official transcript modes |
 | `unit.step-cards.test.mjs` | Step card-count bridge: official `counts` summation → 3/5 cards, morph identity continuity, per-group mask geometry, whole bridge chain (groupSource subscription, same-domain rule revocation/restoration, leader unmount cleanup); **step file list: path extraction (settled/running/preparing/truncated/directory-tool/escaped), basename de-dup + `+N` folding, session-scope branches, running-state output, refresh on argument change, empty fallback without ChatNodeStore** |
 | `unit.step-session-scope.test.mjs` | Session scoping: selector prefix and escaping, bare-session branch regression lock, same-groupKey two-tree isolation, tree-only multi-session safe degradation (session-specific rules withdrawn, restored without a refresh, completedFaceSets retained, running rotation unaffected) |
 | `unit.host-compat.test.mjs` | Cross-version capability matrix (three-state semantics, UNKNOWN ≠ LEGACY), registration gating (modern host never activates legacy; legacy host records Turns only), full-host selector generation per branch + jsdom two-tree matching, runtime resolution, metrics/fold decoupling, two-line diagnostics |
@@ -269,6 +290,12 @@ The turn bar's leading icon defaults to **animated poker cards** (⚙ gear on th
 
 - **Completed state**: stack of cards (≤3 tools+subagents → 3 cards, more → 5), fan when expanded;
 - **Face pool**: ♠ ♥ ♦ ♣ + DeepSeek whale logo (**choose one of five**), remembered per turn;
+- **Settings preview**: the four static previews (3-card stack / 3-card fan / 5-card stack / 5-card
+  fan) shift their faces **one slot through the face pool (♠♥♦♣ + DeepSeek whale) every second**,
+  with the previews phase-offset so four different faces are on screen at any moment; the fifth item
+  is the real running flip component. The rotation reuses the shared 1s live clock that drives the
+  duration stopwatch: it subscribes only while the popup is mounted and unsubscribes when it closes
+  (no second timer, no idle ticking);
 - **Running state**: diagonal-axis card flip (four suits cycling, logo on the back), native
   SVG animation that survives re-renders;
 - **Occlusion**: luminance mask cuts the overlapped region of lower cards following the
@@ -281,14 +308,19 @@ The turn bar's leading icon defaults to **animated poker cards** (⚙ gear on th
   reads — the old `scaleKeys`/`scaleKeyTimes` (73 values, zero runtime readers) and `pokerAnimSVG`
   (a 54 KB snapshot, zero consumers) are gone, which alone shrank `client.js` by ~59 KB.
   The **Step running rotation** is a build-time artifact on top of it: `npm run sync:step-anim`
-  regenerates it from the reference design's row-3 rotated variant (see the Step skin section).
+  regenerates it from the reference design's animation body (row 3) plus row 5's 35.5° design label,
+  and the script reads **only `pokerSpin.restAngle`** (plus the reference HTML) — changing
+  `pokerPips` / `pokerSpinDeepseek` does **not** require re-running it; if `restAngle` changes and the
+  script is not re-run, the running angle stays stale (`npm test`'s generation-block guard fails
+  first).
 - **What an icon pack (`localStorage['dsh-turn-fold:icons']`) reaches** (the asymmetry is by design):
 
   | Covered | Not covered |
   | --- | --- |
-  | Turn-bar running flip + completed stack/fan faces | **Step group-header skin** (card size/masks/suit mapping — generated at build time by `buildStepSkinCss`) |
-  | Settings-preview faces | **Step running five-face rotation** (generated at build time from the design reference) |
-  | Geometry/timing knobs (`restAngle`/`strokeW`/`frames`/`flipMs`/`pokerPips`/stack-fan tables) | Official chevron style (`iconStyle = native`, not part of the data source) |
+  | Turn-bar running flip + completed stack/fan faces | **Step running five-face rotation** (baked into `client.js` at build time by `npm run sync:step-anim` from the design reference — an icon-pack change does not reach it) |
+  | Settings-preview faces | Official chevron style (`iconStyle = native`, not part of the data source) |
+  | **Step group-header skin** (card size/masks/suit mapping: on plugin activation `buildStepSkinCss` reads the **live** `iconConfig`, so it applies **after a page refresh**) | — |
+  | Geometry/timing knobs (`restAngle`/`strokeW`/`frames`/`flipMs`/`pokerPips`/stack-fan tables) | — |
 
   To reset: `localStorage.removeItem('dsh-turn-fold:icons')`.
 
@@ -301,8 +333,8 @@ loads the full workflow:
 
 - **Data source**: `icons/default.json` (single source of truth)
 - **Sync after edits**: `npm run sync:icons` → `npm run icons:check`; when the edit touches
-  `pokerSpin` / `pokerPips` / `pokerSpinDeepseek`, also `npm run sync:step-anim` (the Step
-  running rotation is generated from them)
+  `pokerSpin.restAngle`, also `npm run sync:step-anim` (the Step running rotation is generated from
+  that one value plus the reference HTML — `pokerPips` / `pokerSpinDeepseek` changes do not need it)
 - **Quick preview**: write `localStorage['dsh-turn-fold:icons']` to override without code changes
 - **Pitfall guide**: environment-specific SVG rendering quirks
 
@@ -339,31 +371,27 @@ git push --follow-tags
   but the official renderer returns null until the turn closes — the plugin renderer
   shows the Running Turn Bar in that phase (0s start, real metrics, no folding
   behavior). When the turn closes, the same renderer switches to the full bar.
-- **Own-row-height self-heal (tail keep)**: that row is **0px** while running officially and
-  about **37px** here (24px row + 1px divider + 4/8 margins), and it sits at the top of the
-  turn — i.e. **above the reading anchor**. The official follow policy attributes growth above
-  the anchor like this: layout change → a scroll event judged as `movedByReader`
-  (`use-chat-viewport`) → a 500ms pending window during which `onResize` stops following
-  (`use-chat-reading`) → the window closes with a `nearBottom` (25px) re-decision →
-  **`followingTail` is permanently cleared**, so the running step bar comes to rest inside the
-  composer's (in-scrollport, sticky) covered band and never returns — the "the running step bar
-  moved below and vanished" symptom (the user confirmed: disabling the plugin removes it).
-  The plugin does **not** change the official policy; it only reclaims the layout it caused: on the
-  mount frame of its **own** row (`.ccg-turn-wrap`), on every later height change, and after every
-  stylesheet **it** writes (variant assets / card table / file-list table), it puts the tail back —
-  three shots at the **next frame + 120ms + 320ms**, which spans the official 500ms pending window.
-  Two tiers decide whether to act: **while the official still advertises
-  `data-chat-following-tail`** (it believes the reader is following) the tail is restored *whatever
-  the distance* — that is the official's own intent, it just failed to complete it (measured: an
-  81px turn-start displacement the official follow never absorbed, released 500ms later; the older
-  48px-only pixel window never even fired); **once the official has released**, only readers within
-  `TAIL_KEEP_WINDOW` (48px) of the floor are moved, so a reader further up is **never** dragged.
-  The permission surface is pinned by guards:
-  exactly one `scrollTop` write, located only through
-  `closest("[data-conversation-scroll]")`, a single read of the official
-  `data-chat-following-tail` fact, no `scrollIntoView` / `scrollTo` / `overflow-anchor`,
-  and a single ResizeObserver that observes only the plugin's own node
-  (`tests/unit.compat.test.mjs` / `tests/unit.turn-renderer.test.mjs`).
+- **Known issue: follow release caused by the running bar (root cause not pinned down, the plugin
+  patches nothing)**: that row is **0px** while running officially and about **37px** here (24px row +
+  1px divider + 4/8 margins), and it sits at the top of the turn — i.e. **above the reading anchor**.
+  **Observed chain**: a layout change at the turn boundary opens the official 500ms reader-sample
+  window (`use-chat-viewport` judges the scroll event as `movedByReader`, and `use-chat-reading`'s
+  `onResize` stops following during it) → the next turn's growth lands inside that window → the window
+  closes with a `nearBottom` (25px) re-decision → follow is released, so the running step bar can come
+  to rest inside the composer's (in-scrollport, sticky) covered band. **Live-machine evidence**:
+  disabling the plugin makes the symptom disappear — so the plugin's own 37px row-height change
+  (0 → ≈37px at the turn top) **is a contributor**; but the **root cause is not yet pinned down** (the
+  interaction between the official follow policy and the plugin's layout changes has not been fully
+  attributed). **Per the user's rule the plugin adds no compensation or patch** (it writes no official
+  scroll position, reads no official follow state, observes no DOM), and a guard test pins "zero
+  scroll writes" (0 `.scrollTop` writes, no `scrollIntoView` / `scrollTo` / `overflow-anchor`, no
+  `data-chat-following-tail` / `data-conversation-scroll`, no ResizeObserver / MutationObserver /
+  IntersectionObserver — see `tests/unit.compat.test.mjs`) so that no workaround can creep back in.
+  **The leading open lead (not a fix)**: the plugin's own **layout churn** at turn boundaries — every
+  new `(count, topFace)` variant **appends** a 220–390 KB `<style>` (measured: ≈218–235 KB for 3
+  cards, ≈378 KB for 5 cards, ≈3 MB after 10 variants) that is written once and **never rewritten**;
+  on top of that, the per-group rule tables (`style-step-cards` / `style-step-files`) are rewritten
+  wholesale whenever their content changes.
 - **Metrics read surface (read-only official data, no membership recomputation)**:
   `node.location.turn` (`TurnLocation`: start/end/status/reason/steps) + turn data store
   (`get('turn-tail')` official aggregate `tokenUsage`, `get('turn-process')` official
