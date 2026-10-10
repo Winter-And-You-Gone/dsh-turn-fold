@@ -527,10 +527,13 @@ Step 层退化）。用户自有 profile 经 patch-insert 层装载（apply 最�
 注册 Turn 渲染器；声明且条目非空、无 turn-process → legacy（0.1.1 形态）；零条目 → 继续等。
 无轮询、无定时器；无 `snapshot` 检查面的极简宿主保持既有语义。
 
-### 历史验收记录：0.1.1 ~ 0.1.6（2026-10-05，非当前支持区间）
+### 历史验收记录：首轮真机矩阵（2026-10-05，0.1.1 ~ 0.2.0-rc.2）
 
-> 以下四个版本**不在当前 `engines.dsh` 声明范围内**，仅作历史记录；它们各自有独立的
-> 兼容阻塞项（详见下文），不构成当前支持区间的发布阻塞。
+> 本节是**那一轮**的原始记录（行内结论按当时状态保留）。其中 0.1.7-rc.1 / 0.1.7-rc.2 /
+> 0.2.0-rc.2 三行**已被 2026-10-06 的「Live-host acceptance：当前支持区间」取代**——三者现在
+> 都是 LIVE-HOST VERIFIED，含 0.2.0-rc.2 的 Turn Bar 接管（下表那句 INCONCLUSIVE 只描述
+> 那一轮的观测中断）。0.1.1 ~ 0.1.6 仍**不在当前 `engines.dsh` 声明范围内**，各自有独立阻塞项
+> （详见下文）。
 
 本轮把矩阵从"契约 harness"推进到**真实宿主**：用各 tag 的真实 runtime（官方 tag 源码构建，
 或官方 npm 发布包）在隔离 `DSH_HOME` 里启动 Web 宿主、用官方插件机制装入本插件、跑真实
@@ -787,12 +790,13 @@ main 的 Turn 折叠**语义**（membership / 边界 / header / final / reason�
 TurnBarView fallback 面负责：Turn 级时钟取 `legacy.turnTimings`/`turnEnds`，TTFT 取
 turn-tail 的官方 `ttftMs`，decode 由 assistant-step 证据聚合，取不到的字段显示 "—"）。
 
-当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.0-rc.2"`（**本轮未放开**）：0.1.1-rc.2 的
-Full Legacy Node Backend（Turn + Step 双语义）与 0.1.2 ~ 0.1.6 的 Official Turn +
-Legacy Step 都必须等真实旧宿主矩阵通过后才会放开 `engines.dsh`。0.1.1 / 0.1.2 / 0.1.5 /
-0.1.6 / 0.1.7-rc.1 均为 source-audited / contract-harness verified（官方 tag 契约 +
-真实 DOM/组件形状 + 本机 0.1.1 契约 harness），**not live-host verified**（本机无这些
-版本的 runtime）。
+当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.0-rc.2"`：区间内的 0.1.7-rc.1 / 0.1.7-rc.2 /
+0.2.0-rc.2 三个版本**已全部 LIVE-HOST VERIFIED**（见上文「Live-host acceptance：当前支持区间」）。
+**下限不放开**：0.1.1-rc.2 的 Full Legacy Node Backend（Turn + Step 双语义）与 0.1.2 ~ 0.1.6 的
+Official Turn + Legacy Step 都必须等真实旧宿主矩阵通过后才会放开 `engines.dsh`——0.1.1 的真机
+结论是**失败**（3 键 backend 安装后自行 teardown，折叠未生效），0.1.2 / 0.1.5 连官方 npm
+runtime 都起不来（`hmr.registerConfig` 阻塞），0.1.6 仍走 hybrid（同一 blocker）；这三档目前
+只有 source-audited / contract-harness verified。
 
 ## 安装
 
@@ -855,7 +859,8 @@ npm run check      # 语法检查 client.js / index.js
 ```
 
 测试套件（`tests/`）直接加载真实 `client.js`（经 `__ModuleLoader__` 注入 + `__test`
-导出，无复制粘贴漂移），分层如下：
+导出，无复制粘贴漂移）。下表是按能力分层的**主要**文件，不是全量清单（完整清单见
+`tests/` 目录）：
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -866,9 +871,10 @@ npm run check      # 语法检查 client.js / index.js
 | `unit.css.test.mjs` | Step 皮总闸（`body[data-tf-step-skin]`）与官方 DOM 钩子规则；**平面旋转契约（`tf-step-flat-rotation` 包住全部相位、角 = 数据源 `pokerSpin.restAngle` 且四舍五入 == 参考稿字面量 35.5、五相位/72 animateTransform/15 animate/0.8s×82/4s×5 全部原样、±3.1° 二维小角度、四蒙版挖空、poker 5:7 卡牌）**；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
 | `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫）；**「动态扑克牌」预览的牌面每秒轮换（纯函数位移 + 真实直播时钟驱动 + 关窗退订）** |
 | `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零；插件零滚动权限（`.scrollTop` 写入 0 处、无 `scrollIntoView`/`scrollTo`/`overflow-anchor`、不读 `data-chat-following-tail`、不扫 `data-conversation-scroll`、无任何 DOM 观察器）**；官方四档 transcript 模式渲染兼容 |
-| `regression.test.mjs` | 历史回归：直播时钟空转定时器、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
+| `regression.test.mjs` | 历史回归：直播时钟空转定时器、**禁止假 Token 增长（真实数据不变 → 数字不变）**、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
 | `unit.host-compat.test.mjs` | 跨版本能力矩阵（三态语义、UNKNOWN ≠ LEGACY）、注册门控（Modern 宿主 legacy 激活恒 0；legacy 宿主注册期只记 Turn）、selector 完整 host 逐支生成 + jsdom 双树命中、运行时 resolution（未就绪保持 unknown / 契约缺失才 legacy / 已定论不翻转）、metrics 与 Turn fold 解耦（reactive/fallback/unknown）、诊断两行制（probing → resolved） |
 | `unit.step-session-scope.test.mjs` | 会话作用域：selector 前缀与转义、裸会话分支回归锁定、same groupKey 双树隔离、tree-only 多会话安全降级（撤下 session-specific 覆盖、恢复无需刷新、completedFaceSets 保留、running 轮换不受影响） |
+| `unit.docs.test.mjs` | **README 中英对齐守卫**：语言中立事实（区间/标识符/commit/选择器/存储键）两侧原样一致；平行章节的成对表述（样式注入六类、运行中指标口径、已知问题节）两侧都在；样式注入清单条数 == `client.js` 的实际注入处数（改了一侧忘另一侧 → 红） |
 
 > 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
 > `npm test` 中内置）；普通 Linux/macOS CI 同样可用该参数（Node ≥ 22.9）。
@@ -967,6 +973,13 @@ GitHub Actions 会在每次 PR / push 到 `main` 时自动运行语法检查、`
 
 ```sh
 npx npm@^11.15.0 trust github @winteries/dsh-turn-fold \
+  --repo Winter-And-You-Gone/dsh-turn-fold \
+  --file release.yml \
+  --allow-publish
+
+# 旧包名也在同一份源码上再发布一次（已装旧包的用户，其更新走旧包名）——
+# 漏配这一条，Release 里那一步 publish 会认证失败：
+npx npm@^11.15.0 trust github dsh-turn-fold \
   --repo Winter-And-You-Gone/dsh-turn-fold \
   --file release.yml \
   --allow-publish

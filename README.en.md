@@ -4,13 +4,21 @@
 
 > DeepSeek Harness (DSH) native folding + poker-card visuals + per-turn performance metrics.
 
+> **Scope of this English README**: it is a condensed companion to the Chinese
+> [README.md](README.md) (the primary document), not a line-by-line mirror. Everything both
+> documents describe is kept in sync by `tests/unit.docs.test.mjs` (shared facts and paired
+> statements fail the suite when only one side is changed). The Chinese side additionally
+> carries the **Compatibility Architecture** chapter — three-state semantics (UNKNOWN ≠
+> LEGACY), PROBE ≠ COMMIT, the per-release capability matrix, the historical 0.1.1–0.1.6
+> live-host acceptance records and the two-line diagnostics format.
+
 **DSH natively owns all folding semantics** (grouping, membership, disclosure state, paging, search reveal, history state); this plugin is a **pure UI enhancement** on top of the official fold engine:
 
 1. **Enhanced Turn Process Bar**: replaces the official `turn-process` renderer with a richer turn bar — poker leading icon, duration, TTFT, tokens, tok/s, cache-hit rate, right-aligned "Turn N", and status words for abnormal endings (Stopped / Failed / Interrupted). Fold state comes **entirely from the official owner state** (`turnProcess.open / setOpen / foldable / hasContent`); clicking the bar only calls `turnProcess.setOpen()`, and member visibility is handled by the official seat.
 2. **Running Turn Bar**: appears the moment the turn starts (the `turn/start` projection) — the official renderer renders nothing at that stage, and this plugin fills the gap: duration starts from 0s and ticks in real time, tokens / tok/s / cache-hit update as real data arrives. It is a **status surface only**: it maintains no fold state and hides no members; when the turn closes it hands over smoothly to the full collapsed turn bar.
 3. **Poker Step Skin**: the official step group bar (`ChatGroupSeat` / `ProcessGroupHeader`) works as-is; the plugin adds a **pure-CSS** poker reskin via the official DOM hooks (`data-step-process-icon` / `data-process-activity`), mapping official activity semantics to suits (♥ think/questions · ♠ read/search · ♦ edit/write · ♣ commands/code · 🐋whale orchestration/plan/subagents). Soft dependency: if the hooks go away, the skin disappears and the official icons and folding stay intact.
-4. **Real-metrics promise**: every number comes from official real data (`TurnLocation.start/end`, per-step `usage` and `finalNode.timing`, the official aggregated `tokenUsage` on turn-tail). **No fake growth** — the old +1/+11 animation offset is deleted: digits roll only when real data changes, and stay put when it doesn't.
-5. **Plugin settings**: turn-bar field visibility (duration/TTFT/tokens/tok/s/cache-hit), leading icon style (poker / native), step skin (poker / native), persisted in `localStorage['dsh-turn-fold:settings']`. **Fully decoupled from the official transcriptView** — the official Compact / Standard / Detailed / Verbose modes keep working; the plugin only enhances their UI.
+4. **Real-metrics promise**: **every statistic is computed from official real data only** (`TurnLocation.start/end`, per-step `usage` and `finalNode.timing`, the official aggregated `tokenUsage` on turn-tail). The running token field additionally shows a **presentation-only visual counter** that fills the gaps between the official discrete usage reports: it takes part in nothing (not tok/s, not cache hit, not TTFT, not the durable projection) and is never persisted; real usage arriving calibrates it immediately (the UI jumps to the new real value and then keeps growing slowly), and once the turn closes the final value always equals the official real token count (reset to zero on settle).
+5. **Plugin settings**: turn-bar field visibility (duration/TTFT/tokens/tok/s/cache-hit) plus **one unified fold-icon mode** `iconStyle` (animated poker / official icons — a single setting drives both the Turn leading icon and the Step skin), persisted in `localStorage['dsh-turn-fold:settings']`. **Fully decoupled from the official transcriptView** — the official Compact / Standard / Detailed / Verbose modes keep working; the plugin only enhances their UI.
 
 **Does not modify any `@deepseek-ai/dsh-*` source code.**
 
@@ -25,12 +33,12 @@
 
 ```
 Running (turn/start → turn/end):
-  [flip animation] 0s · Turn 13                            ← appears at 0s, status surface
+  [flip animation] 0s · TTFT — · — tokens · — tok/s · Cache —   ← every slot present from 0s
   ────────────────────────────────────────
   [official process content streams in (official liveProcess semantics, always expanded)]
 
-  [flip animation] 13s · TTFT 0.8s · 3,214 tokens · 247 tok/s   ← updates on real data
-  ────────────────────────────────────────
+  [flip animation] 13s · TTFT 0.8s · 3,214 tokens · 247 tok/s · Cache —
+  ────────────────────────────────────────        ← arriving real data only replaces the —
 
 Turn closed (collapsed by default, click to expand):
   [stack/fan] 22m 34s · TTFT 4.9s · 370,202 tokens · 2.4 tok/s · Cache 93.99%   Turn 13
@@ -38,21 +46,102 @@ Turn closed (collapsed by default, click to expand):
   [final summary body (official rendering)]
 
 Failed / stopped:
-  [stack] Failed · 48s · 7,812 tokens · 28 tok/s           Turn 13
-  [stack] Stopped · 21s · 3,201 tokens                     Turn 13
+  [stack] Failed · 48s · TTFT — · 7,812 tokens · 28 tok/s · Cache —   Turn 13
+  [stack] Stopped · 21s · TTFT — · 3,201 tokens · Cache —   Turn 13
 ```
 
+- **Field slots always exist**: the fields enabled in settings occupy their slots from 0s
+  (with no real data they show `—`); arriving real data only replaces the `—`, and no new
+  field segment appears at completion; a disabled field disappears entirely (not even `—`).
+  Every statistic comes from official real data and is **never fabricated** (no estimation,
+  no data = `—`). The running token digits are a presentation-only display value: with
+  official data = the real value plus a bounded visual offset; before the first official
+  usage report = an independent visual counter (see "real data layer / display layer"
+  below). The screen-reader (sr-only) text is **always** the official real value
+  (`— token` until the real value arrives).
 - **Metric sources (all official real data)**:
   - Duration: `TurnLocation.start.time → end.time` (live clock fills in while running);
-  - TTFT: read from the official `finalNode.timing` (`firstTokenTime - stepStartTime`,
-    same semantics as official statistics) once the first request settles;
+  - TTFT: **durable first** — the plugin's own official projection `turnFoldMetrics`
+    (see "durable Turn metrics" below) gives the turn's stable first-token latency
+    (`firstTokenTime - stepStartTime`, the same semantics as official statistics);
+    then the client-side `finalNode.timing` (present only when this page saw it live);
+    while running, before official timing is ready, a **provisional** visible-first-token
+    latency (`data.time - stepStartTime`; remembered once observed in the page, and kept
+    on settle when the exact value is missing instead of falling back to `—`);
   - Tokens / cache-hit: the official aggregated `tokenUsage` on turn-tail after the turn
     closes (`deriveTurnTokenUsage` folds every billed attempt, including retried ones;
     cache denominator = prompt-side total); while running or when absent, per-step usage
     accumulation is used (the official step data store is independent of node visibility,
     so hidden tool-only steps are still counted);
-  - tok/s: real output tokens / real elapsed time (shown only at ≥1s, avoiding
-    start-up spikes).
+  - tok/s: **decode-speed** (the same definition as the official StatsPills) —
+    `Σ outputTokens ÷ Σ(completedTime − firstTokenTime)`, counting only steps where
+    first-token time, completion time and outputTokens are all present; TTFT, tool
+    execution, waiting between steps and the whole turn's wall-clock time never enter the
+    denominator. The decode evidence is **durable first** as well (projection), with the
+    client-side step aggregate as the fallback.
+- **Durable Turn metrics (the `turnFoldMetrics` projection, and why it is needed)**: the
+  official client records `finalNode.timing.firstTokenTime` only when it receives
+  `assistant/live-chunk` (a transient client event that is **not persisted**)
+  (`ui-chat/.../assistant.ts:146,154`), and neither `settleMessage()` nor the history-rebuild
+  `fallbackState()` restores it from the persisted `assistant/message.stream` — so **after a
+  page reload or when opening a historical session TTFT and tok/s both disappear**
+  (`TTFT —` / `— tok/s`), while the official bottom sessionStats still has both values (it
+  folds them durably with `assistantStreamFirstTokenTime(event.data.stream)`). The plugin
+  therefore registers its own projection on the host half (official public extension point
+  `ctx.sessionProjections.register`; the unit is plugin-owned, read-only, returns the same
+  reference and produces no extra broadcasts), folding per-turn metrics with event semantics
+  **identical, one by one,** to the official sessionStats; the host pushes it to the client
+  over the projection wire and the front end reads it with
+  `useProjection('turnFoldMetrics')` — LIVE / SETTLED / RELOAD / HISTORY all read from the
+  same source. On older hosts without that service the whole registration is skipped and the
+  front end falls back to client-side step data (degradation = those two fields show `—`
+  after a reload; nothing is fabricated). Three numbers per turn, capped at 2000 turns
+  (older turns degrade to `—`).
+- **Real data layer / display layer (the running token)**:
+  - `canonicalTokens` (real data layer) = `computeTurnMetrics`'s `tokens` (official usage /
+    turn-tail aggregate) — the only authoritative value; it takes part in tok/s, cache hit,
+    TTFT and the durable projection. Before official usage arrives it **stays `undefined`**
+    and is never written back from a display value;
+  - `displayTokens` (display layer) is used by the running UI only, lives entirely in a
+    component-local ref (never written to localStorage / the projection / any node data) and
+    takes part in no statistic:
+    - **with canonical**: `displayTokens = canonicalTokens + visual offset`;
+    - **without canonical** (official usage has not reported yet): once the **running**
+      assistant-step already has visible reasoning/text (official `blockIsVisible` semantics:
+      tool-call / empty text do not count) the token slot starts a **presentation-only visual
+      counter** — its first frame is `1` (it does not wait for 200ms), it then grows on the
+      same cadence with the deterministic step sequence `+1, +1, +10` (no random jitter),
+      independently capped at 500, and it calibrates to the official token count the moment
+      the first real usage arrives; the screen-reader text still shows `— token` until then;
+    - **hint**: it does not start right after sending a message, while the model has not
+      produced any visible content yet (it never starts jumping up from 0 on its own);
+  - **it only grows while the model is really streaming visible assistant output**: during
+    tool execution, waiting for results/approval/subagents, or when that step has already
+    settled (or has no visible block yet) the digits **freeze** and do not fall back to
+    `— token` (avoiding a `137 → — → number` jump);
+  - the cadence is fixed and deterministic: **one UI tick every 200ms**;
+  - the canonical visual-offset ceiling is `min(500, max(20, canonicalTokens × 5%))`
+    (e.g. 1,000 → +50; 10,000 → +500; 100,000 → +500), stops at the ceiling and waits for
+    the next real usage;
+  - **official usage update → immediate calibration**: bootstrap/offset are all cleared and
+    the next frame equals the new real value directly (never rolls slowly over from the old
+    display value), then keeps growing slowly from the new baseline. **Calibration does not
+    change the subscription state**: if that assistant-step is still streaming visible
+    content the ticker stays subscribed and the next tick continues from the new baseline;
+    if it has meanwhile entered tool execution / waiting (no running visible step) only the
+    real value is shown and the ticker unsubscribes. **Turn settle → everything resets**,
+    and a historical session / page reload shows the official real value only (`— token`
+    again without canonical);
+  - **performance**: the visual ticker subscribes only while there is really an animation
+    (running + visible output + the Token field enabled + reduce-motion off) — historical
+    turns, closed turns and tool/waiting phases never subscribe; with no active subscriber
+    the module-level interval **stops entirely** (100 historical turns = 0 subscribers + 0
+    timers);
+  - with the system "reduce motion" setting on it snaps back **immediately** (dropping the
+    visual offset already rolled out: canonical → show canonical, no canonical → back to
+    `— token`) and unsubscribes; toggling that setting mid-session takes effect live
+    (media-query change event drives the re-render). In normal mode the visual digits roll
+    while the sr-only text stays canonical (screen readers always get the real value).
 - **Rolling-digit animation**: while running, each digit rolls to its new value
   (odometer effect with back easing); a full sr-only copy keeps screen readers intact;
   degrades to static digits under "reduce motion".
@@ -84,16 +173,32 @@ and search reveal) works untouched; the plugin only reskins it:
   do not scale — at other font sizes the two bars are no longer pixel-equal
   (the earlier 24px box left 5.3px of empty space on each side, making the Turn
   bar's letter spacing 4px wider and shifting its card 4px right — verified by measurement);
-- **Completed two-state icon** (fold-state aware): collapsed = a five-suit stack
-  (♠ ♥ ♦ ♣ + whale, closed = cards put away), expanded = a five-card fan (open = cards
-  looked through) — same plugin face pool as the completed step faces, with the
-  geometry taken straight from the Turn bar's stack5/fan5 transform tables
-  (`icons/default.json` data source). **Open/close has a morph transition**: pre-sampled
-  stack5→fan5 interpolation frames (cubic-bezier(.22,1,.36,1) sampling, 400ms, each
-  frame a static SVG) swapped frame-by-frame via CSS keyframes — the animation replays
-  from the start on every state change (same-URL mask images share one SMIL timeline
-  across the page in Chromium and do not restart on re-apply; the frame sequence
-  sidesteps that). Overlaps use **real knockout masking**: each lower card carries an
+- **Completed two-state icon** (fold-state aware): collapsed = a stack of suit cards
+  (closed = cards put away), expanded = a fan (open = cards looked through) — same face
+  pool and ordering as the running faces, with the geometry taken straight from the Turn
+  bar's **stack3/stack5 · fan3/fan5** transform tables (`icons/default.json` data source).
+  **Card identity is continuous**: the same card id is the same card in stack and fan with
+  an unchanged layer order — stack3's top card card3 is the rightmost card in fan3 (same
+  shape as fan5: the middle card does not rotate, the sides are symmetric, a larger id sits
+  further right), and on expand it travels from the top-left position to the right while
+  staying on top. **The card count follows this Process Group's tool-call count**: the
+  official `summary.counts[].count` sum ≤3 → 3 cards, ≥4 → 5 cards (old hosts / no data →
+  the safe 5-card fallback, never guessing 3). **Open/close has a morph transition**:
+  pre-sampled stack↔fan interpolation frames (cubic-bezier(.22,1,.36,1) sampling, 400ms,
+  16 samples = 17 keyframes, each frame a static SVG) swapped frame-by-frame via CSS
+  keyframes — the animation replays from the start on every state change (same-URL mask
+  images share one SMIL timeline across the page in Chromium and do not restart on
+  re-apply; the frame sequence sidesteps that), with the per-frame occluder synced too.
+  **The easing applies to the "geometry progress" only and the two directions mirror each
+  other**: the frame-time progress u=0→1 first goes through that one easing to give the
+  geometry progress (expand `progress = E(u)`, close `progress = 1 - E(u)`) while the
+  geometry helper does plain linear interpolation — so both directions start fastest,
+  decelerate and settle softly (measured: ≈74% of the distance in the first 100ms, ≈0.25% in
+  the last 100ms), the same feel as the Turn bar's
+  `transition: transform .45s cubic-bezier(.22,1,.36,1)`. **It is not a time reversal**
+  (`E(1-u)`): that would make the close start at zero speed and end steepest (only ≈0.25% in
+  the first 100ms, ≈74% in the last 100ms) — "slow then abrupt", the opposite of expanding.
+  Overlaps use **real knockout masking**: each lower card carries an
   inline luminance mask whose occluder is a solid black card face (fill=black) covering
   the whole upper-card footprint — the card body stays transparent (wallpaper/image
   backgrounds show through) while lower strokes and pips never bleed through the upper
@@ -265,7 +370,8 @@ npm run check      # syntax check client.js / index.js
 ```
 
 The suite loads the real `client.js` (via `__ModuleLoader__` injection + `__test`
-exports — no copy-paste drift):
+exports — no copy-paste drift). The table below is a **curated** view by capability, not an
+exhaustive inventory — see the `tests/` directory for the full list:
 
 | File | Coverage |
 | --- | --- |
@@ -277,6 +383,7 @@ exports — no copy-paste drift):
 | `unit.compat.test.mjs` | **Registration audit: only `turn-process` is shadowed**, `exports.inject=['slots']`, priority-conflict yielding, soft degradation of registration errors; **architecture guard: zero old-engine identifiers / official-renderer delegation plumbing / transcriptView writes; the plugin has zero scroll permission (0 `.scrollTop` writes, no `scrollIntoView`/`scrollTo`/`overflow-anchor`, no `data-chat-following-tail` read, no `data-conversation-scroll` sweep, no DOM observers at all)**; rendering compatibility across the four official transcript modes |
 | `unit.step-cards.test.mjs` | Step card-count bridge: official `counts` summation → 3/5 cards, morph identity continuity, per-group mask geometry, whole bridge chain (groupSource subscription, same-domain rule revocation/restoration, leader unmount cleanup); **step file list: path extraction (settled/running/preparing/truncated/directory-tool/escaped), basename de-dup + `+N` folding, session-scope branches, running-state output, refresh on argument change, empty fallback without ChatNodeStore** |
 | `unit.step-session-scope.test.mjs` | Session scoping: selector prefix and escaping, bare-session branch regression lock, same-groupKey two-tree isolation, tree-only multi-session safe degradation (session-specific rules withdrawn, restored without a refresh, completedFaceSets retained, running rotation unaffected) |
+| `unit.docs.test.mjs` | **README zh/en pairing guard**: language-neutral facts (ranges / identifiers / commits / selectors / storage keys) identical on both sides; paired statements for the parallel sections (the six style injections, running-metric semantics, the known-issue section) present on both sides; the style-injection list length == the actual number of injections in `client.js` (change one side and forget the other → red) |
 | `unit.host-compat.test.mjs` | Cross-version capability matrix (three-state semantics, UNKNOWN ≠ LEGACY), registration gating (modern host never activates legacy; legacy host records Turns only), full-host selector generation per branch + jsdom two-tree matching, runtime resolution, metrics/fold decoupling, two-line diagnostics |
 | `regression.test.mjs` | Historical regressions: live-clock orphan timer, **no fake token growth (unchanged data → unchanged digits)**, gear stopPropagation, degradation requirements (corrupt icon pack/settings fall back to defaults) |
 
@@ -285,8 +392,9 @@ exports — no copy-paste drift):
 
 ## Poker leading icon
 
-The turn bar's leading icon defaults to **animated poker cards** (⚙ gear on the bar →
-"Turn bar icon" selector in the popup switches back to the official chevron):
+The fold-bar icons are driven by **one unified mode** (⚙ gear on the bar → the
+**"Fold icons"** selector in the popup); the turn bar's leading icon defaults to **animated
+poker cards**, and the same setting also decides the Step skin:
 
 - **Completed state**: stack of cards (≤3 tools+subagents → 3 cards, more → 5), fan when expanded;
 - **Face pool**: ♠ ♥ ♦ ♣ + DeepSeek whale logo (**choose one of five**), remembered per turn;
@@ -298,6 +406,28 @@ The turn bar's leading icon defaults to **animated poker cards** (⚙ gear on th
   (no second timer, no idle ticking);
 - **Running state**: diagonal-axis card flip (four suits cycling, logo on the back), native
   SVG animation that survives re-renders;
+- **Official icons (native)**: Turn keeps **everything the enhanced bar shows** (duration /
+  TTFT / tokens / tok/s / cache / "Turn N" / gear / durable metrics / official fold
+  behaviour — still rendered by `EnhancedTurnProcessView`, **not** switched back to the
+  official `TurnProcessNodeView`); only the leading icon becomes an official-style fold
+  chevron, geometry value-for-value the official `IconChevronDownOutlineRegular`
+  (viewBox 16, stroke 1, size 14), pointing down when collapsed and `rotate(180deg)` up when
+  expanded (the official 100ms transition); running / non-collapsible turns have no official
+  fold chevron anyway, so the leading slot stays empty. Step **fully restores the official
+  ProcessGroupHeader's own icons** — activity icon, hover/focus chevron, open/closed
+  direction, shimmer, title and disclosure all as-is (implemented by disabling the plugin's
+  two skin stylesheets, `disabled=true`; not one byte of official DOM is touched). Switching
+  needs **no page refresh**: `iconStyle` is subscribed exactly once, unconditionally, in
+  `EnhancedTurnProcessView` and passed down as a plain string prop to the bar and the
+  leading-icon factory `turnPokerIcon(iconStyle, …)` (subscribing inside `TurnBarView` would
+  be a conditional Hook — `canToggle` changes with the turn lifecycle — so a source guard
+  locks this down), and Step flips the two stylesheets' `disabled` gate synchronously via
+  `applyIconStyle()`;
+- **Migration**: in the old settings, either `foldIcon` or `stepSkin` being `native` →
+  after upgrading `iconStyle=native` (returning users do not suddenly get poker back); both
+  poker → poker; an existing new field wins. Migration happens in the read layer only; the
+  next real save writes just `iconStyle` and deletes those two keys, keeping unknown fields
+  (nothing is written to disk at start-up);
 - **Occlusion**: luminance mask cuts the overlapped region of lower cards following the
   upper card's transform; card bodies are transparent (correct over wallpapers);
 - **Data source**: `icons/default.json` (suit paths, card geometry, stack/fan transforms, and the
@@ -344,7 +474,9 @@ The skill body lives in `assets/dsh-turn-fold-customize-icons.md` and ships with
 
 GitHub Actions runs syntax checks, the full `npm test` suite and `npm pack --dry-run` on
 every PR / push to `main`; pushing a `v*` tag publishes to npm (OIDC Trusted Publishing)
-and creates a GitHub Release.
+and creates a GitHub Release. The same source is also published under the **legacy package
+name** `dsh-turn-fold` (existing installs update through that name), so **both names** must
+have Trusted Publishing configured against this repository's release workflow.
 
 ```sh
 npm version patch    # or minor / major: bumps the version and tags v*
@@ -489,8 +621,10 @@ git push --follow-tags
     semantics apply);
   - The "pending/folded N steps" field is deleted (membership is official; the plugin no
     longer counts steps);
-  - **Fake token growth is deleted** — digits hold the real value between usage arrivals
-    (no more +1/+11);
+  - **The old +1/+11 fake growth is deleted** — the running token slot is now a
+    **presentation-only visual counter** (the canonical real value and the display value are
+    strictly layered, see "real data layer / display layer" above): it calibrates immediately
+    when real usage arrives, and settle / history / reload show the official real value only;
   - **Zero runtime dependency on host client packages** — chevron / notifications are
     plugin-owned (official practices: do not require Harness Client packages at
     runtime); the settings panel renders inside the opening turn bar's own React tree
@@ -503,5 +637,8 @@ git push --follow-tags
     `turn-process` node: it appears when the turn starts (the `turn/start` projection);
     the sub-second window between sending and `turn/start` is covered by the official
     "Deep diving..." status line;
-  - Running TTFT appears only after the first request settles (official timing; the
-    render-time approximation is deleted).
+  - Running TTFT first shows a **provisional visible-first-token latency** (official `data.time`
+    − step/start; no render-time approximation, no estimation) and is overwritten by the
+    **exact** value on settle; the exact value's stable source is the plugin's durable
+    projection (still there after a reload / in historical sessions), with client timing and
+    the in-page observation cache as ordered fallbacks — see "metric sources".
