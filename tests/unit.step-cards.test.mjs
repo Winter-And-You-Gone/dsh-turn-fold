@@ -530,7 +530,7 @@ describe('Step 牌数 F：零回归', () => {
     const m = running.match(/-webkit-mask-image:url\("(data:image\/svg\+xml,[^"]+)"\)/)
     const svg = decodeURIComponent(m[1].slice('data:image/svg+xml,'.length))
     for (let n = 1; n <= 5; n++) assert.ok(svg.includes('<g id="phase-' + n + '">'), 'phase-' + n)
-    assert.equal((svg.match(/type="rotate" values="/g) || []).length >= 20, true)
+    assert.ok((svg.match(/type="rotate" values="/g) || []).length >= 20, 'rotate 帧数（≥20）')
     assert.ok(svg.includes('id="card-deepseek"'), '五牌面（含鲸鱼）原样')
     // 平面旋转 35.5°：整套动画包在旋转组里（角取数据源 pokerSpin.restAngle）
     const spin = T.ICON_DEFAULTS.pokerSpin
@@ -962,7 +962,11 @@ describe('步骤文件清单 G：官方数据 → 组头尾部文本', () => {
     assert.ok(!T.buildStepFileRulesCss(map, 'sess-1').includes('undefined'))
     // 只有 modern 面：legacy 面（插件自有 LegacyStepHeader）没有调用点，因此这里的签名
     // 不再有 surface 参数（写错成 legacy 也不会静默产出别的面的规则）。
-    assert.equal(T.buildStepFileRulesCss.length, 3, '签名 = (map, sessionId, budgetPx)')
+    // 用**逐字签名**而不是 arity：`.length` 只数"没有默认值的形参"，加一个默认参数
+    // 就能悄悄绕过（2026-10-13 评审修复）。
+    assert.match(T.buildStepFileRulesCss.toString(),
+      /^function buildStepFileRulesCss\(map, sessionId, budgetPx\)/,
+      '签名 = (map, sessionId, budgetPx)')
     assert.equal(T.buildStepFileRulesCss({ [GROUP_A]: { filesText: '' } }), '', '空清单 → 无规则')
     assert.equal(T.buildStepFileRulesCss({ [GROUP_A]: { count: 3, closed: true } }), '', '缺 filesText → 无规则')
     assert.equal(T.buildStepFileRulesCss({}), '')

@@ -1952,10 +1952,11 @@ window.__ModuleLoader__.load({
 					turn = legacyTurnNumberOf(mn);
 				}
 				var tailHasText = legacyHasText(getNode(grp.keys[grp.keys.length - 1]));
-				var textAfter = false;
-				for (var p = grp.index + grp.keys.length; p < order.length; p++) {
-					if (lastTextAt[p] === p) { textAfter = true; break; }
-				}
+				// 组后是否还有 text 节点：lastTextAt 是单调不减的"最后一个含 text 的下标"，
+				// 所以 O(1) 判据即可（2026-10-13 评审修复：此前每个组都向后线性扫到下一个
+				// text，长工具链 + 末尾才有答案时是 O(G×N)）。
+				var textAfter = order.length > 0
+					&& lastTextAt[order.length - 1] >= grp.index + grp.keys.length;
 				grp.memberKeys = memberKeys;
 				grp.count = grp.keys.length;
 				grp.toolCount = toolCount;
