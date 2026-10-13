@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url'
 const zh = readFileSync(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8')
 const en = readFileSync(fileURLToPath(new URL('../README.en.md', import.meta.url)), 'utf8')
 const client = readFileSync(fileURLToPath(new URL('../client.js', import.meta.url)), 'utf8')
+const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'))
 
 /** 语言中立字面量：中英两侧都必须**原样**出现（改了一侧忘了另一侧 → 这里红）。 */
 const SHARED_LITERALS = [
@@ -51,7 +52,7 @@ const SHARED_LITERALS = [
   // 步骤皮 / 运行中轮换
   ['data-step-process-icon', 'Step 皮软依赖钩子'],
   ['data-process-activity', '官方活动类型钩子'],
-  ['<body data-tf-step-skin="poker">', 'Step 皮总闸'],
+  ['applyIconStyle()', 'Step 皮总闸 = 皮肤样式元素的 disabled（不再写 body 属性）'],
   ['ACTIVITY_SUIT', '活动→花色单一映射源'],
   ['tf-step-flat-rotation', 'Step 运行中平面旋转组类名'],
   ['ccg-axis-rest-rotation', 'Turn 栏轴旋转组类名（刻意分开）'],
@@ -176,6 +177,16 @@ function missingInBoth(literals) {
 }
 
 describe('README 中英对齐守卫（zh 主文档 ↔ en 精简版）', () => {
+  it('client.js 的 NOTICE_VERSION 必须等于 package.json 的 version', () => {
+    // 2026-10-13 评审修复：该常量是 localStorage 图标包 meta.compat 的比较基准，此前
+    // 静默漂移了两个版本（0.5.4 vs 0.7.0）——用户按当前版本写 meta.compat 会被判不兼容、
+    // 悄悄回退内置默认，且没有任何提示。Release workflow 在 publish 前跑全量测试，
+    // 所以这条红 = 发不出去（发版时 bump package.json 后必须同步这里）。
+    const match = client.match(/var NOTICE_VERSION = "([^"]+)"/)
+    assert.ok(match, 'client.js 必须有 NOTICE_VERSION 字面量')
+    assert.equal(match[1], pkg.version, 'NOTICE_VERSION 必须与 package.json version 逐字相同')
+  })
+
   it('两份文档互相链接（语言切换入口必须在两侧都在）', () => {
     assert.ok(zh.includes('README.en.md'), 'zh 文档缺少指向英文版的链接')
     assert.ok(en.includes('README.md'), 'en 文档缺少指向中文版的链接')

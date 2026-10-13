@@ -698,12 +698,13 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(skin.includes('data-shimmer="true"'), '皮肤缺少 0.2.0+ 官方契约 data-shimmer')
   })
 
-  it('官方源码契约（双版本，条件式）：0.1.7-rc.2 与 master 的 TextShimmer 属性名', async () => {
-    // 直接核对官方源码：0.1.7-rc.2 release commit 与当前 master 工作区各验一次——
-    // 属性名错误正是上一轮事故的根因。无本地 checkout（如 CI）则跳过；
-    // 插件自己的 CSS/fixture 契约用例不依赖 checkout，始终执行。
+  it('官方源码契约（条件式）：master 的 TextShimmer 属性名与激活条件（0.1.7-rc.2 交给 contract.source）', async (t) => {
+    // 2026-10-13 评审修复：这条用例此前 `try { access } catch { return }` **静默跳过并计为通过**，
+    // 而且与 tests/contract.source.test.mjs 重复实现了同一份 TextShimmer 契约检查。
+    // 现在：① 无 checkout 时显式 t.skip（在 skipped 计数里看得见）；② 只保留沙箱里也能跑的
+    // readFile 断言（master 工作区）；③ 0.1.7-rc.2 release commit 的历史契约（git show）
+    // 归 contract.source.test.mjs 统一负责，不再两处实现。
     const { access, readFile } = await import('node:fs/promises')
-    const { execFile } = await import('node:child_process')
     const checkout = process.env.DSH_CHECKOUT || 'X:/DSH/deepseek-harness'
     const rel = 'packages/client/ui-primitives/src/TextShimmer.tsx'
     const shimmerPath = checkout + '/' + rel
@@ -712,17 +713,9 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       await access(shimmerPath)
       await access(seatPath)
     } catch {
-      return // 无本地 checkout：跳过
+      t.skip('no DSH checkout at ' + checkout)
+      return
     }
-    const gitShow = (rev) => new Promise((resolve, reject) => {
-      execFile('git', ['-C', checkout, 'show', rev + ':' + rel], (err, stdout) => (err ? reject(err) : resolve(stdout)))
-    })
-    // DSH 0.1.7-rc.2 正式 release（官方证据 commit）：data-text-shimmer
-    const legacy = await gitShow('787b746b807df83776957875683b8853c862ca2c')
-    assert.ok(
-      legacy.includes('data-text-shimmer={active || undefined}'),
-      '0.1.7-rc.2 官方契约变更：data-text-shimmer 不再匹配——请核对插件 0.1.7 选择器',
-    )
     // 当前 master 工作区：data-shimmer
     const master = await readFile(shimmerPath, 'utf8')
     assert.ok(

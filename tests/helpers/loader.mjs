@@ -38,6 +38,9 @@ const TEST_EXPORTS = [
   'ACTIVITY_SUIT',
   'activitySuitOf',
   'buildStepSkinCss',
+  'ensureSkinCss',
+  'ensureCompletedFaceSetAssets',
+  'ensureCompletedFaceSetCss',
   // 运行中牌面翻转（生成块；与 icons/default.json 的一致性守卫用）
   'STEP_RUNNING_POKER_SVG',
   'suitMaskImage',
@@ -109,6 +112,7 @@ const TEST_EXPORTS = [
   'writeStepCardRulesMerged',
   'clearStepCardRulesForSession',
   'cleanupCompletedStepSession',
+  'cleanupTurnFaceAssignment',
   'scheduleStepPresentationSessionCleanup',
   'cleanupStepPresentationSession',
   'stepPresentationSessionActive',
@@ -199,6 +203,8 @@ const TEST_EXPORTS = [
   'iconConfig',
   'ICON_DEFAULTS',
   'loadIconConfig',
+  'normalizeIconConfig',
+  'mergeIconConfig',
   'NOTICE_VERSION',
   // 滚轮数字 / Turn 栏
   'RollDigit',
@@ -288,6 +294,7 @@ const TEST_EXPORTS = [
   'noteSlotDegradation',
   'safeRegisterSlot',
   'resolveSlotPriority',
+  'verifyModernTurnProcessOwnership',
   // i18n
   'currentLocale',
   '_T',

@@ -577,16 +577,20 @@ describe('Step 牌数 F：零回归', () => {
     assert.deepEqual(Object.keys(T.pokerTransforms(5, true)).length, 5)
     assert.equal(T.POKER_R, 1.08)
   })
-  it('TTFT/TPS 零回归：官方 timings fixture 的 TPS 仍为 ' + TURN13_EXPECT_TPS, () => {
-    const steps = TURN13_USAGE_STEPS.map((usage, i) => {
-      const timing = TURN13_STEP_TIMINGS[i]
-      return { data: makeStepData(i + 1, { usage, timing }) }
-    })
-    void steps
-    // 时间断言：官方 decode 语义（每步 completedTime - firstTokenTime）
-    const decodeMs = TURN13_STEP_TIMINGS.reduce((sum, t) => sum + (t.completedTime - t.firstTokenTime), 0)
-    const outTokens = TURN13_USAGE_STEPS.reduce((sum, u) => sum + u.outputTokens, 0)
-    assert.equal(T.formatTokPerSec(outTokens / (decodeMs / 1000)), TURN13_EXPECT_TPS)
+  it('TTFT/TPS 零回归：官方 timings fixture 经 computeTurnMetrics 仍得 ' + TURN13_EXPECT_TPS, () => {
+    // 2026-10-13 评审修复：此前这条用例自己重算 decodeMs / outTokens 再喂 formatTokPerSec，
+    // 构造好的 steps 被 `void steps` 丢掉、computeTurnMetrics 一次都没调用——是同义反复
+    //（真正有效的锁在 unit.logic.test.mjs）。现在走真实数据路径。
+    const stepData = TURN13_USAGE_STEPS.map((usage, i) => makeStepData(i + 1, { usage, timing: TURN13_STEP_TIMINGS[i] }))
+    const clock = {
+      number: 13,
+      startMs: TURN13_STEP_TIMINGS[0].stepStartTime,
+      endMs: TURN13_STEP_TIMINGS[TURN13_STEP_TIMINGS.length - 1].completedTime,
+      status: 'closed', reason: 'completed', data: null, steps: [],
+    }
+    const metrics = T.computeTurnMetrics(clock, stepData, undefined, undefined)
+    assert.equal(T.formatTokPerSec(metrics.tokensPerSecond), TURN13_EXPECT_TPS, 'decode-speed 语义不变')
+    assert.equal(metrics.outputTokens, TURN13_USAGE_STEPS.reduce((sum, u) => sum + u.outputTokens, 0), 'outputTokens 累加不变')
   })
 })
 

@@ -4,7 +4,10 @@ on:
   pull_request:
   push:
     branches:
+      # `better` 是每次改动都推送的开发分支（见 AGENTS.md），main 是发布分支——
+      # 两个都要跑，否则日常改动完全没有 CI（2026-10-13 评审修复）。
       - main
+      - better
 
 permissions:
   contents: read
@@ -12,17 +15,25 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - run: npm install --no-audit --no-fund
+      # npm ci = 严格按 lockfile 安装（npm install 会静默改写 lockfile，
+      # 且装完不校验工作区是否变脏 → lockfile 漂移不可见）。
+      - run: npm ci --no-audit --no-fund
       - run: node --check index.js
       - run: node --check client.js
       - run: npm run check
       # 图标数据唯一源是 icons/default.json，client.js 里是注入副本——改了 JSON 忘了
       # `npm run sync:icons` 时这里必须红（脚本不一致时非零退出）。
       - run: npm run icons:check
+      # 构建期烘焙的运行中轮换 SVG：改了 restAngle / 参考稿而忘了重跑 sync:step-anim 时红。
+      - run: npm run step-anim:check
       - run: npm test
+      # `npm pack --dry-run` 只打印不断言；check:pack 断言必需文件在、workspace-only
+      # 文件不在（2026-10-13 评审修复）。
       - run: npm pack --dry-run
+      - run: npm run check:pack

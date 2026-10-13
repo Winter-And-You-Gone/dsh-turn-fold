@@ -1,12 +1,18 @@
 // dsh-turn-fold: DeepSeek Harness 插件（宿主半边）。
 //
-// 折叠 / 整回合折叠 / 回合折叠栏指标的全部逻辑都在前端 client.js，宿主半边
-// 只做一件事：把「自定义图标」agent skill 注册进 DSH 的 skill 目录
-// （ctx.skills.registerProvider），让 AI 代理在用户想改折叠栏图标时能加载
-// 完整自定义流程（icons/default.json → sync:icons 注入 → 校验 → 重启提醒）。
+// 折叠 / 整回合折叠 / 回合折叠栏指标的全部渲染逻辑都在前端 client.js，宿主半边做两件事：
+//   1) 把「自定义图标」agent skill 注册进 DSH 的 skill 目录（ctx.skills.registerProvider），
+//      让 AI 代理在用户想改折叠栏图标时能加载完整自定义流程
+//      （icons/default.json → sync:icons 注入 → 校验 → 生效姿势见下）；
+//   2) 注册 turnFoldMetrics projection（ctx.sessionProjections.register）——per-turn 的
+//      TTFT / decode 指标的 durable 来源，让刷新/历史会话后这两个值仍在（见下方说明）。
 //
 // skill 正文在 assets/dsh-turn-fold-customize-icons.md，随 npm 包分发；
 // 与官方 skill-badge 插件（@deepseek-ai/dsh-skill-badge）同一机制。
+//
+// 生效姿势（web-only）：改完**不要叫用户刷新页面**——宿主在启动时算出每个插件 bundle 的
+// rev，改完再全量加载会拿旧 rev 去取 → 404 → 页面卡在 "HARNESS Loading plugins…"。
+// 等已打开页面的热更新，或重启桌面端。
 //
 // 注意：本文件必须「零外部依赖」——不 import 任何 @deepseek-ai/ 或第三方包，
 // 避免在 DSH 不同版本/装配下因包解析失败导致整个插件加载崩溃。

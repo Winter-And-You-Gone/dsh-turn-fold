@@ -43,6 +43,7 @@ function makeScopedSlots(opts = {}) {
     emit: changed,
     onSlotsChanged: (fn) => { listeners.add(fn) },
     offSlotsChanged: (fn) => { listeners.delete(fn) },
+    listenerCount: () => listeners.size,
   }
   return slots
 }
@@ -153,5 +154,30 @@ describe('Round11：bundle 装载时序的 turnFold 延迟定论', () => {
     assert.equal(T.hostCapabilityState.turnFold, 'legacy', '无法区分未声明 → 保持既有判定')
     assert.equal(T.getLegacyEngineActivations().turn - before.turn, 1)
     assert.equal(T.getDeferredTurnFoldResolutionState().pending, false, '不进入延迟定论')
+  })
+
+  // ── dispose 清理（2026-10-13 评审修复）──────────────────────────────────
+  // apply 的 disposer 此前只调 disposeLegacyStepEngine()：它在"尚未安装"时 no-op 提前
+  // return，且从不调 stopDeferredTurnFoldResolution → 插件在等待窗口内被卸载/热重载时，
+  // 两个 ctx.on("slots/changed") 监听器会永久留在 ctx 上（热重载每次多留一份，回调还
+  // 可能在已 dispose 的插件上重新抢注册）。下面两条把清理钉死。
+  it('R7 dispose 注销延迟定论监听器（"等 slots/changed"窗口内卸载）', () => {
+    const slots = makeScopedSlots({ declared: false, entries: [] })
+    const dispose = T.exports.apply(makeCtx(slots))
+    assert.equal(T.getDeferredTurnFoldResolutionState().pending, true, '等待中')
+    assert.equal(slots.listenerCount(), 1, '延迟定论监听器在册')
+    dispose()
+    assert.equal(T.getDeferredTurnFoldResolutionState().pending, false, 'dispose 后不再等待')
+    assert.equal(slots.listenerCount(), 0, 'dispose 后不得留下 slots/changed 监听器')
+  })
+
+  it('R8 dispose 注销 Legacy Turn bootstrap 监听器（未安装成功的等待窗口）', () => {
+    const before = T.getLegacyEngineActivations().turn
+    const slots = makeScopedSlots({ declared: true, entries: [{ options: { key: 'user', priority: 0 }, component: () => null }] })
+    const dispose = T.exports.apply(makeCtx(slots))
+    assert.equal(T.getLegacyEngineActivations().turn - before, 1, 'legacy 判定 → 激活 Turn 引擎')
+    assert.equal(slots.listenerCount(), 1, 'bootstrap 等 builtin 期间持有 slots/changed 监听器')
+    dispose()
+    assert.equal(slots.listenerCount(), 0, 'dispose 后不留监听器（teardown 在未安装时曾提前返回）')
   })
 })

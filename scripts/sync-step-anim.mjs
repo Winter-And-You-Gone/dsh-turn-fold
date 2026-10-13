@@ -3,6 +3,10 @@
  * 生成步骤折叠栏「运行中」图标的动画 SVG，并写入 client.js 的
  * `>>> step-running-poker-svg` / `<<< step-running-poker-svg` 标记块。
  *
+ * 用法：
+ *   node scripts/sync-step-anim.mjs           # 重新生成并写回 client.js
+ *   node scripts/sync-step-anim.mjs --check   # 只校验生成块是否与参考稿 + restAngle 一致（CI 门禁）
+ *
  * 设计源（唯一）：docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html ——
  *   **第三行的五牌面轮换动画本体**（`const ANIM_SVG` 模板：每 0.8s 一组、五相位 4s 一整轮、
  *   动态蒙版挖空下层牌）加上 `svg3dRotated()` 那一步：在 </defs> 之后插入
@@ -144,10 +148,26 @@ const eol = client.includes('\r\n') ? '\r\n' : '\n'
 const block = '/* >>> step-running-poker-svg (generated; do not edit; regenerate: npm run sync:step-anim) */' + eol
   + "\t\tvar STEP_RUNNING_POKER_SVG = '" + svg + "';" + eol
   + '\t\t'
-fs.writeFileSync(CLIENT, client.slice(0, mStart) + block + client.slice(mEnd))
+const current = client.slice(mStart, mEnd)
+const summary = '牌面轮换 · 平面旋转 ' + Number(ANGLE.toFixed(1)) + '°（参考稿第三行本体 + 第五行 35.5° 目标值；角取自 pokerSpin.restAngle = ' + ANGLE + '）'
+  + ' | svg length: ' + svg.length
+  + ' | animateTransform: ' + (svg.match(/<animateTransform/g) || []).length
+  + ' | animate: ' + (svg.match(/<animate\b/g) || []).length
+  + ' | masks: ' + (svg.match(/url\(#mask-/g) || []).length
 
-console.log('[sync-step-anim] 牌面轮换 · 平面旋转 ' + Number(ANGLE.toFixed(1)) + '°（参考稿第三行本体 + 第五行 35.5° 目标值；角取自 pokerSpin.restAngle = ' + ANGLE + '）',
-  '| svg length:', svg.length,
-  '| animateTransform:', (svg.match(/<animateTransform/g) || []).length,
-  '| animate:', (svg.match(/<animate\b/g) || []).length,
-  '| masks:', (svg.match(/url\(#mask-/g) || []).length)
+// --check（2026-10-13 评审修复）：只比较、不写盘，作为 CI 门禁——改了参考稿或
+// pokerSpin.restAngle 却忘了重跑本脚本时，产物会静默发散（此前只有"角"被测试交叉锁住，
+// 动画本体改动无人拦）。
+if (process.argv.includes('--check')) {
+  const norm = (s) => s.replace(/\r\n/g, '\n')
+  if (norm(current) !== norm(block)) {
+    console.error('[sync-step-anim] 生成块与参考稿 / pokerSpin.restAngle 不一致'
+      + '（node scripts/sync-step-anim.mjs 重新生成）')
+    process.exitCode = 1
+  } else {
+    console.log('[sync-step-anim] 生成块一致：' + summary)
+  }
+} else {
+  fs.writeFileSync(CLIENT, client.slice(0, mStart) + block + client.slice(mEnd))
+  console.log('[sync-step-anim] ' + summary)
+}

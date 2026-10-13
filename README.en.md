@@ -47,7 +47,6 @@ Turn closed (collapsed by default, click to expand):
 
 Failed / stopped:
   [stack] Failed · 48s · TTFT — · 7,812 tokens · 28 tok/s · Cache —   Turn 13
-  [stack] Stopped · 21s · TTFT — · 3,201 tokens · Cache —   Turn 13
 ```
 
 - **Field slots always exist**: the fields enabled in settings occupy their slots from 0s
@@ -378,17 +377,22 @@ exhaustive inventory — see the `tests/` directory for the full list:
 | `unit.logic.test.mjs` | Metric pure functions: `turnClockOf` / `computeTurnMetrics` / `readStepUsage` (official TurnLocation / step usage / turn-tail aggregate), formatting, field visibility + localStorage persistence; identical inputs produce byte-identical outputs (no fake growth) |
 | `unit.turn-renderer.test.mjs` | Turn renderer: `open=false → click → setOpen(true)`, `open=true → click → setOpen(false)`; `foldable=false`/aborted/error → static bar with no setOpen path; Running Bar appears at 0s, non-interactive, touches no fold state; smooth handover on turn close; degraded rendering without `turnProcess` |
 | `unit.poker.test.mjs` | Activity→suit mapping (full official ProcessActivity vocabulary), stack/fan/flip SVG generation, **running flip axis = vertical diagonal axis (axis angle = `atan(w/h)` + geometry/origin checks + a CSS-override regression guard)**, component rendering, reduced-motion and no-WAAPI static fallback |
-| `unit.css.test.mjs` | Step skin gate (`body[data-tf-step-skin]`) + official DOM hook rules; **flat-rotation contract (the `tf-step-flat-rotation` group wrapping every phase, angle taken verbatim from `pokerSpin.restAngle` and asserted to round to the design literal 35.5, five phases / 72 animateTransform / 15 animate / `0.8s`×82 / `4s`×5 untouched, ±3.1° planar tilt, four knockout masks, poker 5:7 card)**; **architecture guard: the old engine's `:has()` hiding rules must be gone** |
+| `unit.css.test.mjs` | Step skin gate (`applyIconStyle()` flipping `disabled` on the two style sheets) + official DOM hook rules; **flat-rotation contract (the `tf-step-flat-rotation` group wrapping every phase, angle taken verbatim from `pokerSpin.restAngle` and asserted to round to the design literal 35.5, five phases / 72 animateTransform / 15 animate / `0.8s`×82 / `4s`×5 untouched, ±3.1° planar tilt, four knockout masks, poker 5:7 card)**; **architecture guard: the old engine's `:has()` hiding rules must be gone** |
 | `unit.gear.test.mjs` | Settings popup: field checkboxes, persistence, icon style / step skin selectors (hooks-order guard); **the "poker" preview row rotating one face per second (pure shift + the real shared 1s clock + unsubscribe on close)** |
-| `unit.compat.test.mjs` | **Registration audit: only `turn-process` is shadowed**, `exports.inject=['slots']`, priority-conflict yielding, soft degradation of registration errors; **architecture guard: zero old-engine identifiers / official-renderer delegation plumbing / transcriptView writes; the plugin has zero scroll permission (0 `.scrollTop` writes, no `scrollIntoView`/`scrollTo`/`overflow-anchor`, no `data-chat-following-tail` read, no `data-conversation-scroll` sweep, no DOM observers at all)**; rendering compatibility across the four official transcript modes |
+| `unit.compat.test.mjs` | **Registration audit: only `turn-process` is shadowed**, `exports.inject=['slots']`, priority-conflict yielding, soft degradation of registration errors; **architecture guard: zero old-engine identifiers / official-renderer delegation plumbing / transcriptView writes (comment-stripped, scanning both `client.js` and `index.js`); the plugin has zero scroll permission (0 `.scrollTop` writes, no `scrollIntoView`/`scrollTo`/`overflow-anchor`, no `data-chat-following-tail` read, no `data-conversation-scroll` sweep, no DOM observers at all); style-injection failure must not break plugin activation (a throwing appendChild still registers)**; rendering compatibility across the four official transcript modes |
 | `unit.step-cards.test.mjs` | Step card-count bridge: official `counts` summation → 3/5 cards, morph identity continuity, per-group mask geometry, whole bridge chain (groupSource subscription, same-domain rule revocation/restoration, leader unmount cleanup); **step file list: path extraction (settled/running/preparing/truncated/directory-tool/escaped), basename de-dup + `+N` folding, session-scope branches, running-state output, refresh on argument change, empty fallback without ChatNodeStore** |
 | `unit.step-session-scope.test.mjs` | Session scoping: selector prefix and escaping, bare-session branch regression lock, same-groupKey two-tree isolation, tree-only multi-session safe degradation (session-specific rules withdrawn, restored without a refresh, completedFaceSets retained, running rotation unaffected) |
-| `unit.docs.test.mjs` | **README zh/en pairing guard**: language-neutral facts (ranges / identifiers / commits / selectors / storage keys) identical on both sides; paired statements for the parallel sections (the six style injections, running-metric semantics, the known-issue section) present on both sides; the style-injection list length == the actual number of injections in `client.js` (change one side and forget the other → red) |
+| `unit.docs.test.mjs` | **README zh/en pairing guard**: language-neutral facts (ranges / identifiers / commits / selectors / storage keys) identical on both sides; paired statements for the parallel sections (the six style injections, running-metric semantics, the known-issue section) present on both sides; the style-injection list length == the actual number of injections in `client.js` (change one side and forget the other → red); `NOTICE_VERSION` == `package.json`'s `version` (forget it at release time → red) |
 | `unit.host-compat.test.mjs` | Cross-version capability matrix (three-state semantics, UNKNOWN ≠ LEGACY), registration gating (modern host never activates legacy; legacy host records Turns only), full-host selector generation per branch + jsdom two-tree matching, runtime resolution, metrics/fold decoupling, two-line diagnostics |
 | `regression.test.mjs` | Historical regressions: live-clock orphan timer, **no fake token growth (unchanged data → unchanged digits)**, gear stopPropagation, degradation requirements (corrupt icon pack/settings fall back to defaults) |
 
 > `--test-isolation=none` (built into `npm test`) is required on Windows sandboxes where
-> spawning child processes is not allowed; plain Linux/macOS CI can use it too (Node ≥ 22.9).
+> spawning child processes is not allowed; plain Linux/macOS CI can use it too.
+> **Node versions**: the plugin's runtime (`engines.node`) follows DSH itself =
+> `^22.19.0 || >=24.0.0`; **running the tests** additionally needs jsdom 30 from
+> devDependencies, which requires `^22.22.2 || ^24.15.0 || >=26` — CI pins Node 24. A
+> mismatched Node only produces an EBADENGINE warning on `npm install`; it does not affect
+> loading the plugin inside DSH.
 
 ## Poker leading icon
 
@@ -443,16 +447,26 @@ poker cards**, and the same setting also decides the Step skin:
   `pokerPips` / `pokerSpinDeepseek` does **not** require re-running it; if `restAngle` changes and the
   script is not re-run, the running angle stays stale (`npm test`'s generation-block guard fails
   first).
-- **What an icon pack (`localStorage['dsh-turn-fold:icons']`) reaches** (the asymmetry is by design):
+- **What an icon pack (`localStorage['dsh-turn-fold:icons']`) reaches** (the asymmetry is by design).
+  ⚠️ `iconConfig` is read **once at module init** (there is no storage listener), so **every
+  row below needs a page refresh** — not just the step group-header skin:
 
   | Covered | Not covered |
   | --- | --- |
   | Turn-bar running flip + completed stack/fan faces | **Step running five-face rotation** (baked into `client.js` at build time by `npm run sync:step-anim` from the design reference — an icon-pack change does not reach it) |
   | Settings-preview faces | Official chevron style (`iconStyle = native`, not part of the data source) |
-  | **Step group-header skin** (card size/masks/suit mapping: on plugin activation `buildStepSkinCss` reads the **live** `iconConfig`, so it applies **after a page refresh**) | — |
+  | **Step group-header skin** (card size/masks/suit mapping: on plugin activation `buildStepSkinCss` reads the **live** `iconConfig`) | — |
   | Geometry/timing knobs (`restAngle`/`strokeW`/`frames`/`flipMs`/`pokerPips`/stack-fan tables) | — |
 
-  To reset: `localStorage.removeItem('dsh-turn-fold:icons')`.
+  To reset: `localStorage.removeItem('dsh-turn-fold:icons')` (also after a refresh).
+  A pack with **missing fields no longer throws**: a missing suit in `pokerPips` falls back
+  per suit to the built-in default (such a pack used to throw during render, and the Turn
+  bar has no error boundary); but a **missing `pokerSpinDeepseek` is meaningful** (= no whale
+  face, the pool degrades to four suits) and is never filled back in.
+- **Volume gating for `iconStyle = native`**: the skin CSS (~522 KB measured) and the
+  per-group completed-face assets (up to 10 variants, ~2.9 MB total) are only generated in
+  poker mode — native users do not pay for parsing or retaining them; switching back to poker
+  materializes them lazily via `applyIconStyle()` (idempotent, so toggling never duplicates).
 
 ## Custom icons (Agent Skill)
 
@@ -472,27 +486,44 @@ The skill body lives in `assets/dsh-turn-fold-customize-icons.md` and ships with
 
 ## CI & release
 
-GitHub Actions runs syntax checks, the full `npm test` suite and `npm pack --dry-run` on
-every PR / push to `main`; pushing a `v*` tag publishes to npm (OIDC Trusted Publishing)
-and creates a GitHub Release. The same source is also published under the **legacy package
-name** `dsh-turn-fold` (existing installs update through that name), so **both names** must
-have Trusted Publishing configured against this repository's release workflow.
+GitHub Actions runs syntax checks, the icon-source drift check, the full `npm test` suite
+and an `npm pack --dry-run` package-content assertion on every PR / push to `main` or
+`better`; pushing a `v*` tag publishes to npm (OIDC Trusted Publishing) and creates a
+GitHub Release. The same
+source is also published under the **legacy package name** `dsh-turn-fold` (existing
+installs update through that name), so **both names** must have Trusted Publishing
+configured against this repository's release workflow.
+
+**Release approval gate (recommended)**: the publish job is bound to the `npm-publish`
+environment. Once you add required reviewers to that environment (repo Settings →
+Environments), **any `v*` tag push must be approved by a human before it actually
+publishes** — the tag push itself is the trigger, there is no second confirmation
+otherwise. This machine has no npm unpublish permission, so a wrong version can only be
+fixed by the user in the npm UI; this gate is the only pre-publish brake. Without
+configured reviewers the environment adds no protection (behaviour unchanged).
 
 ```sh
 npm version patch    # or minor / major: bumps the version and tags v*
+# manually set client.js's NOTICE_VERSION to the same version (a test guards it)
 git push --follow-tags
 ```
+
+> `NOTICE_VERSION` (the baseline for an icon pack's `meta.compat`) must be byte-identical
+> to `package.json`'s `version`; forgetting it turns the Release test step red.
 
 ## How it works (why no source patches are needed)
 
 - The DSH session UI is assembled from Cordis plugins + the slot system; every chat-flow
   block is dispatched through the `conversation.chat.node` keyed slot by node kind, and
   **registering the same key replaces that renderer (lowest renders)**.
-- This plugin shadows the official `turn-process` renderer with `priority: -1` — the
-  **only** official renderer it replaces. It does not shadow `tool-call` /
+- This plugin shadows the official `turn-process` renderer with `priority: -1` — on
+  **modern hosts** the only official renderer it replaces. It does not shadow `tool-call` /
   `assistant-step` / `context` / `user`, does not scan official slot entries for
   delegation, and does not copy official inject hooks (official components are always
-  rendered by their own official entries).
+  rendered by their own official entries). **Exception**: on legacy hosts outside the
+  declared `engines.dsh` range (0.1.1–0.1.6) the plugin registers its own renderers through
+  the Legacy compatibility layer — unreachable within the declared range, see the Legacy
+  section.
 - **Fold semantics come entirely from the official owner state**: the official
   `ChatNodeSeat` builds `turnProcess = { spec, foldable, hasContent, open, setOpen }`
   for every node and hides/shows members itself (`data-turn-process-hidden`). The plugin
@@ -523,7 +554,9 @@ git push --follow-tags
   new `(count, topFace)` variant **appends** a 220–390 KB `<style>` (measured: ≈218–235 KB for 3
   cards, ≈378 KB for 5 cards, ≈3 MB after 10 variants) that is written once and **never rewritten**;
   on top of that, the per-group rule tables (`style-step-cards` / `style-step-files`) are rewritten
-  wholesale whenever their content changes.
+  wholesale whenever their content changes. (Since 2026-10-13 `iconStyle = native` no longer
+  generates those assets or the skin sheet — see the volume gating above — but the poker-mode
+  volume is unchanged, so the lead still stands.)
 - **Metrics read surface (read-only official data, no membership recomputation)**:
   `node.location.turn` (`TurnLocation`: start/end/status/reason/steps) + turn data store
   (`get('turn-tail')` official aggregate `tokenUsage`, `get('turn-process')` official
@@ -535,7 +568,9 @@ git push --follow-tags
   the step groups and titles as-is; the plugin CSS hides the official icon content
   inside `data-step-process-icon` and renders a poker card via `::before` + CSS mask,
   with the suit derived from `data-process-activity` through `ACTIVITY_SUIT` (JS mapping
-  → CSS rules generated from the same source). Gate: `<body data-tf-step-skin="poker">`.
+  → CSS rules generated from the same source). Gate: `applyIconStyle()` flips `disabled`
+  on the skin and step-count style sheets (it writes **no `document.body` attribute** and
+  touches no official DOM).
   **No MutationObserver, no React root appended to the official header, no plugin-owned
   step open state.**
 - **Conflict-yielding registration**: before registering, the plugin probes whether
@@ -548,18 +583,20 @@ git push --follow-tags
   double-guarded.
 - **Settings are fully independent**: the plugin never reads — let alone writes — the
   official `transcriptView` field (locked by a source-level architecture-guard test).
-  Plugin settings live in `localStorage['dsh-turn-fold:settings']` (field visibility,
-  icon style, step skin); icon packs still use `localStorage['dsh-turn-fold:icons']`.
+  Plugin settings live in `localStorage['dsh-turn-fold:settings']` (two keys only: field
+  visibility and the unified icon style — the old `foldIcon` / `stepSkin` pair is migrated
+  once at read time and then deleted); icon packs still use
+  `localStorage['dsh-turn-fold:icons']`.
 - **Locale follows the UI**: copy reads `document.documentElement.lang` (set by
   `dsh-client-locale` when DSH switches language), falling back to browser languages.
 
 ## Notes
 
-- Compatibility target: the **DSH 0.1.7-rc.1 / rc.2 `conversation.chat.node` +
-  `turn-process` owner-state contract**. The full contract surface exists from
-  0.1.7-rc.1 onward (`TurnProcessOwnerProps`, the reactive `useTurnData` hook,
-  `ChatNodeStore.turnDataSource` — verified against the rc.1 sources); rc.1 is the
-  live-host-verified floor and rc.2 was re-verified by per-package contract diff.
+- Compatibility target: the **DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2
+  `conversation.chat.node` + `turn-process` owner-state contract** (all three are
+  LIVE-HOST VERIFIED — see the capability matrix above). The full contract surface exists
+  from 0.1.7-rc.1 onward (`TurnProcessOwnerProps`, the reactive `useTurnData` hook,
+  `ChatNodeStore.turnDataSource` — verified against the rc.1 sources).
   **Older versions are no longer declared compatible** — a dormant install does not
   count as compatibility; compatibility means the plugin's core features really work.
   If a DSH upgrade changes the contract above, this plugin may need a matching
@@ -581,8 +618,11 @@ git push --follow-tags
     step data store (`assistant-step` usage/timing) and the turn data store
     (`turn-tail` / `turn-process`) — all from the official `dsh-client-ui-chat` /
     `dsh-client-ui-conversation` contracts;
-  - **Soft visual dependency**: `data-step-process-icon` / `data-process-activity`
-    (step skin only; failure = skin disappears, official icons and folding stay intact);
+  - **Soft visual dependency**: `data-step-process-icon` / `data-step-process-chevron`
+    / `data-process-activity` plus its `aria-expanded="true"` (step skin only: the first is
+    the card render slot, the second is the official chevron the skin hides, the last two
+    decide whether the expanded state fans out; failure = the skin disappears or degrades
+    to the collapsed state, official icons and folding stay intact);
   - **Soft visual dependency (running state, dual contract)**: the official
     `TextShimmer`-rendered shimmer attribute (carried by the `ChatGroupSeat` title while
     `!data.closed`). The attribute name evolved across official versions — both are real
@@ -612,8 +652,12 @@ git push --follow-tags
     client plugins (the only `createElement('style')` in the tree belongs to the web app
     itself), while the step skin must target the official DOM inside the official header
     and cannot live in the plugin's React subtree. Worst-case failure = missing turn-bar
-    styling and no step skin; official folding is unaffected. The plugin will migrate
-    once an official style extension point exists.
+    styling and no step skin; official folding is unaffected (each injection point catches its
+    own errors — see the "style injection must not break plugin activation" test in
+    `unit.compat.test.mjs`). The plugin will migrate once an official style extension point exists.
+    With `iconStyle = native` the skin sheet and the per-group completed-face assets are **not
+    generated at all** (only the empty element placeholder and the `disabled` gate remain);
+    switching back to poker materializes them lazily.
 - Behavior changes compared to the previous generation (≤0.5.x):
   - Step grouping/titles are fully returned to the official engine — the plugin-made
     "Ran N commands / Read … / Thought N times" segment titles, in-title file-link

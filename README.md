@@ -868,16 +868,20 @@ npm run check      # 语法检查 client.js / index.js
 | `unit.turn-renderer.test.mjs` | Turn 渲染器：`open=false → 点击 → setOpen(true)`、`open=true → 点击 → setOpen(false)`；`foldable=false`/aborted/error → 静态栏无 setOpen 通道；Running Bar 0 秒出现、非交互、不触碰 Fold 状态；回合结束平滑交接；`turnProcess` 缺失降级 |
 | `unit.poker.test.mjs` | 活动→花色映射（官方 ProcessActivity 词表全覆盖）、牌堆/扇形/翻牌 SVG 生成、**运行中翻牌轴 = 竖直对角线轴（轴角 = atan(w/h) + 几何/原点校验 + CSS 覆盖回归守卫）**、组件渲染、reduced-motion 与无 WAAPI 静态降级 |
 | `unit.step-cards.test.mjs` | Step 牌数桥：官方 `counts` 求和 → 3/5 张、3 张 morph 身份连续、逐组 mask 几何、桥全链路（groupSource 订阅、同域规则撤销/恢复、leader 卸载清空）；**步骤文件清单：路径抽取（结算态/运行中/preparing/截断/目录型工具/转义）、basename 去重 + `+N` 截断、会话作用域双支、运行中也输出、参数变化跟随刷新、无 ChatNodeStore 时降级为空** |
-| `unit.css.test.mjs` | Step 皮总闸（`body[data-tf-step-skin]`）与官方 DOM 钩子规则；**平面旋转契约（`tf-step-flat-rotation` 包住全部相位、角 = 数据源 `pokerSpin.restAngle` 且四舍五入 == 参考稿字面量 35.5、五相位/72 animateTransform/15 animate/0.8s×82/4s×5 全部原样、±3.1° 二维小角度、四蒙版挖空、poker 5:7 卡牌）**；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
+| `unit.css.test.mjs` | Step 皮总闸（`applyIconStyle()` 切两张样式表的 `disabled`）与官方 DOM 钩子规则；**平面旋转契约（`tf-step-flat-rotation` 包住全部相位、角 = 数据源 `pokerSpin.restAngle` 且四舍五入 == 参考稿字面量 35.5、五相位/72 animateTransform/15 animate/0.8s×82/4s×5 全部原样、±3.1° 二维小角度、四蒙版挖空、poker 5:7 卡牌）**；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
 | `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫）；**「动态扑克牌」预览的牌面每秒轮换（纯函数位移 + 真实直播时钟驱动 + 关窗退订）** |
-| `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零；插件零滚动权限（`.scrollTop` 写入 0 处、无 `scrollIntoView`/`scrollTo`/`overflow-anchor`、不读 `data-chat-following-tail`、不扫 `data-conversation-scroll`、无任何 DOM 观察器）**；官方四档 transcript 模式渲染兼容 |
+| `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零（剥注释后同时扫 `client.js` 与 `index.js`）；插件零滚动权限（`.scrollTop` 写入 0 处、无 `scrollIntoView`/`scrollTo`/`overflow-anchor`、不读 `data-chat-following-tail`、不扫 `data-conversation-scroll`、无任何 DOM 观察器）；样式注入失败不得带崩插件激活（appendChild 抛错仍能注册）**；官方四档 transcript 模式渲染兼容 |
 | `regression.test.mjs` | 历史回归：直播时钟空转定时器、**禁止假 Token 增长（真实数据不变 → 数字不变）**、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
 | `unit.host-compat.test.mjs` | 跨版本能力矩阵（三态语义、UNKNOWN ≠ LEGACY）、注册门控（Modern 宿主 legacy 激活恒 0；legacy 宿主注册期只记 Turn）、selector 完整 host 逐支生成 + jsdom 双树命中、运行时 resolution（未就绪保持 unknown / 契约缺失才 legacy / 已定论不翻转）、metrics 与 Turn fold 解耦（reactive/fallback/unknown）、诊断两行制（probing → resolved） |
 | `unit.step-session-scope.test.mjs` | 会话作用域：selector 前缀与转义、裸会话分支回归锁定、same groupKey 双树隔离、tree-only 多会话安全降级（撤下 session-specific 覆盖、恢复无需刷新、completedFaceSets 保留、running 轮换不受影响） |
-| `unit.docs.test.mjs` | **README 中英对齐守卫**：语言中立事实（区间/标识符/commit/选择器/存储键）两侧原样一致；平行章节的成对表述（样式注入六类、运行中指标口径、已知问题节）两侧都在；样式注入清单条数 == `client.js` 的实际注入处数（改了一侧忘另一侧 → 红） |
+| `unit.docs.test.mjs` | **README 中英对齐守卫**：语言中立事实（区间/标识符/commit/选择器/存储键）两侧原样一致；平行章节的成对表述（样式注入六类、运行中指标口径、已知问题节）两侧都在；样式注入清单条数 == `client.js` 的实际注入处数（改了一侧忘另一侧 → 红）；`NOTICE_VERSION` == `package.json` 的 `version`（发版忘了同步 → 红） |
 
 > 在 Windows 沙箱等无法 spawn 子进程的环境下需要 `--test-isolation=none`（已在
-> `npm test` 中内置）；普通 Linux/macOS CI 同样可用该参数（Node ≥ 22.9）。
+> `npm test` 中内置）；普通 Linux/macOS CI 同样可用该参数。
+> **Node 版本**：插件运行时（`engines.node`）跟随 DSH 本体 = `^22.19.0 || >=24.0.0`；
+> 而**跑测试**还需要 devDependencies 里的 jsdom 30，它要求 `^22.22.2 || ^24.15.0 || >=26`
+> ——CI 固定用 Node 24。Node 版本不满足时 `npm install` 只会给一条 EBADENGINE 警告，
+> 不影响插件在 DSH 里加载。
 
 ## 折叠栏图标（统一模式）
 
@@ -939,16 +943,24 @@ npm run check      # 语法检查 client.js / index.js
   见「Step 运行态」一节）：脚本**只读 `pokerSpin.restAngle`**（外加参考稿 HTML）——改
   `pokerPips` / `pokerSpinDeepseek` **不需要**重跑它；改了 `restAngle` 忘了重跑，运行中旋转角
   仍是旧值（`npm test` 的生成块守卫会先失败）。
-- **图标包（`localStorage['dsh-turn-fold:icons']`）的覆盖面**（不对称是设计，不是 bug）：
+- **图标包（`localStorage['dsh-turn-fold:icons']`）的覆盖面**（不对称是设计，不是 bug）。
+  ⚠️ `iconConfig` 只在**模块初始化时读一次**（没有 storage 监听），所以**表内每一行的覆盖
+  都要刷新页面才生效**——不只是 Step 组头皮那一行：
 
   | 覆盖 | 不覆盖 |
   | --- | --- |
   | 回合栏运行中翻牌 + 完成态牌堆/扇形牌面 | **Step 运行中五牌面轮换**（构建期 `npm run sync:step-anim` 从设计稿烘焙进 client.js，改图标包无效） |
   | 设置弹窗的牌面预览 | 官方 chevron 风格（`iconStyle = native`，不属于数据源） |
-  | **Step 组头皮**（卡牌尺寸/蒙版/花色映射：插件激活时 `buildStepSkinCss` 读**实时** `iconConfig` 生成，**刷新页面后**生效） | — |
+  | **Step 组头皮**（卡牌尺寸/蒙版/花色映射：插件激活时 `buildStepSkinCss` 读**实时** `iconConfig` 生成） | — |
   | 几何/时序旋钮（`restAngle`/`strokeW`/`frames`/`flipMs`/`pokerPips`/牌堆扇形表） | — |
 
-  改回来：`localStorage.removeItem('dsh-turn-fold:icons')`。
+  改回来：`localStorage.removeItem('dsh-turn-fold:icons')`（同样刷新后生效）。
+  包**缺字段不再炸**：`pokerPips` 缺哪个花色就逐花色回退内置默认（缺字段的包此前会在
+  渲染期抛错，而 Turn 栏没有错误边界）；但**缺 `pokerSpinDeepseek` 是有效语义**
+  （= 无鲸鱼牌面，退化为四花色池），不会被默认值补回来。
+- **`iconStyle = native` 的体积门控**：皮肤 CSS（实测约 522 KB）与逐组牌面资产
+  （最多 10 个变体、合计约 2.9 MB）只在 poker 模式生成——native 用户不为它们付解析与
+  常驻内存；切回 poker 由 `applyIconStyle()` 惰性补齐（幂等，来回切换不会重复注入）。
 
 ## 自定义图标（Agent Skill）
 
@@ -967,9 +979,10 @@ skill 正文在 `assets/dsh-turn-fold-customize-icons.md`，随 npm 包 `files` 
 
 ## CI 与发布
 
-GitHub Actions 会在每次 PR / push 到 `main` 时自动运行语法检查、`npm test` 全套测试和
-`npm pack --dry-run` 打包预检；推送 `v*` tag 时自动发布到 npm（OIDC Trusted Publishing，
-无需长期 token）并创建 GitHub Release。**一次性配置**（把 npm 包绑定到本仓库的 release workflow）：
+GitHub Actions 会在每次 PR / push 到 `main` 或 `better` 时自动运行语法检查、`npm test`
+全套测试、图标数据源防漂移校验和 `npm pack --dry-run` 打包内容断言；推送 `v*` tag 时
+自动发布到 npm（OIDC Trusted Publishing，无需长期 token）并创建 GitHub Release。
+**一次性配置**（把 npm 包绑定到本仓库的 release workflow）：
 
 ```sh
 npx npm@^11.15.0 trust github @winteries/dsh-turn-fold \
@@ -987,25 +1000,35 @@ npx npm@^11.15.0 trust github dsh-turn-fold \
 
 也可以改为在 npmjs.com 网站账户设置里配置 Trusted Publishing。
 
-**之后每次发版只需两步**：
+**发布审批门（建议配置）**：publish job 绑定了 `npm-publish` environment。在仓库
+Settings → Environments 里给该 environment 加 required reviewers 之后，**任何 `v*` tag
+推送都必须人工批准才会真正 publish**（tag 推送本身即触发，没有第二道确认）——
+本机没有 npm 撤包权限，发错的版本只能由用户在网页端处理，所以这道门是唯一的事前闸门。
+未配置 reviewers 时该 environment 不产生保护（行为与从前一致）。
+
+**之后每次发版三步**：
 
 ```sh
-npm version patch    # 或 minor / major：bump 版本并自动打 v* tag
+npm version patch        # 或 minor / major：bump 版本并自动打 v* tag
+# 手动把 client.js 的 NOTICE_VERSION 改成同一个版本号（守卫会校验，见下）
 git push --follow-tags
 ```
 
 > 提示：`npm version` 要求工作区干净，先把待发布的改动提交；tag 名必须与
 > `package.json` 的 `version` 一致（workflow 会校验，不一致即失败）。
+> `NOTICE_VERSION`（图标包 `meta.compat` 的比较基准）必须与 `package.json` 的
+> `version` 逐字相同——`npm test` 里有守卫，忘了同步会在 Release 的测试步骤直接红。
 
 ## 工作原理（为什么不用改源码）
 
 - DSH 会话 UI 是 Cordis 插件 + Slot 插槽系统拼出来的；聊天流每个块经
   `conversation.chat.node`（keyed slot）按节点类型分发渲染器，**复用同 key 即替换该
   渲染器（lowest renders）**。
-- 本插件用 `priority: -1` 覆盖官方 `turn-process` 渲染器——这是插件替换的**唯一**
-  官方渲染器。不 shadow `tool-call` / `assistant-step` / `context` / `user`，不扫描
+- 本插件用 `priority: -1` 覆盖官方 `turn-process` 渲染器——这是**现代宿主上**插件替换的
+  唯一官方渲染器。不 shadow `tool-call` / `assistant-step` / `context` / `user`，不扫描
   官方 slot entries 做委托渲染，不复制官方 inject hooks（官方组件始终由官方条目
-  自己渲染）。
+  自己渲染）。**例外**：`engines.dsh` 区间之外的旧宿主（0.1.1~0.1.6）上，插件会走
+  Legacy 兼容层注册自有渲染器——那一段在本区间内不可达，详见「Legacy 兼容层」。
 - **折叠语义全部来自官方 owner state**：官方 `ChatNodeSeat` 为每个节点构建
   `turnProcess = { spec, foldable, hasContent, open, setOpen }` 并自己负责成员的隐藏
   （`data-turn-process-hidden`）与展开。插件回合栏只在点击时调用
@@ -1032,6 +1055,8 @@ git push --follow-tags
   **布局变化**——每个新的 `(count, topFace)` 变体都会**追加**一个 220~390 KB 的 `<style>`
   （实测：3 张 ≈218~235 KB、5 张 ≈378 KB，10 个变体 ≈3 MB），且只写一次、**永不重写**；
   此外逐组规则表（`style-step-cards` / `style-step-files`）在内容变化时整表重写。
+  （2026-10-13 起 `iconStyle = native` 不再生成这些资产与皮肤表，见上文体积门控；
+  但 poker 模式下的体量不变，这条线索照旧成立。）
 - **指标读取面（只读官方数据，不重算折叠成员）**：`node.location.turn`
   （`TurnLocation`：start/end/status/reason/steps）+ turn data store（`get('turn-tail')`
   官方聚合 `tokenUsage`、`get('turn-process')` 官方 spec）+ 每 step 的
@@ -1041,7 +1066,8 @@ git push --follow-tags
 - **Step 皮（纯 CSS）**：官方 `ChatGroupSeat` / `ProcessGroupHeader` 原样渲染步骤分组
   与标题；插件 CSS 隐藏 `data-step-process-icon` 的官方图标内容、用 `::before` +
   CSS mask 渲染扑克卡，花色由 `data-process-activity` 值经 `ACTIVITY_SUIT` 映射生成
-  （JS 映射 → CSS 规则同源生成）。总闸：`<body data-tf-step-skin="poker">`。
+  （JS 映射 → CSS 规则同源生成）。总闸：`applyIconStyle()` 切换皮肤与牌数桥两张样式表的
+  `disabled`（**不写任何 `document.body` 属性**，官方 DOM 一个字节不动）。
   **不用 MutationObserver、不往官方 header 挂 React 根、不自己维护 Step 展开状态。**
 - **注册冲突自动让位**：注册前探测同 key 的 `priority: -1` 是否已被占用
   （`ctx.slots.entries`），被占则自动让位到第一个不冲突的值（官方 `0` 恒预留）并
@@ -1051,17 +1077,19 @@ git push --follow-tags
   等待与回调内 register 各自兜异常，单个条目注册失败仅跳过该条目，`console.warn`
   留排查线索并弹一次中性措辞的降级 Toast；宿主半边的 skill 注册同样双层防护。
 - **设置完全独立**：插件不读、更不写官方 `transcriptView` 字段（源码级架构守卫测试
-  锁死）。插件设置存 `localStorage['dsh-turn-fold:settings']`（字段显隐、图标风格、
-  Step 皮），图标包仍走 `localStorage['dsh-turn-fold:icons']`。
+  锁死）。插件设置存 `localStorage['dsh-turn-fold:settings']`（只有两项：字段显隐、
+  统一图标风格——旧的 `foldIcon` / `stepSkin` 双字段在读取层一次性迁移后即删除），
+  图标包仍走 `localStorage['dsh-turn-fold:icons']`。
 - **多语言跟随**：文案读取 `document.documentElement.lang`（DSH 切换界面语言时由
   `dsh-client-locale` 设置），随 DSH 语言实时切换，浏览器语言仅作回退。
 
 ## 注意事项
 
-- 兼容性目标：**DSH 0.1.7-rc.1 / rc.2 的 `conversation.chat.node` + `turn-process`
-  owner state 契约**。0.1.7-rc.1 起官方才提供完整契约面（`TurnProcessOwnerProps`、
-  `useTurnData` reactive hook、`ChatNodeStore.turnDataSource`——已核对 rc.1 源码），
-  且 rc.1 为真机验证版本、rc.2 经逐包契约 diff 复核；**更早版本不再声明兼容**——
+- 兼容性目标：**DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 的 `conversation.chat.node` +
+  `turn-process` owner state 契约**（三个版本均已 LIVE-HOST VERIFIED，见上文能力矩阵）。
+  0.1.7-rc.1 起官方才提供完整契约面（`TurnProcessOwnerProps`、
+  `useTurnData` reactive hook、`ChatNodeStore.turnDataSource`——已核对 rc.1 源码）；
+  **更早版本不再声明兼容**——
   "安装后自然休眠"不计入兼容，兼容 = 插件核心功能真正工作。DSH 升级若改变上述
   契约，本插件可能需要随版本小改（属插件维护，非改源码）。
 - **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1 <=0.2.0-rc.2`
@@ -1078,8 +1106,10 @@ git push --follow-tags
     step data store（`assistant-step` usage/timing）、turn data store
     （`turn-tail` / `turn-process`）——均来自官方 `dsh-client-ui-chat` /
     `dsh-client-ui-conversation` 契约；
-  - **Soft visual dependency**：`data-step-process-icon` / `data-process-activity`
-    （仅 Step 皮；失效 = 皮消失，官方图标与折叠原样保留）；
+  - **Soft visual dependency**：`data-step-process-icon` / `data-step-process-chevron`
+    / `data-process-activity` + 其 `aria-expanded="true"`（仅 Step 皮：第一个是卡牌渲染位、
+    第二个是 Poker 皮要隐掉的官方箭头、后两者决定展开态是否呈扇形；失效 = 皮消失或退化为
+    收起态，官方图标与折叠原样保留）；
   - **Soft visual dependency（运行态，双契约）**：官方 `TextShimmer` 渲染的
     shimmer 属性（`ChatGroupSeat` 标题在 `!data.closed` 时携带）。属性名随官方
     版本演进，两个都是官方真实历史契约（源码证据）：
@@ -1091,7 +1121,7 @@ git push --follow-tags
     插件同时兼容两者，任一存在 → Running Step Poker 动画（`:has()` 命中即把卡牌
     mask 换成**五牌面轮换 · 平面旋转 35.5° 的 SVG**——♠ ♥ ♦ ♣ + DeepSeek 五张地位相同的
     牌面、每 0.8s 一次轮换、4s 完整循环、动态蒙版挖空下层牌，整套动画绕图标中心整体旋转 35.5°）；
-    两者都不存在 → 静态 Poker fallback（该 Step activity 对应花色）。**仅用于运行中 Step 的
+    两者都不存在 → completed 双态静态回落（收起五张牌堆 / 展开扇形）。**仅用于运行中 Step 的
     扑克轮换动画识别**；官方回合结束属性消失 → 动画规则不再命中 → 自动回落，
     交接零 JS。无论视觉钩子是否失效，都不影响 Step Fold / Tool / Think /
     Turn Fold 与页面稳定性；
@@ -1102,7 +1132,10 @@ git push --follow-tags
     官方没有给 plain-JS client plugin 提供样式注册 API（全宿主唯一 `createElement('style')`
     在 web 自身代码里），而 Step 皮必须作用在官方 Header 的官方 DOM 上、无法收敛进
     插件 React 子树——故保留此软兼容点。注入失败的最坏退化 = 无 Turn 栏样式与无
-    Step 皮，官方折叠行为不受影响；宿主未来提供样式注册面时迁移。
+    Step 皮，官方折叠行为不受影响（每个注入点各自兜异常，见 `unit.compat.test.mjs`
+    的「样式注入失败不得带崩插件激活」）；宿主未来提供样式注册面时迁移。
+    `iconStyle = native` 时皮肤表与逐组牌面资产**根本不生成**（只保留空元素占位与
+    `disabled` 总闸），切回 poker 惰性补齐。
 - 相比上一代（≤0.5.x）的行为变化：
   - 步骤分组/标题完全交还官方——插件自研的「运行了N条命令 / 读取了… / 思考了N次」
     段标题、段内文件链接复制、[ +N -M ] 行数统计、标题缓存已删除（官方标题语义为准）；

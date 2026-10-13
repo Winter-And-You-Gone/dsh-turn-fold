@@ -940,22 +940,28 @@ describe('Legacy Step F：Hook 生命周期', () => {
       assert.equal(T.legacyStepOpenBySession.has(SESSION), false, '微任务后 open store 清理')
     } finally { c.remove(); dispose() }
   })
-  it('F8 源码守卫：entriesOfSlot 只允许出现在 ownership 判定族（preflight/verifier）内，render 路径零扫描', () => {
+  it('F8 源码守卫：entriesOfSlot 只允许出现在 ownership 判定族（legacy preflight/verifier + 现代注册后复核）内，render 路径零扫描', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
     const stripComments = (text) => text
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .split('\n').map((l) => l.split('//')[0]).join('\n').replace(/\r/g, '').replace(/\r/g, '')
     const code = stripComments(src)
-    const preStart = code.indexOf('function legacyShadowOwnershipAvailable(')
-    const verStart = code.indexOf('function legacyShadowsOwned(')
-    assert.ok(preStart > 0 && verStart > preStart, 'ownership 判定族必须在')
-    let verEnd = code.indexOf('\n\t\t// ---- runtime ownership liveness', verStart)
-    if (verEnd < 0) verEnd = code.indexOf('\n\t\tfunction legacyThinkOnlyNode(', verStart)
-    const ownershipFamily = code.slice(preStart, verEnd)
+    // 允许使用 entriesOfSlot 的**函数白名单**（2026-10-13：现代注册路径补了注册后的
+    // ownership 复核 verifyModernTurnProcessOwnership——它与 legacy 的两个判定函数同类，
+    // 都是"读 live winner 投影做 ownership 判定"，不是 render 期扫描）。
+    const allowedFns = ['legacyShadowOwnershipAvailable', 'legacyShadowsOwned', 'verifyModernTurnProcessOwnership']
+    const bodyOf = (name) => {
+      const start = code.indexOf('function ' + name + '(')
+      assert.ok(start > 0, 'ownership 判定族必须在：' + name)
+      let end = code.indexOf('\n\t\tfunction ', start + 1)
+      if (end < 0) end = code.length
+      return code.slice(start, end)
+    }
+    const allowedText = allowedFns.map(bodyOf).join('\n')
     const total = code.split('entriesOfSlot').length - 1
-    const inside = ownershipFamily.split('entriesOfSlot').length - 1
-    assert.equal(total, inside, 'entriesOfSlot 只允许出现在 ownership 判定族内（render/preflight 之外零扫描）')
-    assert.ok(inside >= 2, 'preflight 与 verifier 都必须使用 entriesOfSlot')
+    const inside = allowedText.split('entriesOfSlot').length - 1
+    assert.equal(total, inside, 'entriesOfSlot 只允许出现在 ownership 判定族内（render/注册路径之外零扫描）')
+    assert.ok(inside >= 3, 'legacy preflight / legacy verifier / 现代注册后复核都必须使用 entriesOfSlot')
     // 两个 renderer 体内不得触碰 slots 注册表（既有守卫的强化）
     for (const name of ['LegacyStepToolCallView', 'LegacyStepAssistantView']) {
       const start = code.indexOf('function ' + name + '(props)')
@@ -1563,7 +1569,6 @@ describe('Legacy Step J：同步 ownership 封口', () => {
       assert.equal(env.slots.pluginEntryOf('tool-call'), undefined, '插件 tool shadow 也已 dispose')
       assert.equal(T.slotPriorityOf(env.slots.winnerOf('assistant-step')), -2, 'winner = 第三方 -2')
       assert.equal(T.slotPriorityOf(env.slots.winnerOf('tool-call')), 0, 'winner = 官方 0')
-      assert.equal(env.slots.entryOfKey ? true : true, true)
       assert.ok(env.slots.st.entries.indexOf(third.entry) >= 0, '第三方 entry 未被误删')
       const stats = T.getLegacyStepInstallStats()
       assert.equal(stats.runtimeOwnershipLosses - before.runtimeOwnershipLosses, 1)

@@ -122,9 +122,15 @@ describe('禁止假 Token 增长（真实数据不变 → 数字不变）', () =
       assert.ok(label1.includes('6,214 token'), label1)
       // 等待 1 个秒表 tick（1000ms 固定；1100ms 窗口只容纳一个 tick，
       // 下一个 tick 由 afterEach 卸载取消——不产生 act 窗口外的更新）
+      // 逐 tick 的内存/监听者日志是**调试用**：此前无条件写 mem.log，在沙箱（ACL 拒写）里
+      // 直接把这条用例打红，导致下面两条**真断言**在本环境从不执行（2026-10-13 评审修复）。
+      // 现在改成显式开关：DSH_TICK_LOG=1 时才写，默认不碰文件系统。
+      const tickLog = process.env.DSH_TICK_LOG === '1'
       for (let i = 0; i < 11; i++) {
         await act(async () => { await sleep(100) })
-        require('node:fs').appendFileSync('mem.log', i + ' heap=' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB listeners=' + T.tickListeners.size + '\n')
+        if (tickLog) {
+          require('node:fs').appendFileSync('mem.log', i + ' heap=' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB listeners=' + T.tickListeners.size + '\n')
+        }
       }
       const label2 = container.querySelector('.ccg-turn-bar-label').textContent
       assert.ok(label2.includes('6,214 token'), 'token 不被伪造增长：' + label2)

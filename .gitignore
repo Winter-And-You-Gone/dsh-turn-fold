@@ -23,6 +23,10 @@ Thumbs.db
 # Local session-data scratch (never commit conversations)
 .session-extract/
 
+# check-pack 的临时产物（脚本自己会清，这里兜底）
+.npm-cache/
+.npm-pack.json
+
 # Local agent/memory files (workspace-only, never commit)
 AGENTS.md
 MEMORY.md

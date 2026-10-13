@@ -107,6 +107,32 @@ describe('注册审计（唯一允许替换的 Chat Node renderer = turn-process
       console.warn = origWarn
     }
   })
+
+  it('注册后 ownership 自检：未取得渲染权时告警，取得时不告警，无检查面时不猜', () => {
+    // 2026-10-13 评审修复：现代注册路径此前注册完就不管了——第三方以更低 priority 压住、
+    // 或自己让位到 p>=1 时都是静默失效（Turn 栏 + Step 牌数桥 + 文件清单一起不生效）。
+    const warnings = []
+    const origWarn = console.warn
+    console.warn = (...a) => warnings.push(a.join(' '))
+    try {
+      const slots = makeSlotsService()
+      slots.entriesOfSlot = () => [{ options: { key: 'turn-process', priority: -2 }, component: () => null }]
+      T.verifyModernTurnProcessOwnership(slots, -1, T.EnhancedTurnProcessView)
+      assert.ok(warnings.some((w) => w.includes('未取得渲染权')), '给出未取得渲染权的告警')
+
+      warnings.length = 0
+      slots.entriesOfSlot = () => [{ options: { key: 'turn-process', priority: -1 }, component: T.EnhancedTurnProcessView }]
+      T.verifyModernTurnProcessOwnership(slots, -1, T.EnhancedTurnProcessView)
+      assert.deepEqual(warnings, [], '取得渲染权时不告警')
+
+      // 没有 entriesOfSlot 检查面的宿主 → 不猜、不告警
+      delete slots.entriesOfSlot
+      T.verifyModernTurnProcessOwnership(slots, -1, T.EnhancedTurnProcessView)
+      assert.deepEqual(warnings, [], '无检查面时不猜')
+    } finally {
+      console.warn = origWarn
+    }
+  })
 })
 
 describe('架构守卫（源码扫描）', () => {
@@ -177,9 +203,18 @@ describe('架构守卫（源码扫描）', () => {
     'MutationObserver',
     'replaceChild',
   ]
+  // 扫描前先剥注释（2026-10-13 评审修复）：此前扫的是含注释的原始文本——将来有人写注释
+  // 解释"为什么禁用 MutationObserver"就会误红。同时把同一份红线扫到 index.js（宿主半边
+  // 此前完全在守卫之外；实测干净，但从今天起有守卫）。
+  const stripComments = (text) => text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.split('//')[0]).join('\n')
+  const clientCode = stripComments(src)
+  const indexCode = stripComments(readFileSync(new URL('../index.js', import.meta.url), 'utf8'))
   for (const name of FORBIDDEN) {
-    it('源码不包含 ' + name, () => {
-      assert.ok(!src.includes(name), '禁用标识符残留：' + name)
+    it('源码不包含 ' + name + '（client.js + index.js，已剥注释）', () => {
+      assert.ok(!clientCode.includes(name), '禁用标识符残留（client.js）：' + name)
+      assert.ok(!indexCode.includes(name), '禁用标识符残留（index.js）：' + name)
     })
   }
 
@@ -203,6 +238,22 @@ describe('架构守卫（源码扫描）', () => {
     // 时也必须显示，因此不能挂在随皮肤启停的那两张表上。
     const headInjects = src.match(/document\.head\.appendChild\(/g) || []
     assert.equal(headInjects.length, 6, '样式注入共六处（含 Legacy Step 表与步骤文件清单表）')
+    // 只数一种写法会被绕过（改成 document.head.append(tag) / insertBefore 就静默溜过），
+    // 所以同时钉"创建了几个 style 元素"（2026-10-13 评审修复）。
+    const styleCreates = src.match(/createElement\("style"\)/g) || []
+    assert.equal(styleCreates.length, 6, 'style 元素创建也必须是六处，实际 ' + styleCreates.length)
+  })
+
+  it('样式注入失败不得带崩插件激活（factory 顶层每个注入点各自兜异常）', () => {
+    // 2026-10-13 评审修复：注入块在 factory 体内同步执行，此前四处 appendChild 全是裸调用，
+    // 异常会冒出 factory 打断插件激活——而代码注释承诺"注入失败最坏只是没有样式"。
+    const { JSDOM } = require('jsdom')
+    const win = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', { pretendToBeVisual: true }).window
+    win.document.head.appendChild = () => { throw new Error('appendChild denied') }
+    let loaded = null
+    assert.doesNotThrow(() => { loaded = loadPlugin({ window: win }) }, '注入失败不得抛错')
+    assert.equal(typeof loaded.exports.apply, 'function', '注入失败后 apply 仍可用（插件其余功能照常）')
+    assert.equal(win.document.querySelectorAll('style[data-plugin]').length, 0, '确实一个样式元素都没注入')
   })
 
   it('插件不写 transcriptView（写入调用 / 声明 / 注入面一律禁止）', () => {

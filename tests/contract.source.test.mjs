@@ -19,18 +19,29 @@ const BASELINES = [
 ]
 const UI_CHAT = 'packages/client/ui-chat/src/client'
 
-async function haveCheckout() {
-  if (process.env.DSH_CONTRACT_SKIP === '1') return false
+/** 判定本机能否跑官方源码契约：null = 可跑；字符串 = skip 原因。
+ *  2026-10-13 评审修复：此前 catch 一律返回 "no DSH checkout"，而沙箱里真实情况是
+ *  **checkout 在、git 起不来**（execFile 被拒）——误导性的 skip 理由会让人以为本机
+ *  没有源码，从而误判"契约检查从来没跑过是因为环境没装"。现在如实区分两种原因。
+ *  另外提醒：被 skip 的 describe 不产生子用例，Node 汇总里的 `skipped` 计数是 0，
+ *  所以"skipped 0"并不代表没有用例被跳过。 */
+async function contractSkipReason() {
+  if (process.env.DSH_CONTRACT_SKIP === '1') return 'DSH_CONTRACT_SKIP=1'
   try {
     await access(CHECKOUT + '/packages/client/ui-chat/src/client/contract/slots.ts')
-    await new Promise((resolve, reject) => execFile('git', ['-C', CHECKOUT, '--version'], (e) => (e ? reject(e) : resolve())))
-    return true
   } catch {
-    return false
+    return 'no DSH checkout at ' + CHECKOUT
   }
+  try {
+    await new Promise((resolve, reject) => execFile('git', ['-C', CHECKOUT, '--version'], (e) => (e ? reject(e) : resolve())))
+  } catch (err) {
+    return 'DSH checkout present but git unavailable (' + (err && err.code ? err.code : String(err)) + ') —— 沙箱常态，非回归'
+  }
+  return null
 }
+const CONTRACT_SKIP = await contractSkipReason()
 
-describe('官方源码契约（双 release commit，条件式）', { skip: !(await haveCheckout()) ? 'no DSH checkout' : false }, () => {
+describe('官方源码契约（双 release commit，条件式）', { skip: CONTRACT_SKIP || false }, () => {
   const show = (rev, path) => new Promise((resolve, reject) => {
     execFile('git', ['-C', CHECKOUT, 'show', rev + ':' + path], (err, stdout) => (err ? reject(err) : resolve(stdout)))
   })

@@ -701,7 +701,7 @@ describe('Legacy Turn J：隔离与守卫', () => {
       assert.equal(T.completedStepTopFaces.has(S), false)
     } finally { dispose() }
   })
-  it('J3 modern 路径零 Legacy Turn：0.1.2+（useChat 形态）不触任何 Turn 计算/注册', () => {
+  it('J3 modern 路径零 Legacy Turn（源码切片守卫）：0.1.2+（useChat 形态）不触任何 Turn 计算/注册', () => {
     const src = require('node:fs').readFileSync(new URL('../client.js', import.meta.url), 'utf8')
     // 守卫：Moder n Turn 执行路径（EnhancedTurnProcessView）内不得调用 legacy turn 族
     const start = src.indexOf('function EnhancedTurnProcessView(')
@@ -711,11 +711,12 @@ describe('Legacy Turn J：隔离与守卫', () => {
     for (const banned of ['legacyBuildTurnIndex', 'legacyTurnOpenBySession', 'LegacyTurnContextView', 'legacyTurnGroupForNode', 'legacyTurnWrap']) {
       assert.ok(!body.includes(banned), 'Modern Turn 路径不得调用 ' + banned)
     }
-    // Turn 计算计数：仅 Full Legacy 数据路径使用（本测试只验证 0.1.2 形态不进入）
-    const before = T.getLegacyTurnComputations()
-    const snap = makeSnapshot(TOOL_TURN(), { turnEnds: [[1, 99]] })
-    void snap
-    assert.equal(T.getLegacyTurnComputations(), before, '未渲染 Full Legacy 面 → 零 Turn 计算')
+    // 2026-10-13 评审修复：此前这里还跟着一段
+    //   const snap = makeSnapshot(TOOL_TURN(), ...); void snap;
+    //   assert.equal(T.getLegacyTurnComputations(), before)
+    // ——中间什么都没渲染，计数器不可能变，是恒真断言（而且 before 会被同文件 J1/J2 的
+    //  纯函数调用改过）。真正的信号就是上面这段"Modern 渲染器体内不得出现 legacy 族"的
+    //  源码切片守卫，行为锁在 unit.turn-renderer / unit.host-compat 里。
   })
   it('J4 0.1.1 fixture 事实字段锁死（sessionId/useSession 有；useChat/useConversation 无；turnOwnerHasContent=undefined）', () => {
     const f = HOST_VERSION_FIXTURES.find((x) => x.version === '0.1.1-rc.2')

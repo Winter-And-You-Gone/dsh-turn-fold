@@ -307,6 +307,24 @@ describe('Turn 顶层牌面 shuffle bag', () => {
     assert.equal(T.pokerBags.get('iso-sess-B').remaining.length, 0)
   })
 
+  it('session 卸载清理：Turn 顶层牌面分配与洗牌袋由统一清理入口回收（评审 2026-10-13）', () => {
+    // 此前 pokerFaceAssigned / pokerBags 只 set 从不 delete：任何被渲染过的会话/回合都
+    // 永久留条目（长会话 + 多会话切换下线性增长），而 Step 侧同族状态是有清理的。
+    const session = 'cleanup-sess'
+    T.foldSuitFor(session, 1)
+    T.foldSuitFor(session, 2)
+    T.foldSuitFor('keep-sess', 1)
+    assert.ok(T.pokerFaceAssigned.has(session + '|turn:1'))
+    assert.ok(T.pokerBags.has(session))
+    T.cleanupStepPresentationSession(session)          // 统一入口（真正的接线点）
+    assert.equal(T.pokerFaceAssigned.has(session + '|turn:1'), false, '该 session 的分配已清')
+    assert.equal(T.pokerFaceAssigned.has(session + '|turn:2'), false, '该 session 的所有 turn 都已清')
+    assert.equal(T.pokerBags.has(session), false, '洗牌袋已清')
+    assert.ok(T.pokerFaceAssigned.has('keep-sess|turn:1'), '别的 session 不受影响')
+    assert.ok(T.pokerBags.has('keep-sess'), '别的 session 的袋不受影响')
+    T.cleanupStepPresentationSession('keep-sess')
+  })
+
   it('鲸鱼数据缺失 → 退化为四花色池，每 4 个 Turn 完整遍历一次', () => {
     const pack = { meta: { name: 'no-deepseek-pack', compat: '>=0.0.0' } }
     sharedWindow.localStorage.setItem(T.ICONS_STORAGE_KEY, JSON.stringify(pack))
@@ -410,14 +428,19 @@ describe('组件渲染与降级', () => {
     assert.ok(live, '运行中返回翻牌图标元素')
     const closed = T.turnPokerIcon('poker', 4, false, false, 13, true)
     assert.ok(closed, '结束返回牌堆图标元素')
+    // try/finally：--test-isolation=none 下所有测试文件共享同一进程与同一个 factory 实例，
+    // 中途断言失败若不复位 iconStyle，会把 native 泄漏给同进程后续用例（2026-10-13 评审修复）。
     T.setIconStyle('native')
-    const chevron = T.turnPokerIcon('native', 4, false, false, 13, true)
-    assert.ok(chevron, 'native 结束且可折叠 → 官方风格 chevron 元素')
-    assert.equal(chevron.props.open, false, '收起态向下')
-    assert.ok(T.turnPokerIcon('native', 4, false, true, 13, true).props.open, '展开态 rotate(180deg)')
-    assert.equal(T.turnPokerIcon('native', 4, true, false, 13, true), undefined, 'native 运行中无前导图标（官方如此）')
-    assert.equal(T.turnPokerIcon('native', 4, false, false, 13, false), undefined, 'native 不可折叠（Verbose）无 chevron（官方如此）')
-    T.setIconStyle('poker')
+    try {
+      const chevron = T.turnPokerIcon('native', 4, false, false, 13, true)
+      assert.ok(chevron, 'native 结束且可折叠 → 官方风格 chevron 元素')
+      assert.equal(chevron.props.open, false, '收起态向下')
+      assert.ok(T.turnPokerIcon('native', 4, false, true, 13, true).props.open, '展开态 rotate(180deg)')
+      assert.equal(T.turnPokerIcon('native', 4, true, false, 13, true), undefined, 'native 运行中无前导图标（官方如此）')
+      assert.equal(T.turnPokerIcon('native', 4, false, false, 13, false), undefined, 'native 不可折叠（Verbose）无 chevron（官方如此）')
+    } finally {
+      T.setIconStyle('poker')
+    }
   })
 })
 

@@ -78,10 +78,22 @@ describe('版本矩阵 A：turn-process slot renderer props（contract/slots.ts 
     })
   }
 
-  it('priority -1 shadow 机制在 0.2.0 仍合法：register-node-renderers 以 key+priority 注册（源码契约测试锁定）', () => {
-    // 结构守卫：插件仍以 keyed slot + priority 覆盖方式注册，官方 keyed slot 语义未变。
-    assert.ok(src.includes('conversation.chat.node'), '插件必须注册官方 conversation.chat.node slot')
-    assert.ok(src.includes('priority'), '插件以 priority 覆盖官方 renderer')
+  it('priority -1 shadow 机制在 0.2.0 仍合法：注册形状（keyed slot + priority）由源码守卫钉住', () => {
+    // 2026-10-13 评审修复：此前只断言 src.includes('conversation.chat.node') 与
+    // src.includes('priority')——后者在 client.js 里出现十几次，删掉整段注册逻辑也仍为真。
+    // 现在断言真实的注册形状；官方源码侧的契约（slots.ts 的 slot 名 / owner props）
+    // 由 tests/contract.source.test.mjs 在有 checkout 时直接读官方 release commit 核对。
+    const at = src.indexOf('function registerModernTurnProcessRenderer(')
+    assert.ok(at > 0, '现代注册函数必须在')
+    const rest = src.slice(at)
+    const body = rest.slice(0, rest.indexOf('\n\t\tfunction '))
+    assert.ok(body.includes('name: "conversation.chat.node"'), '注册槽位必须是 conversation.chat.node')
+    assert.ok(body.includes('key: "turn-process"'), 'keyed slot 的 key 必须是 turn-process')
+    assert.ok(/priority: priority/.test(body), 'priority 必须来自注册前解析（冲突让位）')
+    assert.ok(body.includes('resolveSlotPriority('), '必须走 priority 冲突探测')
+    assert.ok(body.includes('verifyModernTurnProcessOwnership('), '注册后必须做 ownership 复核')
+    // 官方 0 位是预留的：插件用负 priority 才能赢（lower priority wins）
+    assert.ok(/if \(!taken\[-1\]\) return -1/.test(src), '默认抢占 -1（低于官方 0 = 接管）')
   })
 })
 

@@ -1,5 +1,9 @@
 name: Release
 
+# ⚠️ 触发条件 = 任意分支推送 `v*` tag。tag 推送本身即触发发布，没有第二道确认，
+# 所以真正的审批闸门是下面 publish job 绑定的 `npm-publish` environment：
+# 在仓库 Settings → Environments 给该 environment 配 required reviewers 之后，
+# 每次发布都必须人工批准（本机没有 npm 撤包权限，发错的版本只能由用户在网页端处理）。
 on:
   push:
     tags:
@@ -12,7 +16,12 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    environment: npm-publish
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v7
@@ -22,11 +31,13 @@ jobs:
           package-manager-cache: false
       - name: Verify tag matches package version
         run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - run: npm run check
       - run: npm run icons:check
+      - run: npm run step-anim:check
       - run: npm test
       - run: npm pack --dry-run
+      - run: npm run check:pack
       # 版本已在 npm 上（如维护者手动发布）时跳过对应 publish——重复推送同一
       # tag、或手动发过主包/旧包名之一时，workflow 不再红叉。
       # 检查走 npmjs（发布目标 registry）；setup-node 已写入 .npmrc。
@@ -53,6 +64,8 @@ jobs:
         if: steps.versions.outputs.legacy_published != 'true'
         run: |
           node scripts/publish-legacy.mjs
+          # 换名后重新断言一次：tarball 里必须是换过名的 package.json（2026-10-13 评审修复）
+          npm run check:pack
           npm publish
 
   github-release:
@@ -60,6 +73,7 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Create GitHub Release
         env:

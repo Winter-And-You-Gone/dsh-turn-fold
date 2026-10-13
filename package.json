@@ -18,7 +18,7 @@
   },
   "sideEffects": true,
   "engines": {
-    "node": ">=20.3",
+    "node": "^22.19.0 || >=24.0.0",
     "dsh": ">=0.1.7-rc.1 <=0.2.0-rc.2"
   },
   "scripts": {
@@ -26,7 +26,9 @@
     "test": "node --max-old-space-size=4096 --max-semi-space-size=64 --test --test-isolation=none --test-force-exit \"tests/*.test.mjs\"",
     "sync:icons": "node scripts/sync-icons.mjs --inject",
     "sync:step-anim": "node scripts/sync-step-anim.mjs",
-    "icons:check": "node scripts/sync-icons.mjs"
+    "icons:check": "node scripts/sync-icons.mjs",
+    "step-anim:check": "node scripts/sync-step-anim.mjs --check",
+    "check:pack": "node scripts/check-pack.mjs"
   },
   "keywords": [
     "deepseek-harness",
@@ -44,13 +46,13 @@
     "assets/dsh-turn-fold-customize-icons.md",
     "scripts/sync-icons.mjs",
     "scripts/sync-step-anim.mjs",
+    "scripts/check-pack.mjs",
     "cordis.patch.yml",
     "install.ps1",
     "LICENSE",
     "README.md",
     "README.en.md",
-    "docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html",
-    "docs/images/*.png"
+    "docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html"
   ],
   "dsh": {
     "bundle": {

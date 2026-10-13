@@ -8,6 +8,7 @@
 // 旧 foldIcon/stepSkin 只在 load 层做一次性迁移，运行时不再维护两套状态。
 import { describe, it, beforeEach } from 'node:test'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
 import { loadPlugin } from './helpers/loader.mjs'
 import dom, { sharedWindow, sharedDocument } from './helpers/dom.mjs'
@@ -258,7 +259,7 @@ describe('iconStyle E：源码静态守卫（Hook 调用形状）', () => {
         '不得在逻辑表达式里调用 useIconStyle：' + line.trim())
     }
   })
-  it('TurnBarView 函数体内不得出现 useIconStyle（订阅只在 EnhancedTurnProcessView）', () => {
+  it('TurnBarView 函数体内不得出现 useIconStyle（它自己绝不订阅图标模式）', () => {
     const lines = source().split('\n')
     const start = lines.findIndex((l) => /^\s*function TurnBarView\(/.test(l))
     assert.ok(start > 0, 'TurnBarView 必须在')
@@ -269,6 +270,17 @@ describe('iconStyle E：源码静态守卫（Hook 调用形状）', () => {
     assert.ok(end > start, 'TurnBarView 边界可定位')
     const body = lines.slice(start, end).join('\n')
     assert.ok(!body.includes('useIconStyle'), 'TurnBarView 不得自行订阅图标模式（canToggle 会变 → 条件 Hook 风险）')
+  })
+  it('useIconStyle 调用点恰好四处（改口径必须同步这张清单）', () => {
+    // 2026-10-13 评审订正：此前用例名写"订阅只在 EnhancedTurnProcessView"，而实际有四处
+    // 无条件调用——LegacyStepHeader / LegacyTurnBar（0.1.1 兼容层的自有组件）、
+    // IconStyleSelector（设置面板预览）、EnhancedTurnProcessView（现代主路径）。
+    // 四处都在各自组件内无条件调用，都不构成条件 Hook；这里把数量钉住，新增订阅点会红。
+    const code = source()
+      .replace(/\/\*[\s\S]*?\*\//g, '')            // 先剥块注释（JSDoc 里也会提到 useIconStyle()）
+      .split('\n').map((l) => l.split('//')[0]).join('\n')
+    const calls = code.match(/(?<!function )useIconStyle\(\)/g) || []   // 排除函数声明本身
+    assert.equal(calls.length, 4, 'useIconStyle() 调用点应为四处，实际 ' + calls.length)
   })
   it('EnhancedTurnProcessView 只有一处 useIconStyle()，且位于全部条件 return 之前', () => {
     const lines = source().split('\n')
@@ -299,5 +311,70 @@ describe('iconStyle E：源码静态守卫（Hook 调用形状）', () => {
     }
     const body = lines.slice(start, end + 1).join('\n')
     assert.ok(!body.includes('getIconStyle()'), '纯函数不得读全局 iconStyle')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// D. native 的体积门控 + 图标包形状兜底（2026-10-13 评审修复）
+// ══════════════════════════════════════════════════════════════════════
+describe('iconStyle D：native 体积门控与图标包兜底', () => {
+  const require = createRequire(import.meta.url)
+  /** 干净窗口：体积门控必须在"没有任何历史样式元素"的文档里量，共享 window 里
+   *  早已有前面用例注入的皮肤元素，量不出"没生成"。 */
+  function freshWindow() {
+    const { JSDOM } = require('jsdom')
+    return new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>',
+      { pretendToBeVisual: true, url: 'http://localhost/' }).window
+  }
+  function styleEl(win, id) {
+    return win.document.querySelector('style[data-plugin-css="' + id + '"]')
+  }
+
+  it('native 加载：皮肤 CSS 与逐组牌面资产都不生成；切回 poker 惰性补齐（且幂等）', () => {
+    const win = freshWindow()
+    win.localStorage.setItem(T.SETTINGS_KEY, JSON.stringify({ iconStyle: 'native' }))
+    const fresh = loadPlugin({ window: win }).test
+    const skin = styleEl(win, fresh.SKIN_CSS_ID)
+    const cards = styleEl(win, fresh.STEP_CARD_CSS_ID)
+    assert.ok(skin, '皮肤元素仍要建出来（总闸挂在它的 disabled 上）')
+    assert.equal(skin.textContent, '', 'native：不生成约 522 KB 皮肤 CSS')
+    assert.equal(skin.disabled, true, 'native：总闸关闭')
+    assert.ok(cards && cards.disabled === true, '牌数桥表同样禁用')
+
+    // native 下即使规则生成，也不写逐组牌面资产（最多 10 个变体、合计约 2.9 MB）
+    const set = fresh.completedFaceSetFor(5, 'spade')
+    fresh.ensureCompletedFaceSetCss(set)
+    assert.equal(styleEl(win, fresh.STEP_FACE_CSS_ID + '-' + set.id), null, 'native 下不写变体资产')
+
+    fresh.setIconStyle('poker')
+    assert.ok(skin.textContent.includes('[data-step-process-icon]'), '切回 poker：皮肤 CSS 惰性生成')
+    assert.equal(skin.disabled, false, '切回 poker：总闸打开')
+    assert.ok(styleEl(win, fresh.STEP_FACE_CSS_ID + '-' + set.id), '切回 poker：applyIconStyle 一次性补齐变体资产')
+
+    fresh.setIconStyle('native')
+    fresh.setIconStyle('poker')
+    const assets = win.document.querySelectorAll('style[data-plugin-css^="' + fresh.STEP_FACE_CSS_ID + '-"]')
+    assert.equal(assets.length, 1, '来回切换不重复注入变体资产（DOM 幂等）')
+  })
+
+  it('图标包形状兜底：缺花色的包不再在渲染期抛错，且不把鲸鱼牌面塞回来', () => {
+    const win = freshWindow()
+    win.localStorage.setItem(T.ICONS_STORAGE_KEY, JSON.stringify({
+      meta: { name: 'partial-pack', compat: '>=0.0.0' },
+      pokerPips: { spade: { path: '<path d="M0 0"/>' } },   // 只有 spade，且缺 cx/cy/factor
+      // 刻意不给 pokerSpinDeepseek：记录在案的语义 = 无鲸鱼 → 四花色池
+    }))
+    const fresh = loadPlugin({ window: win }).test
+    for (const suit of ['spade', 'heart', 'diamond', 'club']) {
+      const pip = fresh.POKER_PIPS[suit]
+      assert.ok(pip, suit + ' 必须存在')
+      assert.equal(typeof pip.factor, 'number', suit + '.factor 必须补齐')
+      assert.equal(typeof pip.cx, 'number', suit + '.cx 必须补齐')
+      assert.equal(typeof pip.path, 'string', suit + '.path 必须补齐')
+    }
+    assert.equal(fresh.POKER_PIPS.spade.path, '<path d="M0 0"/>', '用户显式给的值必须保留')
+    assert.equal(fresh.pokerFacePool().length, 4, '包没给鲸鱼数据 → 四花色池（不得拿默认补回来）')
+    assert.doesNotThrow(() => fresh.buildPokerSpinSVG('probe'), '运行中翻牌 SVG 不得抛错')
+    assert.doesNotThrow(() => fresh.buildPokerSVGBase(5, 'club'), '完成态牌堆 SVG 不得抛错')
   })
 })

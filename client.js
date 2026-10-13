@@ -17,8 +17,11 @@
 //     完整的收起态 Turn 栏。
 //   - 指标全部来自官方真实数据：TurnLocation.start/end（耗时）、step data 的
 //     assistant usage 与 finalNode.timing（token / TTFT）、turn-tail 的官方聚合
-//     tokenUsage（精确计费）。没有伪造增长（旧版的 +1/+11 动画偏移已删除）：
-//     真实数据变化 → 数字滚轮动画；真实数据不变 → 数字不变。
+//     tokenUsage（精确计费）。**真实数据层（canonical）绝不伪造**：没有估算、没有
+//     推断，真实数据不变 → 数值不变。唯一例外是**展示层**：运行中的 token 槽位会叠加
+//     一个有上限的视觉偏移（+1/+1/+10，上限 min(500, max(20, 5%))），只为填补官方 usage
+//     离散上报之间的静止观感——它不进 tok/s / 缓存 / TTFT / projection，读屏值恒为
+//     canonical，settle 后立即精确回落（详见「运行中 token 视觉增长」一节）。
 //   - Step 分组栏完全由官方渲染（ChatGroupSeat / ProcessGroupHeader / useDisclosure），
 //     插件只通过官方 DOM 钩子（data-step-process / data-step-process-icon /
 //     data-process-activity）做一层 CSS Poker 皮。软依赖：钩子失效时皮消失、
@@ -140,9 +143,12 @@ window.__ModuleLoader__.load({
 
 		// ---- 插件版本号 ----
 		// 仅用于图标包兼容校验：loadIconConfig 读取 localStorage 图标包时，其 meta.compat
-		// 若声明 ">=x.y.z" 就与这个版本号逐段比较，决定图标包是否仍适用。发版时随
-		// package.json 的 version 同步更新。
-		var NOTICE_VERSION = "0.5.4";
+		// 若声明 ">=x.y.z" 就与这个版本号逐段比较，决定图标包是否仍适用。
+		// ⚠️ 必须与 package.json 的 version 逐字相同——由 tests/unit.docs.test.mjs 的
+		// 「NOTICE_VERSION == package.json version」守卫钉死：只 bump 包版本而忘了这里，
+		// `npm test` 直接红（Release workflow 在 publish 前跑全量测试，所以发不出去）。
+		// 漂移的后果是静默的：用户按当前版本写 meta.compat 会被判不兼容、悄悄回退内置默认。
+		var NOTICE_VERSION = "0.7.0";
 
 		// ---- 自有 UI 原语（零宿主包依赖） ----
 		// 官方插件实践（cordis-plugin-development/references/practices.md）：不要运行时
@@ -319,10 +325,29 @@ window.__ModuleLoader__.load({
 		function applyIconStyle() {
 			try {
 				var native = settings.iconStyle !== "poker";
-				if (skinStyleEl !== null) skinStyleEl.disabled = native;
+				if (skinStyleEl !== null) {
+					if (!native) ensureSkinCss();                 // 惰性生成（native 用户不付这份体积）
+					skinStyleEl.disabled = native;
+				}
 				// 牌数桥样式表同受总闸控制（native = 官方图标原样，桥规则一并停用）
-				if (stepCardStyleEl) stepCardStyleEl.disabled = native;
+				if (stepCardStyleEl) {
+					if (!native) ensureCompletedFaceSetAssets();  // 切回 poker：补齐 native 期间跳过的资产
+					stepCardStyleEl.disabled = native;
+				}
 			} catch (e) { /* 忽略 */ }
+		}
+		/** 皮肤 CSS 惰性生成（幂等：已有内容不再重写）。
+		 *  体积门控（评审 2026-10-13）：`buildStepSkinCss()` 实测约 522 KB，此前在插件激活时
+		 *  无条件生成并解析——选了官方图标（iconStyle = native）的用户白付这份解析与常驻内存。 */
+		function ensureSkinCss() {
+			if (!skinStyleEl || skinStyleEl.textContent) return;
+			skinStyleEl.textContent = buildStepSkinCss();
+		}
+		/** 已缓存的 (count, topFace) 变体资产按需补齐：native 期间跳过的逐组牌面资产在这里
+		 *  一次性写上（变体池上限 = 牌面池 5 × 牌数档 2 = 10，成本可控）。每个变体一个元素、
+		 *  由 ensureCompletedFaceSetCss 保证幂等，所以切来切去不会重复注入。 */
+		function ensureCompletedFaceSetAssets() {
+			completedFaceSets.forEach(function (set) { ensureCompletedFaceSetCss(set); });
 		}
 
 		// ---- 图标配置（外置数据源；先于 CSS 注入——Step 皮的 CSS 由花色数据生成） ----
@@ -331,10 +356,7 @@ window.__ModuleLoader__.load({
 		// 运行时优先使用 localStorage 的图标包（key: dsh-turn-fold:icons），
 		// 未设置/损坏时回退 ICON_DEFAULTS 内置默认。图标包结构 = default.json。
 		var ICONS_STORAGE_KEY = "dsh-turn-fold:icons";
-		var ICON_DEFAULTS = /*__ICON_DEFAULTS__*/ 
-
-
-
+		var ICON_DEFAULTS = /*__ICON_DEFAULTS__*/
 {
   "meta": {
     "version": 1,
@@ -413,7 +435,60 @@ window.__ModuleLoader__.load({
   },
   "pokerSpinDeepseek": "<path id=\"axis-deepseek-UID\" d=\"M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 0 1-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 0 0-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 0 1-.465.137 9.597 9.597 0 0 0-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 0 0 1.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 0 1 1.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 0 1 .415-.287.302.302 0 0 1 .2.288.306.306 0 0 1-.31.307.303.303 0 0 1-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 0 1-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 0 1 .016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 0 1-.254-.078.253.253 0 0 1-.114-.358c.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z\"/>"
 };
-		/** 读取生效的图标配置：localStorage 图标包优先（校验 meta.compat 兼容性），
+		/** 递归补齐对象缺口（只补、不覆盖）：对象逐键递归合并，数组/标量整体采用用户值。
+		 *  用于图标包形状兜底——缺字段/缺花色此前会在渲染期抛错，而 Turn 栏没有错误边界，
+		 *  一个写坏一半的图标包就能把整根栏打崩（评审 2026-10-13）。 */
+		function mergeIconConfig(base, patch) {
+			var out = {};
+			var key;
+			if (base) {
+				for (key in base) if (Object.prototype.hasOwnProperty.call(base, key)) out[key] = base[key];
+			}
+			if (!patch || typeof patch !== "object") return out;
+			for (key in patch) {
+				if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+				var value = patch[key];
+				if (value === undefined || value === null) continue;
+				var fallback = base ? base[key] : undefined;
+				if (fallback && typeof fallback === "object" && !Array.isArray(fallback)
+					&& value && typeof value === "object" && !Array.isArray(value)) {
+					out[key] = mergeIconConfig(fallback, value);
+				} else {
+					out[key] = value;
+				}
+			}
+			return out;
+		}
+		/** 图标包形状兜底（评审 2026-10-13）：只修**会抛错**的形状缺口，不做"整包继承"——
+		 *  图标包是记录在案的自定义入口，各字段缺省的语义并不相同：
+		 *   · `pokerPips` 缺某个花色 → 渲染期抛错（buildPokerSpinSVG 的 `POKER_PIPS[suit].factor`、
+		 *     buildPokerSVGBase 的 `info.factor`；后者只在整包缺 pokerPips 时才回落），
+		 *     而 Turn 栏没有错误边界 → 逐花色补齐内置默认（花色内的 cx/cy/factor 也逐字段补）；
+		 *   · 顶层其它旋钮（pokerR / pokerSpin / pokerSVGBase / pokerTransforms）在读取处都写了
+		 *     `|| 默认值`，缺了不会炸，原样放过；
+		 *   · `pokerSpinDeepseek` 缺失是**记录在案的语义**（无鲸鱼 → 四花色池），
+		 *     绝不能拿内置默认补回来，否则会把用户刻意去掉的鲸鱼牌面塞回去。 */
+		function normalizeIconConfig(pack) {
+			if (!pack || typeof pack !== "object") return pack;
+			var basePips = ICON_DEFAULTS && ICON_DEFAULTS.pokerPips;
+			if (!basePips) return pack;
+			var given = pack.pokerPips && typeof pack.pokerPips === "object" ? pack.pokerPips : {};
+			var merged = {};
+			var suit;
+			for (suit in basePips) {
+				if (!Object.prototype.hasOwnProperty.call(basePips, suit)) continue;
+				var mine = given[suit];
+				merged[suit] = mine && typeof mine === "object" ? mergeIconConfig(basePips[suit], mine) : basePips[suit];
+			}
+			// 包里额外定义的花色（未来扩展/自定义花色）原样保留
+			for (suit in given) {
+				if (!Object.prototype.hasOwnProperty.call(given, suit)) continue;
+				if (!Object.prototype.hasOwnProperty.call(merged, suit)) merged[suit] = given[suit];
+			}
+			pack.pokerPips = merged;
+			return pack;
+		}
+		/** 读取生效的图标配置：localStorage 图标包优先（校验 meta.compat 兼容性 + 形状兜底），
 		 *  缺失/损坏/不兼容时回退内置默认。每次加载执行一次，结果供所有图标常量引用。 */
 		function loadIconConfig() {
 			var fallback = ICON_DEFAULTS || {};
@@ -440,7 +515,7 @@ window.__ModuleLoader__.load({
 									if (hv < nv) { ok = false; break; }
 								}
 							}
-							if (ok) return parsed;
+							if (ok) return normalizeIconConfig(parsed);
 						}
 					}
 				}
@@ -1179,6 +1254,7 @@ window.__ModuleLoader__.load({
 			legacyTurnOpenBySession.delete(sessionKey);
 			clearLegacyStepRulesForSession(sessionKey);
 			cleanupCompletedStepSession(sessionKey);
+			cleanupTurnFaceAssignment(sessionKey);
 		}
 		/** 统一 scheduler（**唯一** pending Set + 微任务复核）：无论最后消失的是
 		 *  Legacy surface 还是 StepCardBridge，只要两个 registry 都清空就统一清理——
@@ -1251,15 +1327,24 @@ window.__ModuleLoader__.load({
 				stepMorphKeyframes("tf-face-close-" + id, set.count, true, set.faces);
 		}
 		/** 把新变体资产写进专属样式元素（每个变体一个元素：只写一次、不重写已有内容——
-		 *  避免"新增一组就把整表重新解析一遍"；已写过的不再写）。 */
+		 *  避免"新增一组就把整表重新解析一遍"；已写过的不再写）。
+		 *  两道门（评审 2026-10-13）：
+		 *   · **体积门控**：iconStyle = native 时根本不生成——逐组牌面资产最多 10 个变体、
+		 *     实测合计约 2.9 MB，皮肤总闸关着时它们没有任何消费者。切回 poker 由
+		 *     applyIconStyle → ensureCompletedFaceSetAssets() 一次性补齐（flag 未置位即未写）。
+		 *   · **DOM 幂等**：写过就在 head 里查得到同名元素（热重载、重复加载、切回 poker
+		 *     都不会再插一个副本）。 */
 		function ensureCompletedFaceSetCss(set) {
 			if (completedFaceSetsWritten[set.id]) return;
+			if (settings.iconStyle !== "poker") return;
 			completedFaceSetsWritten[set.id] = true;
 			try {
 				if (typeof document === "undefined") return;
+				var elId = STEP_FACE_CSS_ID + "-" + set.id;
+				if (document.querySelector('style[data-plugin-css="' + elId + '"]') !== null) return;
 				var tag = document.createElement("style");
 				tag.dataset.plugin = "@winteries/dsh-turn-fold";
-				tag.dataset.pluginCss = STEP_FACE_CSS_ID + "-" + set.id;
+				tag.dataset.pluginCss = elId;
 				tag.textContent = completedFaceSetCss(set);
 				document.head.appendChild(tag);
 			} catch (e) { /* 资产写入失败 → 该组回落默认视觉，官方折叠不受影响 */ }
@@ -2510,7 +2595,13 @@ window.__ModuleLoader__.load({
 		function teardownLegacyStepEngine(reason) {
 			if (legacyStepOwnershipTeardownInProgress) return false;   // 防重入
 			var reg = legacyStepRegistration;
-			if (!reg) return false;                                    // 幂等 no-op
+			if (!reg) {
+				// 幂等 no-op，但**不能**只 return：bootstrap 监听器正是在"尚未安装"阶段注册的
+				//（startLegacyTurnBootstrap），提前返回会把它留在 ctx 上——热重载每次都多留
+				// 一份，回调还会在已 dispose 的插件上重新抢注册。评审 2026-10-13 修复。
+				stopLegacyTurnBootstrap();
+				return false;
+			}
 			legacyStepOwnershipTeardownInProgress = true;
 			try {
 				for (var m = 0; m < reg.monitorDisposers.length; m++) {
@@ -3245,6 +3336,8 @@ window.__ModuleLoader__.load({
 		var CSS_ID = "dsh-turn-fold/style";
 		var SKIN_CSS_ID = "dsh-turn-fold/style-skin";
 		var skinStyleEl = null;
+		// base 样式表：已存在（热重载/测试重复加载）就不重复注入。
+		// 注意下面这一段的缩进是历史遗留（body 与 if 同级），改动时别把它当成作用域错误。
 		if (typeof document !== "undefined") {
 			if (document.querySelector('style[data-plugin-css="' + CSS_ID + '"]') === null) {
 			var tag = document.createElement("style");
@@ -3353,44 +3446,58 @@ window.__ModuleLoader__.load({
 				/* 运行中数字动画尊重系统减弱动效设置 */
 				"@media (prefers-reduced-motion:reduce){.ccg-roll-strip{transition:none!important}}"
 			].join("\n");
-			document.head.appendChild(tag);
-			// 皮肤样式元素：Step 扑克皮（规则不带 body 前缀——总闸是本元素的 disabled）
-			var skinTag = document.createElement("style");
-			skinTag.dataset.plugin = "@winteries/dsh-turn-fold";
-			skinTag.dataset.pluginCss = SKIN_CSS_ID;
-			skinTag.textContent = buildStepSkinCss();
-			document.head.appendChild(skinTag);
-			skinStyleEl = skinTag;
-			} else {
-				// 已存在（热重载/测试重复加载）：重新持有皮肤元素引用
-				skinStyleEl = document.querySelector('style[data-plugin-css="' + SKIN_CSS_ID + '"]');
+			// ⚠️ 这段在 factory 体内**同步执行**（模块加载期，不是 React 生命周期）：异常会
+			// 直接冒出 factory 打断插件激活，而上面承诺的"注入失败最坏 = 无 Turn 栏样式与
+			// 无 Step 皮，官方折叠行为不受任何影响"必须成立 → 每个注入点各自兜异常
+			//（评审 2026-10-13：此前四处 appendChild 全是裸调用）。
+			try { document.head.appendChild(tag); } catch (e) { /* 无 Turn 栏样式，官方折叠不受影响 */ }
+			}
+			// 皮肤样式元素：Step 扑克皮（规则不带 body 前缀——总闸是本元素的 disabled）。
+			// 先**重新持有已存在的元素**（热重载/测试重复加载时 head 里已经有一个，绝不能再建
+			// 第二个——否则总闸切的是新元素、页面命中的是旧元素，两边永远不同步）；
+			// 不存在才建。内容按需生成——见下方 ensureSkinCss()。
+			// 与 base 分开判断（评审 2026-10-13 修 L6：此前 base 已存在而 skin 缺失时
+			// skinStyleEl 恒为 null，牌数桥表建不出来、bridge 静默早退，且没有任何提示）。
+			skinStyleEl = document.querySelector('style[data-plugin-css="' + SKIN_CSS_ID + '"]');
+			if (skinStyleEl === null) {
+				try {
+					var skinTag = document.createElement("style");
+					skinTag.dataset.plugin = "@winteries/dsh-turn-fold";
+					skinTag.dataset.pluginCss = SKIN_CSS_ID;
+					document.head.appendChild(skinTag);
+					skinStyleEl = skinTag;
+				} catch (e) { /* 皮肤元素注入失败：皮失效，官方图标与折叠原样保留 */ }
 			}
 			// 牌数桥样式元素：必须排在皮肤表之后（逐组覆盖规则与静态端点规则特异性接近，
 			// 靠"后者胜出"接管）；内容由 StepCardRulesBridge 写入，牌数不可得时保持空表
 			// → 静态规则原样生效 = 5 张 fallback。
 			if (skinStyleEl !== null) {
-				var cardsTag = document.querySelector('style[data-plugin-css="' + STEP_CARD_CSS_ID + '"]');
-				if (cardsTag === null) {
-					cardsTag = document.createElement("style");
-					cardsTag.dataset.plugin = "@winteries/dsh-turn-fold";
-					cardsTag.dataset.pluginCss = STEP_CARD_CSS_ID;
-					document.head.appendChild(cardsTag);
-				}
-				stepCardStyleEl = cardsTag;
-				stepCardRulesCache = cardsTag.textContent;
+				try {
+					var cardsTag = document.querySelector('style[data-plugin-css="' + STEP_CARD_CSS_ID + '"]');
+					if (cardsTag === null) {
+						cardsTag = document.createElement("style");
+						cardsTag.dataset.plugin = "@winteries/dsh-turn-fold";
+						cardsTag.dataset.pluginCss = STEP_CARD_CSS_ID;
+						document.head.appendChild(cardsTag);
+					}
+					stepCardStyleEl = cardsTag;
+					stepCardRulesCache = cardsTag.textContent;
+				} catch (e) { /* 牌数桥表不可用：逐组牌面覆盖失效，静态皮原样 */ }
 			}
 			// 步骤文件清单表：与皮肤表**无关**的独立表——文件清单是信息不是皮肤，
 			// iconStyle = native 时照样显示（所以不随 applyIconStyle 的 disabled 总闸走）。
 			// 内容由同一个 StepCardRulesBridge 写入（逐组 ::after{content}，纯 CSS 文本）。
-			var filesTag = document.querySelector('style[data-plugin-css="' + STEP_FILES_CSS_ID + '"]');
-			if (filesTag === null) {
-				filesTag = document.createElement("style");
-				filesTag.dataset.plugin = "@winteries/dsh-turn-fold";
-				filesTag.dataset.pluginCss = STEP_FILES_CSS_ID;
-				document.head.appendChild(filesTag);
-			}
-			stepFilesStyleEl = filesTag;
-			stepFilesRulesCache = filesTag.textContent;
+			try {
+				var filesTag = document.querySelector('style[data-plugin-css="' + STEP_FILES_CSS_ID + '"]');
+				if (filesTag === null) {
+					filesTag = document.createElement("style");
+					filesTag.dataset.plugin = "@winteries/dsh-turn-fold";
+					filesTag.dataset.pluginCss = STEP_FILES_CSS_ID;
+					document.head.appendChild(filesTag);
+				}
+				stepFilesStyleEl = filesTag;
+				stepFilesRulesCache = filesTag.textContent;
+			} catch (e) { /* 文件清单表不可用：清单不显示，其余功能原样 */ }
 			applyIconStyle();
 		}
 
@@ -3610,7 +3717,7 @@ window.__ModuleLoader__.load({
 			var growing = visualTokenShouldSubscribe(running, visibleGeneration, fieldEnabled, reduced);
 			var tick = useSyncExternalStore(growing ? subscribeVisualTokenTicks : subscribeNothing, getVisualTokenTick);
 			// 初始 tick 锚定在挂载时的全局 tick：新挂载的栏不得把此前累计的 tick 一次性算成增长
-			var stateRef = react.useRef({ canonical: undefined, tick: getVisualTokenTick(), grown: 0, offset: 0, bootstrap: 0, growing: false });
+			var stateRef = react.useRef({ canonical: undefined, tick: getVisualTokenTick(), grown: 0, offset: 0, bootstrap: 0, growing: false, display: undefined });
 			var state = stateRef.current;
 			var hasCanonical = typeof canonicalTokens === "number" && isFinite(canonicalTokens);
 			// ① Turn 结束 / reduced-motion：展示层彻底归零（settle、历史、F5 只可能看到 canonical）
@@ -3621,6 +3728,7 @@ window.__ModuleLoader__.load({
 				state.offset = 0;
 				state.bootstrap = 0;
 				state.growing = false;
+				state.display = undefined;
 				return hasCanonical ? canonicalTokens : undefined;
 			}
 			// ② 官方 usage 首次到达 / 更新：立即校准——display 直接等于新真实值，绝不慢慢滚过去。
@@ -3647,8 +3755,19 @@ window.__ModuleLoader__.load({
 				else state.bootstrap = visualTokenBootstrapValue(state.grown);
 			}
 			state.tick = tick;
-			if (hasCanonical) return canonicalTokens + state.offset;
-			return state.bootstrap > 0 ? state.bootstrap : undefined;
+			// ⑥ 运行中**单调**（评审 2026-10-13）：官方 usage 的增量小于已累积偏移时，上面
+			//    的"立即校准"会让 display 回退（例：100+20 显示 120 → canonical 到 105 时显示
+			//    105）。计数倒退比"多显示的几十个 token"刺眼得多，所以展示层取历史最大值；
+			//    真实数据层 canonical 不受影响，settle / reduced-motion 仍精确回落（分支 ①）。
+			var computed = hasCanonical
+				? canonicalTokens + state.offset
+				: (state.bootstrap > 0 ? state.bootstrap : undefined);
+			if (computed === undefined) {
+				state.display = undefined;
+				return undefined;
+			}
+			if (state.display === undefined || computed > state.display) state.display = computed;
+			return state.display;
 		}
 		// ---- 回合性能指标（全部来自官方真实数据） ----
 		/** 缓存命中率：固定两位小数（如 "66.67"、"99.99"、"100.00"）；无可计费输入返回 null。 */
@@ -4012,6 +4131,19 @@ window.__ModuleLoader__.load({
 			var face = nextTurnPokerFace(state, Math.random);
 			pokerFaceAssigned.set(turnKey, face);
 			return face;
+		}
+		/** session 完全卸载：清该 session 的 Turn 顶层牌面分配与洗牌袋。
+		 *  评审 2026-10-13 修复：`pokerFaceAssigned` / `pokerBags` 此前**只 set 从不 delete**，
+		 *  任何被渲染过的会话/回合都会永久留条目（长会话 + 多会话切换下线性增长，且没有任何
+		 *  回收路径）——与 Step 侧 completedStepTopFaces / completedStepTopBags 的清理不对称。
+		 *  并入统一入口 cleanupStepPresentationSession（该 session 的所有 presentation 面都
+		 *  卸载后才调用），所以不会因为切会话把还在显示的牌面清掉。 */
+		function cleanupTurnFaceAssignment(sessionKey) {
+			var prefix = sessionKey + "|";
+			pokerFaceAssigned.forEach(function (value, key) {
+				if (key.indexOf(prefix) === 0) pokerFaceAssigned.delete(key);
+			});
+			pokerBags.delete(sessionKey);
 		}
 		/** ── mask 遮挡方案（不依赖填充色，壁纸/透明背景下也正确）──
 		 *  每个下层牌一个 luminance mask：白底默认显示，黑色 occluder 跟随"上层牌"的
@@ -4544,14 +4676,20 @@ window.__ModuleLoader__.load({
 			} catch (e) { /* 通知路径绝不外泄 */ }
 		}
 		/** 统一的注册管道：inject 声明等待 + 回调内 register 各自兜异常，单个条目降级
-		 *  绝不外泄（外泄会带崩 web 启动）。所有 slot 注册一律走这里，别再手写双 try。 */
-		function safeRegisterSlot(slotsSvc, options, component) {
+		 *  绝不外泄（外泄会带崩 web 启动）。所有 slot 注册一律走这里，别再手写双 try。
+		 *  onRegistered（可选）= 注册成功后的只读复核回调（现代路径的 ownership 自检），
+		 *  自身异常同样吞掉——复核只影响诊断，绝不改变注册结果。 */
+		function safeRegisterSlot(slotsSvc, options, component, onRegistered) {
 			var slot = options.name;
 			var cell = options.key !== undefined ? options.key : (options.id !== undefined ? options.id : "?");
 			try {
 				slotsSvc.inject(slot, function () {
 					try {
-						return slotsSvc.register(options, component);
+						var record = slotsSvc.register(options, component);
+						if (typeof onRegistered === "function") {
+							try { onRegistered(record); } catch (e) { /* 复核绝不外泄 */ }
+						}
+						return record;
 					} catch (err) {
 						noteSlotDegradation(slot, cell, err);
 						return undefined;
@@ -4578,11 +4716,33 @@ window.__ModuleLoader__.load({
 				if (!taken[-1]) return -1;
 				var p = 1;
 				while (taken[p]) p += 1;
-				console.warn("[dsh-turn-fold] " + label + " 的 priority -1 已被其他插件占用，自动让位到 priority " + p + "，该渲染位已让给对方");
+				console.warn("[dsh-turn-fold] " + label + " 的 priority -1 已被其他插件占用，自动让位到 priority " + p
+					+ "——lowest-priority-wins 语义下 p>=1 永远压不过官方 0，该渲染位等于弃权："
+					+ "Turn 栏增强、Step 牌数桥与步骤文件清单都不会生效。请卸载占用 -1 的插件后重载页面。");
 				return p;
 			} catch (err) {
 				return -1;
 			}
+		}
+		/** 注册后的 ownership 自检（评审 2026-10-13）：Legacy 安装事务有 preflight + winner
+		 *  三元组校验 + 运行期 monitor，现代路径（插件主功能）此前注册完就不管了——第三方以
+		 *  更低 priority 插进来、或自己让位到 p>=1 时都是**静默失效**。
+		 *  这里只读复核 live winner 投影：本插件的 key/priority/component 三元组必须在 winner 里，
+		 *  否则给一条说清后果的告警。没有 entriesOfSlot 检查面的宿主 → 不猜、不告警。 */
+		function verifyModernTurnProcessOwnership(slotsSvc, priority, component) {
+			try {
+				if (!slotsSvc || typeof slotsSvc.entriesOfSlot !== "function") return;
+				var winners = slotsSvc.entriesOfSlot("conversation.chat.node");
+				for (var i = 0; winners && i < winners.length; i++) {
+					var e = winners[i];
+					if (!e || !e.options || e.options.key !== "turn-process") continue;
+					if (slotPriorityOf(e) === priority && e.component === component) return;   // 已取得渲染权
+				}
+				console.warn("[dsh-turn-fold] conversation.chat.node key \"turn-process\" 未取得渲染权"
+					+ "（本插件 priority " + priority + "）——Turn 栏增强、Step 牌数桥与步骤文件清单都不会生效，"
+					+ "官方 Turn 栏保持原样。通常是另一个插件占用了更低的（更优先的）priority；"
+					+ "卸载它或调整 priority 后重载页面。");
+			} catch (e) { /* 复核失败不改变注册结果，也不外泄 */ }
 		}
 
 		// ---- 字段设置弹窗 ----
@@ -5221,18 +5381,23 @@ window.__ModuleLoader__.load({
 			// 同步首查：声明可能已经发生（apply 与官方 apply 的间隔内）。
 			check();
 		}
-		/** 测试/诊断：复位延迟定论状态（生产随插件生命周期自动清理）。 */
+		/** 测试/诊断：复位延迟定论状态（生产由 apply 返回的 disposer 调
+		 *  stopDeferredTurnFoldResolution 清理——评审 2026-10-13 修好的漏点）。 */
 		function resetDeferredTurnFoldResolution() {
 			stopDeferredTurnFoldResolution();
 		}
-		/** 现代 Turn 渲染器注册（直接定论与延迟定论共用同一条注册路径）。 */
+		/** 现代 Turn 渲染器注册（直接定论与延迟定论共用同一条注册路径）。
+		 *  priority 在注册前解析一次并传给注册后复核——让位（p>=1）时复核会给出明确告警。 */
 		function registerModernTurnProcessRenderer(slotsSvc) {
+			var priority = resolveSlotPriority(slotsSvc, "conversation.chat.node", function (o) { return o.key === "turn-process"; }, 'conversation.chat.node key "turn-process"');
 			safeRegisterSlot(slotsSvc, {
 				name: "conversation.chat.node",
 				key: "turn-process",
-				priority: resolveSlotPriority(slotsSvc, "conversation.chat.node", function (o) { return o.key === "turn-process"; }, 'conversation.chat.node key "turn-process"'),
+				priority: priority,
 				locale: "chat"
-			}, EnhancedTurnProcessView);
+			}, EnhancedTurnProcessView, function () {
+				verifyModernTurnProcessOwnership(slotsSvc, priority, EnhancedTurnProcessView);
+			});
 		}
 		function adoptRegistrationCapabilities(caps) {
 			if ((caps.turnFold === "modern" || caps.turnFold === "legacy") && hostCapabilityState.turnFold === "unknown") {
@@ -5371,9 +5536,16 @@ window.__ModuleLoader__.load({
 				if (caps.turnFold !== "modern") return;
 				registerModernTurnProcessRenderer(slotsSvc);
 			});
-			// 插件卸载/热重载：注销全部 Legacy Step shadow（不留 zombie registration）。
+			// 插件卸载/热重载：三条清理缺一不可（评审 2026-10-13 修复）——
+			//   ① 延迟定论监听器：resolveDeferredTurnFold 只在**定论成功**时注销自己，
+			//      插件在"等 slots/changed"窗口内被卸载时否则会永久留在 ctx 上；
+			//   ② Legacy Turn bootstrap 监听器：未安装成功时 teardown 走 no-op 分支，
+			//      必须显式注销（teardown 内部也已收口，这里是双保险）；
+			//   ③ Legacy Step shadow 注销（原有）。
 			// cordis 的 dispose 回调在条目卸载时执行；返回值同时作为本 inject 的 dispose。
 			return function () {
+				stopDeferredTurnFoldResolution();
+				stopLegacyTurnBootstrap();
 				disposeLegacyStepEngine();
 			};
 		};

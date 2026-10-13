@@ -75,10 +75,17 @@ function replaceRange(src) {
 
 if (action === 'inject') {
   const src = readFileSync(CLIENT, 'utf8')
-  const { start, end } = replaceRange(src)
-  const next = src.slice(0, start) + '\n' + wantJson + src.slice(end)
+  const markerEnd = src.indexOf(MARKER) + MARKER.length
+  const { end } = replaceRange(src)
+  // 行尾跟随目标文件（工作区是 CRLF、npm 发布副本是 LF）：此前无条件写 \n，会在 CRLF
+  // 工作区里造成混行尾（2026-10-13 评审修复）。
+  const eol = src.includes('\r\n') ? '\r\n' : '\n'
+  const body = eol === '\n' ? wantJson : wantJson.split('\n').join(eol)
+  // 从 marker 末尾到对象闭合整体替换为 "一个 EOL + JSON"：这样 --inject 是**真幂等**的
+  //（此前每次都多插一个空行，文件里已经攒了三行空行）。
+  const next = src.slice(0, markerEnd) + eol + body + src.slice(end)
   writeFileSync(CLIENT, next, 'utf8')
-  console.log(`[sync-icons] 已注入 ICON_DEFAULTS（${(wantJson.length / 1024).toFixed(1)} KB）`)
+  console.log(`[sync-icons] 已注入 ICON_DEFAULTS（${(wantJson.length / 1024).toFixed(1)} KB，EOL=${eol === '\r\n' ? 'CRLF' : 'LF'}）`)
 } else {
   const src = readFileSync(CLIENT, 'utf8')
   const current = currentJson(src)

@@ -699,3 +699,25 @@ describe('token 视觉增长 G：StrictMode', () => {
     assert.ok(readVisualLabel(container).includes('370,202 token'), 'settle 后 = 官方真实值：' + readVisualLabel(container))
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════
+// F. 运行中展示值单调（2026-10-13 评审修复）
+// ══════════════════════════════════════════════════════════════════════
+describe('token 视觉增长 F：运行中展示值不得回退', () => {
+  it('官方 usage 增量小于已累积偏移时，展示值保持不回退；settle 后精确回落 canonical', () => {
+    // 起因：校准分支把 offset 归零 → display = 新 canonical，若新 canonical 只涨了一点点
+    //（小于已累积偏移），用户会看到计数倒退（例：112 → 105）。计数倒退比多显示几十个
+    // token 刺眼得多，所以运行中取历史最大值；真实数据层 canonical 不受影响。
+    assert.equal(renderProbe({ running: true, canonical: 100, visible: true }), '100')
+    tick(3)   // 偏移累积：+1/+1/+10 → offset = 12
+    const grown = Number(renderProbe({ running: true, canonical: 100, visible: true }))
+    assert.equal(grown, 112, '偏移已累积（+12）')
+    const after = Number(renderProbe({ running: true, canonical: 105, visible: true }))
+    assert.ok(after >= grown, '展示值不得回退：' + grown + ' → ' + after)
+    // 官方 usage 明显上涨时照常跟涨
+    const jumped = Number(renderProbe({ running: true, canonical: 900, visible: true }))
+    assert.ok(jumped >= 900, 'canonical 大幅上涨时展示值跟涨：' + jumped)
+    // settle：单调只作用于运行中，真实值必须精确
+    assert.equal(renderProbe({ running: false, canonical: 905, visible: true }), '905')
+  })
+})

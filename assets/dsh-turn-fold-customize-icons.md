@@ -1,6 +1,6 @@
 # Customize dsh-turn-fold Icons
 
-The plugin's fold-bar icons are **poker cards** (default style) or the **official chevron** (`default` style, picked in the gear popup). Poker icon data is externalized; edit the data source, not hard-coded strings.
+The plugin's fold-bar icons are **poker cards** (default style) or the **official chevron** (`native` style, picked in the gear popup). Poker icon data is externalized; edit the data source, not hard-coded strings.
 
 ## Icon data source & pipeline
 
@@ -21,22 +21,29 @@ dsh-turn-fold/
 ### Path A — edit the data source (recommended, versioned)
 1. Edit `icons/default.json`.
 2. Run `npm run sync:icons` to inject, then `npm run icons:check` to confirm (the check exits non-zero when the JSON and the inlined block differ, so CI catches a forgotten inject).
-3. Refresh the DSH web page so the client bundle reloads `client.js`.
-Remind the user: this project is **web-only** — a browser refresh is what applies the change (there is no desktop build to restart). If the fold bars look "gone" and there is no error, first confirm the page was actually refreshed.
+3. Apply it: **let the already-open page hot-reload** (editing `client.js` on disk swaps the bundle in open pages), or **restart the DSH desktop app**.
+   ⚠️ Do **not** tell the user to refresh a page that was already open before the edit: the host computes every plugin bundle's `rev` at boot, so a full page load asks for the *stale* rev → 404 → `web boot: 1 entry did not activate` → the page stays stuck on "HARNESS Loading plugins…" (observed on this machine with a junction/link install; refreshing is only safe *after* an app restart). If the fold bars look "gone" with no error, suspect exactly this.
 
 ### Path B — runtime localStorage override (no code change, session-local)
 Write a complete icon package (same shape as `icons/default.json`, including `meta.compat`) to `localStorage['dsh-turn-fold:icons']`. It wins over the built-in defaults until removed. To reset: `localStorage.removeItem('dsh-turn-fold:icons')`.
 
-**What a pack actually reaches** (asymmetric on purpose — do not promise more):
+**What a pack actually reaches** (asymmetric on purpose — do not promise more).
+⚠️ `iconConfig` is read **once at module init** (no storage listener), so **every row below needs
+a reload** (hot-reload or app restart, see Path A step 3) — not just the step group-header skin:
 
 | | Pack override? | Why |
 | --- | --- | --- |
 | Turn-bar running flip + completed stack/fan faces | **yes** | built at runtime by `buildPokerSpinSVG` / the face pool from `iconConfig` |
 | Settings-preview faces | **yes** | same face pool |
-| **Step** group-header skin (card size/masks/suit mapping) | **yes** | on plugin activation `buildStepSkinCss()` reads the **live** `iconConfig` — a pack change applies **after a page refresh** |
+| **Step** group-header skin (card size/masks/suit mapping) | **yes** | on plugin activation `buildStepSkinCss()` reads the **live** `iconConfig` |
 | Card geometry knobs (`restAngle`, `strokeW`, `frames`, `flipMs`, `pokerPips`, stack/fan tables) | **yes** | read per load |
 | **Step** running animation (five-face rotation) | **no** | baked into `client.js` at build time by `npm run sync:step-anim` from the design reference (row 3's animation body + row 5's 35.5° label) — an icon-pack change does not reach it |
 | Official chevron style (`iconStyle = native`) | n/a | not part of the icon data source at all |
+
+A pack with **missing fields no longer throws**: a suit missing from `pokerPips` falls back per suit
+to the built-in default (before 2026-10-13 such a pack threw during render, and the Turn bar has no
+error boundary). But a **missing `pokerSpinDeepseek` is meaningful** — it means "no whale face", the
+pool degrades to four suits, and it is never filled back in from the defaults.
 
 ## Icon package structure (icons/default.json)
 
@@ -101,9 +108,14 @@ shared 1s live clock (`usePreviewTick`), so the row keeps changing while the pop
 unsubscribes when it closes. Option rows keep the `previews(tick)` signature; rows that don't
 animate (native chevron) simply ignore the argument.
 
-## The official default chevron is NOT in the JSON
+## The official chevron is NOT in the JSON
 
-`default` style uses the **official ui-primitives icons** (`IconChevronRightOutline14` / `IconChevronDownOutline14` via `DisclosureRow`), with a small inline `DefaultChevronIcon` fallback. It follows the DSH theme and is not part of `icons/default.json` — do not try to relocate it.
+The `native` style uses the plugin's **own** inline SVG (`NativeChevronIcon`), whose geometry is
+aligned value-by-value with the official `IconChevronDownOutlineRegular` (viewBox 16, stroke 1,
+size 14, `rotate(180deg)` when open). It follows the DSH theme through CSS variables and is not
+part of `icons/default.json` — do not try to relocate it, and do not look for a `default` style
+value or a host `ui-primitives` icon: the plugin requires **no** `@deepseek-ai/*` client package at
+runtime.
 
 ## Critical SVG pitfalls (this user's browser / DSH environment)
 
@@ -120,5 +132,9 @@ Recorded in the project memory file (`MEMORY.md` in the plugin repo — workspac
 
 1. Ask the user what to change: card look, suit design, geometry (corner radius / fan angle / stack offset), running animation, or switching to the official chevron.
 2. Prefer **Path A** (versioned, reproducible). If the user only wants a quick local preview, offer **Path B**.
-3. After edits, always: `npm run sync:icons`, `npm run icons:check`, `node --check client.js`, and `npm test` (the suite asserts icon-related rendering). When the change touches `pokerSpin.restAngle`, also run `npm run sync:step-anim` — the Step running rotation reads **only that value** plus the reference HTML (row 3's animation body + row 5's 35.5° label); `pokerPips` / `pokerSpinDeepseek` changes do **not** need it.
-4. Remind the user to **refresh the DSH web page** (web-only project) before judging the result.
+3. After edits, always: `npm run sync:icons`, `npm run icons:check`, `node --check client.js`. When the change touches `pokerSpin.restAngle`, also run `npm run sync:step-anim` — the Step running rotation reads **only that value** plus the reference HTML (row 3's animation body + row 5's 35.5° label); `pokerPips` / `pokerSpinDeepseek` changes do **not** need it.
+   Also run `npm test` **when you are in the plugin source checkout** — the suite lives in `tests/`
+   and needs devDependencies, and **neither ships in the npm tarball**. In an installed copy
+   `node --test "tests/*.test.mjs"` matches nothing and exits 0, which looks green but tests
+   nothing; there, `npm run icons:check` plus `node --check client.js` are all you can verify.
+4. Apply it as described in Path A step 3 (hot reload or app restart) — **not** a page refresh.
