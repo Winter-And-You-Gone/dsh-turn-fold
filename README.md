@@ -501,10 +501,11 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 | 0.1.7-rc.1 | modern | 新形状（hasContent 起） | modern | **reactive**（turnDataSource 首次出现） | tree-only（有 content、无 session 锚点） |
 | 0.1.7-rc.2 | modern | 新形状 | modern | reactive | official（`data-conversation-session`，commit b7ac0ade10） |
 | 0.2.0-rc.2 | modern | 新形状 | modern | reactive | official |
+| 0.2.1-rc.2 | modern | 新形状 | modern | reactive | official（宿主开始用 `engines.dsh` 拦截不兼容 bundle；`interrupted` 与 aborted 同为停止语义） |
 
-### Live-host acceptance：当前支持区间（2026-10-06，RELEASE GATE PASSED）
+### Live-host acceptance：已真机验收的版本（2026-10-06，RELEASE GATE PASSED）
 
-对**当前 `engines.dsh` 声明的三个版本**做真机验收：官方 npm 发布包 + 隔离 `DSH_HOME`/profile +
+对**当时 `engines.dsh` 声明的三个版本**做真机验收：官方 npm 发布包 + 隔离 `DSH_HOME`/profile +
 官方 `dsh plugin --profile web add <path>` 装载（profile `dsh.profile.bundles` + link），
 真实 provider、真实模型会话（含工具调用的 Turn 与纯问答 Turn 各一条），并用插桩副本读取插件内部
 状态（同一份 `client.js` + 只读 console/`__test` 桥，不改变插件行为）。
@@ -514,6 +515,16 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 | 0.1.7-rc.1 | ✅ npm 发布包 | ✅ | modern / modern / reactive | ✅（running 实时指标 + completed 默认收起） | ✅ | ✅（Step Bar + 图标锚点，折叠正交） | ✅（展开 12→1 隐藏，再收起复原） | ✅（静态栏 + 真实指标） | ✅（重载后 3 根栏重建、零重复注册） | 0 | 0 | 0 | **LIVE-HOST VERIFIED** |
 | 0.1.7-rc.2 | ✅ npm 发布包 | ✅ | modern / modern / reactive（sessionScope=official） | ✅ | ✅ | ✅（3 个 Step Bar） | ✅（16→3→16 隐藏成员） | ✅ | ✅（2 根栏重建） | 0 | 0 | 0 | **LIVE-HOST VERIFIED** |
 | 0.2.0-rc.2 | ✅ npm 发布包 | ✅ | modern / modern / reactive | ✅ | ✅ | ✅（4 个 Step Bar + Poker 图标） | ✅（10→0→10 隐藏成员） | ✅ | ✅（3 根栏重建） | 0 | 0 | 0 | **LIVE-HOST VERIFIED** |
+
+> **2026-10-17：`engines.dsh` 上限抬到 0.2.1-rc.2。** 0.2.1 的结论来自 release commit
+> `d1b9c04067` 的逐契约源码核对 + 版本矩阵/契约测试（`npm test` 全绿），并在本机用
+> **源码构建的 0.2.1-rc.2 宿主 + 隔离 `DSH_HOME`/profile** 实测：插件 client bundle 被编入
+> 启动图，页面里 4 个插件样式元素全部注入（base 7.6KB / skin 535KB，均 enabled）——
+> 即 **LOAD + APPLY VERIFIED**。Turn Bar 接管需要真实模型会话，本轮未观测，因此 0.2.1 行
+> 仍不记 LIVE-HOST VERIFIED（证据等级：LOAD+APPLY VERIFIED / TURN TAKEOVER PENDING）。
+> 0.2.1 与 0.2.0 的插件集成面差异：`turnProcessAlwaysOpen` 增加 `interrupted`（插件已同步为
+> "已停止 + 不可折叠"）；官方分组改由 group-tree 位置驱动（插件只读 group snapshot 与 DOM
+> 钩子，不参与分组）；宿主开始执行 `engines.dsh` 拦截（区间不覆盖运行时 → bundle 被跳过）。
 
 **验收期间发现并修复的真机缺陷（bundle 装载时序竞态）**：本插件以 bundle 方式装载时只注入
 `slots`，cordis 会在服务就绪时立即 apply——可能**早于**官方 conversation 层声明
@@ -530,7 +541,7 @@ Step 层退化）。用户自有 profile 经 patch-insert 层装载（apply 最�
 ### 历史验收记录：首轮真机矩阵（2026-10-05，0.1.1 ~ 0.2.0-rc.2）
 
 > 本节是**那一轮**的原始记录（行内结论按当时状态保留）。其中 0.1.7-rc.1 / 0.1.7-rc.2 /
-> 0.2.0-rc.2 三行**已被 2026-10-06 的「Live-host acceptance：当前支持区间」取代**——三者现在
+> 0.2.0-rc.2 三行**已被 2026-10-06 的「Live-host acceptance：已真机验收的版本」取代**——三者现在
 > 都是 LIVE-HOST VERIFIED，含 0.2.0-rc.2 的 Turn Bar 接管（下表那句 INCONCLUSIVE 只描述
 > 那一轮的观测中断）。0.1.1 ~ 0.1.6 仍**不在当前 `engines.dsh` 声明范围内**，各自有独立阻塞项
 > （详见下文）。
@@ -565,8 +576,9 @@ turn 并读插件自身的内部状态。结论（**证据等级逐项标注**�
    `TypeError: hmr.registerConfig is not a function`。这属于**宿主自举阻塞**，不是插件问题；
    以真实 tag 源码自建（沿用该 tag 的 lockfile + pnpm 11.7.0）可正常运行。
 
-因此本轮**不放开 `engines.dsh`**：0.1.1 的 live 结论是失败，0.1.2/0.1.5 连官方 runtime 都起不来，
-0.1.6+ 未真机验证。当前区间保持 `>=0.1.7-rc.1 <=0.2.0-rc.2`。
+因此本轮（2026-10-05）**没有放开 `engines.dsh`**：0.1.1 的 live 结论是失败，0.1.2/0.1.5 连官方
+runtime 都起不来，0.1.6+ 未真机验证。当时区间保持 `>=0.1.7-rc.1 <=0.2.0-rc.2`
+（2026-10-17 上限已按 0.2.1-rc.2 契约核对结果抬到 `<=0.2.1-rc.2`）。
 
 ### 诊断输出：probing → resolved 两行制
 
@@ -790,8 +802,10 @@ main 的 Turn 折叠**语义**（membership / 边界 / header / final / reason�
 TurnBarView fallback 面负责：Turn 级时钟取 `legacy.turnTimings`/`turnEnds`，TTFT 取
 turn-tail 的官方 `ttftMs`，decode 由 assistant-step 证据聚合，取不到的字段显示 "—"）。
 
-当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.0-rc.2"`：区间内的 0.1.7-rc.1 / 0.1.7-rc.2 /
-0.2.0-rc.2 三个版本**已全部 LIVE-HOST VERIFIED**（见上文「Live-host acceptance：当前支持区间」）。
+当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.1-rc.2"`：区间内的 0.1.7-rc.1 / 0.1.7-rc.2 /
+0.2.0-rc.2 三个版本**已 LIVE-HOST VERIFIED**（见上文「Live-host acceptance：已真机验收的版本」）；
+0.2.1-rc.2 已按 release commit `d1b9c04067` 逐契约核对并纳入版本矩阵，证据等级为
+**CONTRACT-VERIFIED + LOAD/APPLY VERIFIED**（Turn Bar 接管待真实会话验收）。
 **下限不放开**：0.1.1-rc.2 的 Full Legacy Node Backend（Turn + Step 双语义）与 0.1.2 ~ 0.1.6 的
 Official Turn + Legacy Step 都必须等真实旧宿主矩阵通过后才会放开 `engines.dsh`——0.1.1 的真机
 结论是**失败**（3 键 backend 安装后自行 teardown，折叠未生效），0.1.2 / 0.1.5 连官方 npm
@@ -1085,20 +1099,25 @@ git push --follow-tags
 
 ## 注意事项
 
-- 兼容性目标：**DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 的 `conversation.chat.node` +
-  `turn-process` owner state 契约**（三个版本均已 LIVE-HOST VERIFIED，见上文能力矩阵）。
+- 兼容性目标：**DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2 的
+  `conversation.chat.node` + `turn-process` owner state 契约**（前三个 LIVE-HOST VERIFIED，
+  0.2.1-rc.2 为 CONTRACT-VERIFIED + LOAD/APPLY VERIFIED（Turn Bar 接管待验收），见上文能力矩阵）。
   0.1.7-rc.1 起官方才提供完整契约面（`TurnProcessOwnerProps`、
   `useTurnData` reactive hook、`ChatNodeStore.turnDataSource`——已核对 rc.1 源码）；
   **更早版本不再声明兼容**——
   "安装后自然休眠"不计入兼容，兼容 = 插件核心功能真正工作。DSH 升级若改变上述
   契约，本插件可能需要随版本小改（属插件维护，非改源码）。
-- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1 <=0.2.0-rc.2`
+- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1 <=0.2.1-rc.2`
   —— 插件市场（dshmarket）读 npm `latest` manifest 的这个字段，在插件卡片上显示
-  宿主要求，并在**更新**前拦下确定不满足的版本（DSH 本体不读该字段，不影响加载）。
-  区间是**闭区间**、锁到已核验的宿主版本：每次 DSH 升级后重新核对契约，再抬上限
-  并随新版本发布。
+  宿主要求，并在**更新**前拦下确定不满足的版本。
+  **DSH 0.2.1 起宿主自己也会执行该字段**（`app-boot` 的 plugin-compatibility 预检）：
+  运行时版本不满足区间的 bundle 会在 profile 组装时被跳过（记入 `skippedBundles`），
+  插件不会加载——所以每次 DSH 升级后必须重新核对契约、抬上限并发布，否则用户升级
+  桌面端后插件会"静默消失"。区间是**闭区间**、锁到已核验的宿主版本。
 - **集成依赖清单**（DSH 升级时对照排查；已按 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2
-  `c1b47e41fc` 逐契约 diff 审计：Public/stable 契约在两个 release 间逐字节不变）：
+  `c1b47e41fc` ↔ 0.2.1-rc.2 `d1b9c04067` 逐契约 diff 审计：Public/stable 契约在三个
+  release 间保持不变；0.2.1 只新增 `interrupted` 停止语义、group-tree 分组位置与
+  `engines.dsh` 强制检查，均已被插件消化或属于宿主行为）：
   - **Cordis activation**：`exports.inject = ["slots"]` + `ctx.inject(["slots"], …)`
     （客户端 slots 服务与 keyed slot 注册语义，官方 `boot-client` 未变）；
   - **Public/stable**：`conversation.chat.node` keyed slot（`turn-process` key +

@@ -1,14 +1,19 @@
-// DSH 0.1.7-rc.2 ↔ 0.2.0-rc.2 版本矩阵测试。
+// DSH 0.1.7-rc.2 ↔ 0.2.1-rc.2 版本矩阵测试。
 //
-// 审计基线（2026-10，源码 diff 787b746b80…↔c1b47e41fc…）：
-//   插件消费的全部核心契约 shape 在两个 release 间不变——
-//   contract/ 目录逐字节零差异；ChatNodeSeat / register-node-renderers /
+// 审计基线（2026-10，源码 diff 787b746b80…↔d1b9c04067…）：
+//   插件消费的全部核心契约 shape 在三个 release 间不变——
+//   contract/ 目录、ChatNodeSeat / register-node-renderers、
 //   use-turn-data / snapshot.ts / ui-conversation contract/conversation.ts 均未变。
 //   0.2.0 renderer 侧的三处变化与插件无关或已被插件消化：
 //     ① 官方 TurnProcessNodeView running → return null（live 视觉迁往 RunningStatus）：
 //        插件 shadow 该 key，node 投影（turn/start）与 slot 调用不变 → Running Bar 不受影响；
 //     ② ChatGroupSeat TextShimmer 嵌套：shimmer 属性移到外层 span（:has() 仍命中）；
 //     ③ process-groups 官方分组顺序微调（question-reply 合并）：插件不拥有分组。
+//   0.2.1 的变化同样已被插件消化：
+//     ① turnProcessAlwaysOpen 增加 interrupted（与 aborted 同为停止语义）→ 插件同一判定；
+//     ② 官方分组改由 group-tree 位置驱动（turn-process/turn-tail = groupTree:'turn'）：
+//        插件只读官方 group snapshot 的成员与 DOM 钩子，不参与分组；
+//     ③ 宿主开始用 engines.dsh 拦截不兼容 bundle → package.json 区间必须覆盖运行时。
 // 本文件用同一组官方形状 fixtures 显式按版本标注跑双份断言，锁定
 // "一个实现 + feature detection"——禁止 if DSH 0.1.7 / if DSH 0.2.0 分叉。
 import { describe, it, beforeEach } from 'node:test'
@@ -34,6 +39,7 @@ const document = sharedDocument
 const VERSIONS = [
   { label: '0.1.7-rc.2', commit: '787b746b807df83776957875683b8853c862ca2c' },
   { label: '0.2.0-rc.2', commit: 'c1b47e41fcd54d20a0f061df28683bfc29ee24e5' },
+  { label: '0.2.1-rc.2', commit: 'd1b9c0406783051f53587719372489aa0a9d76ac' },
 ]
 
 // 每个版本的 contract shapes 一致（审计结论）——fixture 工厂按版本打标复用。
@@ -59,8 +65,8 @@ function renderTurnBar(props) {
   }
 }
 
-// ══════════════ A. Slot contract：turn-process renderer props（双版本） ══════════════
-describe('版本矩阵 A：turn-process slot renderer props（contract/slots.ts 双版本一致）', () => {
+// ══════════════ A. Slot contract：turn-process renderer props（三版本） ══════════════
+describe('版本矩阵 A：turn-process slot renderer props（contract/slots.ts 三版本一致）', () => {
   for (const v of VERSIONS) {
     it(v.label + '：closed Turn + owner → 折叠栏，aria-expanded 来自 owner.open', () => {
       const f = fixturesFor(v)
@@ -116,8 +122,8 @@ describe('版本矩阵 B：TurnProcessOwnerProps 语义（0.2.0 TurnProcessNodeV
     } finally { view.cleanup() }
   })
 
-  it('canCollapse = foldable && hasContent && !alwaysOpen；aborted/error 回合不可折叠', () => {
-    for (const reason of ['aborted', 'error']) {
+  it('canCollapse = foldable && hasContent && !alwaysOpen；aborted/interrupted/error 回合不可折叠', () => {
+    for (const reason of ['aborted', 'interrupted', 'error']) {
       const view = renderTurnBar({
         node: makeTurnNode({ status: 'closed', reason }),
         turnProcess: makeTurnProcessOwner({ foldable: true, hasContent: true }),
@@ -246,7 +252,7 @@ describe('版本矩阵 D：metrics 数据形状（turn-tail 聚合 + assistant-s
 })
 
 // ══════════════ E. Step DOM：0.1.7 平铺 shimmer / 0.2.0 嵌套 TextShimmer ══════════════
-describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）', () => {
+describe('版本矩阵 E：Step Group DOM soft hooks（三版本 DOM 形状）', () => {
   // 从皮肤 CSS 提取 running 选择器（与 unit.css.test 同款解析；轮换 mask 规则）。
   // :has(...) 后必须紧跟卡牌位——排除 completed fan 规则里的 :not(:has(...)) 排除子句。
   function runningHostSelectors(skin) {
@@ -284,7 +290,7 @@ describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）',
 
   beforeEach(() => { T.settings.iconStyle = 'poker'; T.applyIconStyle() })
 
-  for (const shape of ['0.1.7-rc.2', '0.2.0-rc.2']) {
+  for (const shape of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.2']) {
     it(shape + ' 官方 DOM → running 选择器命中（任一 shimmer 契约），轮换 mask 规则到位', () => {
       const skin = document.querySelector('style[data-plugin-css="' + T.SKIN_CSS_ID + '"]').textContent
       const selectors = runningHostSelectors(skin)
@@ -295,7 +301,7 @@ describe('版本矩阵 E：Step Group DOM soft hooks（双版本 DOM 形状）',
           assert.equal(hit.length, 1, '0.1.7 只有 data-text-shimmer 选择器命中')
           assert.ok(hit[0].includes('data-text-shimmer'))
         } else {
-          assert.equal(hit.length, 1, '0.2.0 只有 data-shimmer 选择器命中')
+          assert.equal(hit.length, 1, shape + ' 只有 data-shimmer 选择器命中')
           assert.ok(hit[0].includes('[data-shimmer="true"]') && !hit[0].includes('data-text-shimmer'))
         }
         // 双契约 running 规则都在（单一卡牌位；mask 换成平面旋转轮换 SVG）

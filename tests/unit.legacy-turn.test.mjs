@@ -731,12 +731,12 @@ describe('Legacy Turn J：隔离与守卫', () => {
     assert.equal(caps.turnOwnerHasContent, undefined)
     // 0.1.2~0.1.6 保持 false、0.1.7+ 保持 true
     const mid = HOST_VERSION_FIXTURES.find((x) => x.version === '0.1.2-rc.1')
-    const modern = HOST_VERSION_FIXTURES.find((x) => x.version === '0.2.0-rc.2')
+    const modern = HOST_VERSION_FIXTURES.find((x) => x.version === '0.2.1-rc.2')
     assert.equal(mid.probe.turnOwnerHasContent, false)
     assert.equal(modern.probe.turnOwnerHasContent, true)
   })
-  it('J5 modern 全矩阵 regression：0.1.2/0.1.5/0.1.6/0.1.7/0.2.0 turnFold=modern → 零 Legacy Turn 激活/注册', () => {
-    for (const version of ['0.1.2-rc.1', '0.1.5-rc.3', '0.1.6-alpha.2', '0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.2']) {
+  it('J5 modern 全矩阵 regression：0.1.2/0.1.5/0.1.6/0.1.7/0.2.0/0.2.1 turnFold=modern → 零 Legacy Turn 激活/注册', () => {
+    for (const version of ['0.1.2-rc.1', '0.1.5-rc.3', '0.1.6-alpha.2', '0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.2']) {
       const f = HOST_VERSION_FIXTURES.find((x) => x.version === version)
       assert.ok(f, version + ' fixture 必须在')
       const slots = {

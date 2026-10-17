@@ -592,24 +592,33 @@ git push --follow-tags
 
 ## Notes
 
-- Compatibility target: the **DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2
-  `conversation.chat.node` + `turn-process` owner-state contract** (all three are
-  LIVE-HOST VERIFIED — see the capability matrix above). The full contract surface exists
-  from 0.1.7-rc.1 onward (`TurnProcessOwnerProps`, the reactive `useTurnData` hook,
+- Compatibility target: the **DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2
+  `conversation.chat.node` + `turn-process` owner-state contract** (the first three are
+  LIVE-HOST VERIFIED; 0.2.1-rc.2 is CONTRACT-VERIFIED against release commit `d1b9c04067`
+  and the version matrix, plus LOAD/APPLY VERIFIED on a source-built 0.2.1-rc.2 host with an
+  isolated profile — Turn Bar takeover still needs a real model session — see the capability
+  matrix above). The full contract surface
+  exists from 0.1.7-rc.1 onward (`TurnProcessOwnerProps`, the reactive `useTurnData` hook,
   `ChatNodeStore.turnDataSource` — verified against the rc.1 sources).
   **Older versions are no longer declared compatible** — a dormant install does not
   count as compatibility; compatibility means the plugin's core features really work.
   If a DSH upgrade changes the contract above, this plugin may need a matching
   maintenance release (plugin maintenance, never source patches).
-- **Declared host requirement**: `engines.dsh` = `>=0.1.7-rc.1 <=0.2.0-rc.2` in
+- **Declared host requirement**: `engines.dsh` = `>=0.1.7-rc.1 <=0.2.1-rc.2` in
   `package.json`. The plugin marketplace (dshmarket) reads this field from the npm
   `latest` manifest to show the badge and to block updates that certainly cannot
-  satisfy it (the DSH host itself does not read it). The range is **closed** and locked
-  to verified host versions: after each DSH upgrade, re-verify the contract before
-  raising the ceiling in a release.
+  satisfy it. **Since DSH 0.2.1 the host enforces it too** (the `app-boot`
+  plugin-compatibility preflight): a bundle whose range does not cover the running
+  version is skipped during profile composition and never loads. Re-verify the
+  contract after every DSH upgrade, raise the ceiling, and ship a release — otherwise
+  the plugin silently disappears for users who update their desktop app. The range is
+  **closed** and locked to verified host versions.
 - **Integration dependency list** (check against DSH upgrades; audited via a
-  contract-by-contract diff of 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2 `c1b47e41fc`:
-  the Public/stable contracts are byte-identical across both releases):
+  contract-by-contract diff of 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2 `c1b47e41fc` ↔
+  0.2.1-rc.2 `d1b9c04067`: the Public/stable contracts are unchanged across all three
+  releases; 0.2.1 only adds the `interrupted` stop semantics, group-tree placement, and
+  the `engines.dsh` preflight — all either already consumed by the plugin or host-side
+  behaviour):
   - **Cordis activation**: `exports.inject = ["slots"]` + `ctx.inject(["slots"], …)`
     (the client slots service and keyed-slot registration semantics; the official
     `boot-client` is unchanged);

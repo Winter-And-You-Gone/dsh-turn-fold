@@ -177,6 +177,7 @@ const TEST_EXPORTS = [
   'formatTokPerSec',
   'formatTokenCount',
   'turnHeaderLabel',
+  'turnReasonAlwaysOpen',
   'turnStatusLabel',
   'turnRoundLabel',
   // 扑克视觉

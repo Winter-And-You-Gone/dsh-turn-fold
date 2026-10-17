@@ -328,16 +328,27 @@ describe('格式化（中英文）', () => {
     assert.ok(!/\d[\d,]*(?:\.\d+)?\s*token/.test(label), '不得出现伪造 token 数字：' + label)
   })
 
-  it('turnStatusLabel：aborted→已停止 / error→运行失败 / max-tokens→已中断 / completed→无词', () => {
+  it('turnStatusLabel：aborted/interrupted→已停止 / error→运行失败 / max-tokens→已中断 / completed→无词', () => {
     setLang('zh-CN')
     assert.equal(T.turnStatusLabel('aborted'), '已停止')
+    assert.equal(T.turnStatusLabel('interrupted'), '已停止')
     assert.equal(T.turnStatusLabel('error'), '运行失败')
     assert.equal(T.turnStatusLabel('max-tokens'), '已中断')
     assert.equal(T.turnStatusLabel('completed'), null)
     assert.equal(T.turnStatusLabel(undefined), null)
     setLang('en')
     assert.equal(T.turnStatusLabel('aborted'), 'Stopped')
+    assert.equal(T.turnStatusLabel('interrupted'), 'Stopped')
     assert.equal(T.turnStatusLabel('error'), 'Failed')
+  })
+
+  it('turnReasonAlwaysOpen：官方 turnProcessAlwaysOpen 同款（aborted/interrupted/error；max-tokens 不在此列）', () => {
+    for (const reason of ['aborted', 'interrupted', 'error']) {
+      assert.equal(T.turnReasonAlwaysOpen(reason), true, reason + ' 不可折叠')
+    }
+    for (const reason of ['completed', 'max-tokens', 'blocked', undefined]) {
+      assert.equal(T.turnReasonAlwaysOpen(reason), false, String(reason) + ' 仍可折叠')
+    }
   })
 
   it('turnRoundLabel', () => {

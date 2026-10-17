@@ -3,7 +3,7 @@
 // 目标不变量：
 //   · UNKNOWN ≠ LEGACY：注册期探不到的 feature（Step/metrics）一律 unknown，
 //     绝不因 unknown 触发任何 legacy 入口；只有显式证明契约缺失才允许 legacy；
-//   · Modern 宿主（0.1.7-rc.1 / rc.2 / 0.2.0-rc.2）：官方是唯一 Fold owner，
+//   · Modern 宿主（0.1.7-rc.1 / rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2）：官方是唯一 Fold owner，
 //     legacy 引擎激活数恒为 0，且现代渲染器照常注册；
 //   · Hybrid 宿主（0.1.2 ~ 0.1.6）：Turn modern（官方 owner state）+ Step legacy
 //     （渲染期证明无 Process Group 契约）+ metrics fallback（无 turnDataSource）——
@@ -666,6 +666,7 @@ describe('最终支持契约矩阵（supported-host-matrix contract）', () => {
     ['0.1.7-rc.1', 'modern', 'modern', 'reactive'],
     ['0.1.7-rc.2', 'modern', 'modern', 'reactive'],
     ['0.2.0-rc.2', 'modern', 'modern', 'reactive'],
+    ['0.2.1-rc.2', 'modern', 'modern', 'reactive'],
   ]
   it('K1 每个目标版本的 fixture expect 与最终契约一致（capability 三态各自独立）', () => {
     for (const [version, turn, step, metrics] of CONTRACT) {
@@ -693,7 +694,7 @@ describe('最终支持契约矩阵（supported-host-matrix contract）', () => {
   })
   it('K4 engines.dsh 是审计结论的唯一载体：当前区间只声明已真机/契约覆盖的版本段', () => {
     const pkg = JSON.parse(require('node:fs').readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-    assert.equal(pkg.engines.dsh, '>=0.1.7-rc.1 <=0.2.0-rc.2',
-      'engines.dsh 只能在真实宿主矩阵通过后修改；本轮（0.1.1 live 失败）不得放开')
+    assert.equal(pkg.engines.dsh, '>=0.1.7-rc.1 <=0.2.1-rc.2',
+      'engines.dsh 只能在契约核对/宿主矩阵通过后修改；0.2.1-rc.2 已按 release 源码逐契约核对并纳入版本矩阵')
   })
 })

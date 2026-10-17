@@ -148,7 +148,7 @@ window.__ModuleLoader__.load({
 		// 「NOTICE_VERSION == package.json version」守卫钉死：只 bump 包版本而忘了这里，
 		// `npm test` 直接红（Release workflow 在 publish 前跑全量测试，所以发不出去）。
 		// 漂移的后果是静默的：用户按当前版本写 meta.compat 会被判不兼容、悄悄回退内置默认。
-		var NOTICE_VERSION = "0.7.0";
+		var NOTICE_VERSION = "0.7.1";
 
 		// ---- 自有 UI 原语（零宿主包依赖） ----
 		// 官方插件实践（cordis-plugin-development/references/practices.md）：不要运行时
@@ -2090,7 +2090,7 @@ window.__ModuleLoader__.load({
 		 *     纯问答 fallback 到 finalAssistantKey（Turn Bar 在最终答案上方、正文仍可见）；
 		 *   · hideKeys = 作用域内成员（不含 final）——为空（纯问答/无中间内容）→
 		 *     canCollapse=false（静态栏；不硬造可折叠）；
-		 *   · reason 取 timeline.turns(turn).end.data.reason.kind；aborted|error → alwaysOpen
+		 *   · reason 取 timeline.turns(turn).end.data.reason.kind；aborted|interrupted|error → alwaysOpen
 		 *     （对齐 Modern semantics 不可折叠）；max-tokens/blocked 按普通 completed 处理；
 		 *   · 数据不完整/异常 → FAIL OPEN（canCollapse=false、hideKeys 为空、内容全可见）。 */
 		function legacyBuildTurnIndex(snapshot) {
@@ -2187,7 +2187,7 @@ window.__ModuleLoader__.load({
 				} catch (e3) { reason = null; }
 				var timing = null;
 				try { timing = turnTimings ? turnTimings.get(turn) : null; } catch (e4) { timing = null; }
-				var alwaysOpen = !closed || reason === "aborted" || reason === "error";
+				var alwaysOpen = !closed || turnReasonAlwaysOpen(reason);
 				var canCollapse = closed && !alwaysOpen && hideKeys.length > 0 && finalAssistantKey !== null;
 				var group = {
 					turn: turn, keys: keys, memberKeys: memberKeys, hideKeys: hideKeys,
@@ -2242,7 +2242,7 @@ window.__ModuleLoader__.load({
 			legacyNotifyTurnOpen();
 		}
 		/** 有效展开态：running 恒展开（Turn Bar 是状态面不是折叠开关）；不可折叠（纯问答 /
-		 *  aborted / error）恒展开（静态栏、内容常显）；completed+可折叠 → 默认 closed。 */
+		 *  aborted / interrupted / error）恒展开（静态栏、内容常显）；completed+可折叠 → 默认 closed。 */
 		function legacyTurnEffectiveOpen(group, manual) {
 			if (!group) return true;
 			if (group.running || !group.canCollapse) return true;
@@ -2294,7 +2294,9 @@ window.__ModuleLoader__.load({
 				startMs: group.startMs,
 				endMs: group.endMs,
 				status: group.closed ? "closed" : "open",
-				reason: group.reason === "aborted" ? "aborted" : (group.reason === "error" ? "error" : undefined),
+				reason: group.reason === "aborted" || group.reason === "interrupted"
+					? group.reason
+					: (group.reason === "error" ? "error" : undefined),
 				data: null,
 				steps: [],
 			};
@@ -4052,10 +4054,17 @@ window.__ModuleLoader__.load({
 			}
 			return parts.join(" · ");
 		}
+		/** 官方 turnProcessAlwaysOpen 同款（contract/turn-process.ts）：运行中、主动停止（aborted）、
+		 *  DSH 进程中断（interrupted）、失败（error）的回合不可折叠。
+		 *  interrupted 自 DSH 0.2.1 起与 aborted 同为"停止"语义（官方 TurnProcessNodeView 用
+		 *  message.stopped、不显示耗时）；插件只做同一判定，不按宿主版本分叉。 */
+		function turnReasonAlwaysOpen(reason) {
+			return reason === "aborted" || reason === "interrupted" || reason === "error";
+		}
 		/** 回合结束状态词（仅异常结束有词；正常完成/无数据返回 null——完成态不加前缀）。
 		 *  @param {string|undefined} reason - turn/end 的 reason.kind。 */
 		function turnStatusLabel(reason) {
-			if (reason === "aborted") return _T("statusStopped");
+			if (reason === "aborted" || reason === "interrupted") return _T("statusStopped");
 			if (reason === "error") return _T("statusFailed");
 			if (reason === "max-tokens") return _T("statusInterrupted");
 			return null;
@@ -5075,8 +5084,8 @@ window.__ModuleLoader__.load({
 			// 回合结束：折叠语义全部来自官方 turnProcess（经 owner-shape 归一化，
 			// 本组件不知道官方契约是哪一代形状）。
 			// turnProcessAlwaysOpen（官方 contract/turn-process.ts 同款语义）：
-			// live（不可能，已在 running 分支）、aborted、error 的回合不可折叠。
-			var alwaysOpen = clock.status === "open" || clock.reason === "aborted" || clock.reason === "error";
+			// live（不可能，已在 running 分支）、aborted、interrupted、error 的回合不可折叠。
+			var alwaysOpen = clock.status === "open" || turnReasonAlwaysOpen(clock.reason);
 			var owner = normalizeTurnProcessOwner(turnProcess, alwaysOpen);
 			var spec = owner.available && owner.spec
 				? owner.spec

@@ -83,6 +83,13 @@ export const HOST_VERSION_FIXTURES = [
     expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
     note: 'shimmer 契约从 data-text-shimmer 切到 data-shimmer（插件双契约同时兼容）',
   },
+  {
+    version: '0.2.1-rc.2',
+    tag: 'dsh-v0.2.1-rc.2',
+    probe: { officialTurnProcess: true, officialStandardKit: true, turnDataSource: true, stepGroups: true, sessionDomScope: true, conversationContentAnchor: true, oldShimmer: false, newShimmer: true, transcriptView: true, turnOwnerHasContent: true },
+    expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
+    note: '契约面与 0.2.0 同形；宿主开始用 engines.dsh 拦截不兼容 bundle，turnProcessAlwaysOpen 增加 interrupted（与 aborted 同为停止语义）',
+  },
 ]
 
 /** 由 fixture 的 probe 生成能力矩阵的输入（每个探针独立审计、绝不互相推导）。 */

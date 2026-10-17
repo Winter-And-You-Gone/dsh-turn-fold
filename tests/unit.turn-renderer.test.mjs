@@ -173,7 +173,7 @@ describe('Turn renderer：closed 相（折叠语义全部来自官方 turnProces
     assert.deepEqual(setOpenCalls, [])
   })
 
-  it('aborted（已停止）/ error（运行失败）→ 官方 alwaysOpen 语义：不可折叠、状态词上栏', () => {
+  it('aborted / interrupted（已停止）/ error（运行失败）→ 官方 alwaysOpen 语义：不可折叠、状态词上栏', () => {
     renderView({
       node: makeTurnNode({ status: 'closed', reason: 'aborted', steps: [usageStep] }),
       turnProcess: owner(),
@@ -181,6 +181,19 @@ describe('Turn renderer：closed 相（折叠语义全部来自官方 turnProces
       useChat: makeUseChat(makeStepsSource([usageStepData])),
     })
     let bar = container.querySelector('button.ccg-turn-bar-main')
+    assert.equal(bar.getAttribute('data-tf-static'), 'true')
+    assert.equal(barStatus(), '已停止')
+    clickMain()
+    assert.deepEqual(setOpenCalls, [])
+
+    // DSH 0.2.1：interrupted 与 aborted 同为停止语义（官方 message.stopped）
+    renderView({
+      node: makeTurnNode({ status: 'closed', reason: 'interrupted', steps: [usageStep] }),
+      turnProcess: owner(),
+      useTurnData: makeUseTurnData({}),
+      useChat: makeUseChat(makeStepsSource([usageStepData])),
+    })
+    bar = container.querySelector('button.ccg-turn-bar-main')
     assert.equal(bar.getAttribute('data-tf-static'), 'true')
     assert.equal(barStatus(), '已停止')
     clickMain()
@@ -553,8 +566,8 @@ describe('Turn owner 契约演进：旧 modern owner（无 hasContent 字段）'
     clickMain()
     assert.deepEqual(setOpenCalls, [], 'foldable=false 不得调 setOpen')
   })
-  it('F: 旧 owner + aborted/error → alwaysOpen 优先，仍不可折叠', () => {
-    for (const reason of ['aborted', 'error']) {
+  it('F: 旧 owner + aborted/interrupted/error → alwaysOpen 优先，仍不可折叠', () => {
+    for (const reason of ['aborted', 'interrupted', 'error']) {
       const steps = makeStepsSource([])
       renderView({
         node: makeTurnNode({ status: 'closed', reason }),
