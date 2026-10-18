@@ -379,15 +379,19 @@ describe('Step Poker Completed 双态（closed = 五张牌堆 / open = 五张扇
 
 describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
   // ── 从皮肤 CSS 提取真实 running 规则（单一事实来源，测试不复制选择器） ──
-  // running 规则形态（单一卡牌位 ::before；mask 换成平面旋转（35.5°）轮换 SVG 的数据 URI）：
-  //   [data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before,
-  //   [data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{ …mask-image:url("data:image/svg+xml,…")… }
+  // 运行态有两条规则（单一卡牌位 ::before）：
+  //   ① 基础 = 收起态（正立轮换，无旋转组）：
+  //      [data-step-process]:has([data-text-shimmer="true"]) [data-step-process-icon]::before,
+  //      [data-step-process]:has([data-shimmer="true"]) [data-step-process-icon]::before{ …url("data:image/svg+xml,…")… }
+  //   ② 展开态覆盖（倾斜 35.5°；官方 aria-expanded 事实）：
+  //      [data-step-process]:has([data-shimmer="true"]) [data-process-activity][aria-expanded="true"] [data-step-process-icon]::before{ … }
   function runningRuleOf(skin) {
-    // :has(...) 后必须紧跟卡牌位（排除 fan 规则里的 :not(:has(...)) 排除子句）
+    // :has(...) 后必须紧跟卡牌位（排除 fan 规则里的 :not(:has(...)) 排除子句；
+    // 也排除展开态覆盖——它中间隔着 [data-process-activity][aria-expanded="true"]）
     const line = skin
       .split('\n')
       .find((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
-    assert.ok(line, 'running 规则缺失（双契约 + 平面旋转轮换 mask）')
+    assert.ok(line, 'running 规则缺失（双契约 + 正立轮换 mask）')
     return line
   }
   function runningDeclarationOf(skin) {
@@ -398,14 +402,36 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     const line = runningRuleOf(skin)
     return line.slice(0, line.indexOf('{')).split(',')
   }
-  // 从 running 规则取出平面旋转轮换 SVG 数据 URI 并解码（还原 SVG 文本后断言内部结构）
-  function decodedAnimSvgOf(skin) {
-    const declaration = runningDeclarationOf(skin)
+  // 展开态（运行中 + aria-expanded="true"）的倾斜覆盖规则
+  function tiltedRuleOf(skin) {
+    const line = skin
+      .split('\n')
+      .find((l) => l.includes(':has([data-shimmer="true"]) [data-process-activity][aria-expanded="true"] [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
+    assert.ok(line, '展开态倾斜规则缺失（运行中 + aria-expanded=true）')
+    return line
+  }
+  function tiltedDeclarationOf(skin) {
+    const line = tiltedRuleOf(skin)
+    return line.slice(line.indexOf('{') + 1, line.lastIndexOf('}'))
+  }
+  function tiltedSelectorsOf(skin) {
+    const line = tiltedRuleOf(skin)
+    return line.slice(0, line.indexOf('{')).split(',')
+  }
+  function svgOfDeclaration(declaration, label) {
     const m = declaration.match(/-webkit-mask-image:url\("(data:image\/svg\+xml,[^"]+)"\)/)
-    assert.ok(m, 'running 规则缺 -webkit-mask-image 数据 URI')
+    assert.ok(m, label + ' 缺 -webkit-mask-image 数据 URI')
     const svg = decodeURIComponent(m[1].slice('data:image/svg+xml,'.length))
-    assert.ok(svg.startsWith('<svg'), '数据 URI 解码后不是 SVG')
+    assert.ok(svg.startsWith('<svg'), label + ' 数据 URI 解码后不是 SVG')
     return svg
+  }
+  // 基础（收起态）running 规则里的正立轮换 SVG
+  function decodedAnimSvgOf(skin) {
+    return svgOfDeclaration(runningDeclarationOf(skin), 'running 规则')
+  }
+  // 展开态倾斜规则里的 35.5° 轮换 SVG
+  function decodedTiltedSvgOf(skin) {
+    return svgOfDeclaration(tiltedDeclarationOf(skin), '展开态倾斜规则')
   }
   // matches() 不能带伪元素：running 选择器以 " [data-step-process-icon]::before" 结尾，
   // 去掉伪元素后缀后剩下的宿主部分（[data-step-process]:has(...)）才是可匹配的元素选择器。
@@ -493,16 +519,21 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     }
   })
 
-  it('双属性同时存在 → 仍只有一条 running 规则（轮换 SVG 数据 URI 只声明一次）', () => {
+  it('双属性同时存在 → 收起/展开各恰好一条 running 规则（正立 + 倾斜两份数据 URI，各声明一次）', () => {
     const skin = skinEl().textContent
     const { host, cleanup } = stepDom('both')
     try {
       for (const sel of runningSelectorsOf(skin)) {
         assert.ok(host.matches(hostSelectorOf(sel)), '双属性 DOM 未命中 running 选择器：' + sel)
       }
+      // 收起态（基础）规则：恰好一条，双契约两个选择器
+      assert.equal(runningSelectorsOf(skin).length, 2, '收起态 running 规则应同时覆盖两个官方 shimmer 契约')
+      // 展开态（倾斜覆盖）规则：恰好一条，双契约两个选择器
+      assert.equal(tiltedSelectorsOf(skin).length, 2, '展开态倾斜规则应同时覆盖两个官方 shimmer 契约')
       const maskRules = skin.split('\n').filter((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before') && l.includes('mask-image:url("data:image/svg+xml'))
-      assert.equal(maskRules.length, 1, 'running 轮换 mask 规则必须恰好一条')
-      assert.equal((skin.match(/tf-step-flat-rotation/g) || []).length, 2, '轮换 SVG 只应出现一次（webkit + 标准两条 mask-image 声明）')
+      assert.equal(maskRules.length, 1, '收起态轮换 mask 规则必须恰好一条')
+      // 旋转组只出现在展开态那一份 URI 里（webkit + 标准两条声明 = 2 次）
+      assert.equal((skin.match(/tf-step-flat-rotation/g) || []).length, 2, '倾斜 SVG 只应出现在展开态规则（webkit + 标准两条 mask-image 声明）')
     } finally { cleanup() }
   })
 
@@ -514,12 +545,23 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
   // 旋转角 = icons/default.json → pokerSpin.restAngle（= atan(w/h)），断言其四舍五入 == 参考稿字面量 35.5。
   const referenceHtml = readFileSync(new URL('../docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html', import.meta.url), 'utf8')
 
-  it('平面旋转组：<g class="tf-step-flat-rotation" transform="rotate(<角> 8 8)"> 包住全部相位，角度取自数据源', () => {
-    const svg = decodedAnimSvgOf(skinEl().textContent)
+  it('倾斜只属于展开态：展开态 SVG 带 <g class="tf-step-flat-rotation" transform="rotate(<角> 8 8)"> 包住全部相位，收起态是摘掉该组的同一份本体', () => {
+    const skin = skinEl().textContent
+    const flat = decodedAnimSvgOf(skin)          // 基础 running = 收起态（正立）
+    const tilted = decodedTiltedSvgOf(skin)      // 展开态覆盖（倾斜）
     const spin = T.ICON_DEFAULTS.pokerSpin
-    const m = svg.match(/<g class="tf-step-flat-rotation" transform="rotate\((-?[0-9.]+) 8 8\)">/)
-    assert.ok(m, '缺少平面旋转组 tf-step-flat-rotation（参考稿 svg3dRotated 同款）')
+    // 收起态：不得带旋转组
+    assert.ok(!flat.includes('tf-step-flat-rotation'), '收起态轮换 SVG 不得带平面旋转组（用户要求收起不倾斜）')
+    assert.ok(flat.endsWith('</svg>'), '收起态 SVG 结构不完整')
+    // 展开态：旋转组 + 数据源角
+    const m = tilted.match(/<g class="tf-step-flat-rotation" transform="rotate\((-?[0-9.]+) 8 8\)">/)
+    assert.ok(m, '展开态缺少平面旋转组 tf-step-flat-rotation（参考稿 svg3dRotated 同款）')
     assert.equal(Number(m[1]), spin.restAngle, '旋转角必须逐字取数据源 pokerSpin.restAngle')
+    // 两份资产只差最外层包装：摘掉旋转组后与收起态逐字节相同（不存在第二套关键帧）
+    const stripped = tilted
+      .replace(/<g class="tf-step-flat-rotation" transform="rotate\([^)]*\)">/, '')
+      .replace(/<\/g><\/svg>$/, '</svg>')
+    assert.equal(stripped, flat, '收起/展开两份轮换 SVG 必须只差最外层旋转包装')
     // 设计字面量 35.5 ↔ 数据源轴角：两边同源（参考稿里那条变体的标签与切换目标值）
     assert.ok(referenceHtml.includes('const target = toward35 ? 35.5 : 0'), '参考稿 35.5 目标值标记漂移')
     assert.ok(referenceHtml.includes('牌面轮换 · 平面旋转 ${angle}°'), '参考稿「平面旋转」变体标题漂移')
@@ -527,10 +569,49 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       '参考稿 svg3dRotated 接线漂移')
     assert.equal(Number(spin.restAngle.toFixed(1)), 35.5, '数据源轴角四舍五入应等于设计字面量 35.5')
     // 旋转组必须包住五组相位，并在 </svg> 前闭合
-    const rotAt = svg.indexOf('tf-step-flat-rotation')
-    const lastPhaseAt = svg.lastIndexOf('<g id="phase-5')
+    const rotAt = tilted.indexOf('tf-step-flat-rotation')
+    const lastPhaseAt = tilted.lastIndexOf('<g id="phase-5')
     assert.ok(rotAt >= 0 && lastPhaseAt > rotAt, '旋转组必须开在全部相位之前')
-    assert.ok(svg.endsWith('</g></svg>'), '旋转组必须在 </svg> 前闭合')
+    assert.ok(tilted.endsWith('</g></svg>'), '旋转组必须在 </svg> 前闭合')
+  })
+
+  it('状态切换：运行中收起 → 正立规则；运行中展开（官方 aria-expanded="true"）→ 倾斜规则', () => {
+    const skin = skinEl().textContent
+    const host = document.createElement('div')
+    host.setAttribute('data-step-process', '')
+    const btn = document.createElement('button')
+    btn.setAttribute('data-process-activity', 'thinking')
+    btn.setAttribute('aria-expanded', 'false')
+    const icon = document.createElement('span')
+    icon.setAttribute('data-step-process-icon', '')
+    btn.appendChild(icon)
+    const title = document.createElement('span')
+    title.setAttribute('data-shimmer', 'true')
+    btn.appendChild(title)
+    host.appendChild(btn)
+    document.body.appendChild(host)
+    try {
+      // 收起：基础（正立）规则命中；倾斜规则不命中
+      const flatSel = runningSelectorsOf(skin).find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
+      assert.ok(flatSel, '收起态 running 选择器缺失')
+      assert.ok(host.matches(hostSelectorOf(flatSel)), '收起态应命中正立 running 规则')
+      // 倾斜选择器的主体是组头按钮（不是组根）——matches 的主体必须对上
+      for (const sel of tiltedSelectorsOf(skin)) {
+        assert.ok(!btn.matches(hostSelectorOf(sel)), '收起态不得命中倾斜规则：' + sel)
+      }
+      // 展开：倾斜规则命中
+      btn.setAttribute('aria-expanded', 'true')
+      const tiltSel = tiltedSelectorsOf(skin).find((s) => s.includes('[data-shimmer="true"]') && !s.includes('data-text-shimmer'))
+      assert.ok(tiltSel, '展开态倾斜选择器缺失')
+      assert.ok(btn.matches(hostSelectorOf(tiltSel)), '展开态应命中倾斜规则')
+      // 两个契约都要带 aria-expanded 展开条件（0.1.7 / 0.2.0+ 都不能漏）
+      assert.ok(tiltedRuleOf(skin).includes('[data-text-shimmer="true"]) [data-process-activity][aria-expanded="true"]'), '0.1.7 契约的展开态选择器缺失')
+      // 倾斜规则必须排在基础规则之后（同特异性时后者胜；实际特异性也更高）
+      const rules = skin.split('\n')
+      const flatAt = rules.findIndex((l) => l === runningRuleOf(skin))
+      const tiltAt = rules.findIndex((l) => l === tiltedRuleOf(skin))
+      assert.ok(flatAt >= 0 && tiltAt > flatAt, '倾斜规则必须排在基础 running 规则之后')
+    } finally { host.remove() }
   })
 
   it('五牌面轮换本体：五组相位 / 每 0.8s 一次轮换 / 4s 完整循环 / 参考参数原样（±3.1°、0.55、0.867、1.888、1.35467）', () => {
@@ -548,7 +629,8 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
       assert.ok(svg.includes(token), '缺少参考参数 ' + token)
     }
     // 平面旋转不改关键帧：唯一的 rotate 仍是二维平面小角度 ±3.1°
-    // （整体 35.5377° 由外层 tf-step-flat-rotation 的 transform 属性承担，不是动画）
+    // （展开态的整体 35.5377° 由外层 tf-step-flat-rotation 的 transform 属性承担，不是动画；
+    //   收起态没有这层包装，本体逐字节相同）
     const rots = [...svg.matchAll(/type="rotate" values="([^"]+)"/g)].flatMap((m) => m[1].split(';').map(Number))
     assert.ok(rots.length >= 20, 'rotate 关键帧数量异常：' + rots.length)
     assert.equal(Math.max(...rots), 3.1, 'rotate 极值应为 +3.1°')
@@ -668,6 +750,7 @@ describe('Step Poker Running Animation（官方 shimmer 双契约）', () => {
     assert.ok(line, 'reduced-motion 的静态回退规则缺失')
     assert.ok(line.includes('[data-text-shimmer="true"]') && line.includes('[data-shimmer="true"]'), 'reduced-motion 必须覆盖双契约')
     assert.ok(line.includes('[data-step-process-icon]::before'), 'reduced-motion 必须覆盖卡牌位')
+    assert.ok(line.includes('[data-process-activity][aria-expanded="true"] [data-step-process-icon]::before'), 'reduced-motion 必须同时覆盖展开态倾斜规则（否则倾斜 SVG 会盖过静态回落）')
     const declaration = line.slice(line.indexOf('{') + 1)
     assert.ok(declaration.includes('-webkit-mask-image:var(--tf-suit)') && declaration.includes('mask-size:9.62px 13.05px'), 'reduced-motion 必须把 mask 换回静态花色牌（外缘与 Turn 牌一致）')
   })

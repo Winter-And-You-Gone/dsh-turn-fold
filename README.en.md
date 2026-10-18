@@ -210,14 +210,26 @@ and search reveal) works untouched; the plugin only reskins it:
   webFetch → ♠, edit/write → ♦, commands/code → ♣, subagents/plan/tools → 🐋whale
   (DeepSeek logo); unregistered activities fall back to ♥ (this mapping now mainly
   serves as the reduced-motion running fallback);
-- **Running face rotation · flat-rotated 35.5°** (**not** the Turn bar's vertical-diagonal-axis
-  flip — the two are deliberately different): a running step (official title shimmer. Soft
-  running-state dependencies — DSH 0.1.7 renders `data-text-shimmer`, DSH 0.2.0+ renders
-  `data-shimmer`; both are real official historical contracts and the plugin supports both)
-  keeps the **five equal card faces** (♠ ♥ ♦ ♣ + the DeepSeek whale; no front/back) and
-  rotates the whole visible animation (cards, suits, and the masks they reference) **around
-  the icon centre by 35.5°**. A self-running SVG (SMIL) is used as the card's CSS mask, so
-  the stroke color keeps following `currentColor`:
+- **Running face rotation · flat-rotated 35.5° only when expanded** (**not** the Turn bar's
+  vertical-diagonal-axis flip — the two are deliberately different): a running step (official
+  title shimmer. Soft running-state dependencies — DSH 0.1.7 renders `data-text-shimmer`,
+  DSH 0.2.0+ renders `data-shimmer`; both are real official historical contracts and the
+  plugin supports both) keeps the **five equal card faces** (♠ ♥ ♦ ♣ + the DeepSeek whale;
+  no front/back). **The tilt belongs to "running + expanded" only**: collapsed running uses
+  the same rotation animation **upright**, and only the expanded state rotates the whole
+  visible animation (cards, suits, and the masks they reference) **around the icon centre by
+  35.5°**. A self-running SVG (SMIL) is used as the card's CSS mask, so the stroke color keeps
+  following `currentColor`:
+  - **State fact** = the official group header button's `aria-expanded="true"` (official
+    `ChatGroupSeat` always renders `aria-expanded={open}`; the plugin's Legacy Header renders
+    the same hook too; it is the same official fact the completed fan uses). Running +
+    collapsed → upright; running + expanded → tilted. Zero JS state, pure CSS cascade;
+  - **Two assets**: the expanded state uses the generated block's data URI (with the rotation
+    wrapper); the collapsed state uses an upright SVG **derived at runtime by stripping the
+    outermost `<g class="tf-step-flat-rotation" …>` wrapper** from that same block. Both
+    animation bodies are byte-identical (a guard asserts "only the wrapper differs"), so
+    there is no second keyframe set. Cost: the two data URIs have separate SMIL timelines, so
+    toggling restarts the phase at 0 (the toggle is user-initiated, acceptable);
   - **Design source**: the reference `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html` — the
     animation body comes from **row 3** (`── 第三行：五牌面轮换动画 ──`): the five-face rotation
     itself (`const ANIM_SVG`) plus `svg3dRotated()`: insert
@@ -246,19 +258,20 @@ and search reveal) works untouched; the plugin only reskins it:
     on opposite diagonals and merge again, the only rotate being a ±3.1° 2D in-plane tilt; the
     layer order flips mid-way with `discrete`; four dynamic luminance masks knock the lower
     card's strokes out under the upper card; five phases form a 4s loop: diamond → club →
-    spade → heart → deepseek → back to diamond) **wrapped in**
-    `<g class="tf-step-flat-rotation" transform="rotate(35.5377 8 8)">`;
+    spade → heart → deepseek → back to diamond); **the expanded variant wraps it in**
+    `<g class="tf-step-flat-rotation" transform="rotate(35.5377 8 8)">`, and the collapsed
+    variant is that same body with the wrapper removed;
   - **Recorded boundary**: this SVG is baked into `client.js` at build time; a runtime
     localStorage icon-pack override does not rewrite it (overrides only reach the Turn-bar
     flip and the runtime-generated completed two-state faces) — same nature as before;
   - The running look is independent of the card count, and when the step settles the
     shimmer disappears → automatic fallback to the completed two-state icon (collapsed
     stack / expanded fan) — pure CSS cascade, zero JS running state; static suit card
-    under reduced motion;
+    under reduced motion (the tilt is disabled with it);
   - The rotation angle lives **only** in the SVG `transform` attribute: **CSS must never
     restate it** (a CSS transform silently overrides the attribute — the Turn bar hit
-    exactly that bug). The step-side class name `tf-step-flat-rotation` is deliberately
-    distinct from the Turn bar's `ccg-axis-rest-rotation`; guards live in
+    exactly that bug; same for both assets). The step-side class name `tf-step-flat-rotation`
+    is deliberately distinct from the Turn bar's `ccg-axis-rest-rotation`; guards live in
     `tests/unit.css.test.mjs` ("flat rotation contract");
 - **Step file list** (the "which files did this step touch" text at the group header's tail, pure CSS
   text): data comes from the official API only — `GroupSnapshot.members` (each member node's key) →
@@ -377,7 +390,7 @@ exhaustive inventory — see the `tests/` directory for the full list:
 | `unit.logic.test.mjs` | Metric pure functions: `turnClockOf` / `computeTurnMetrics` / `readStepUsage` (official TurnLocation / step usage / turn-tail aggregate), formatting, field visibility + localStorage persistence; identical inputs produce byte-identical outputs (no fake growth) |
 | `unit.turn-renderer.test.mjs` | Turn renderer: `open=false → click → setOpen(true)`, `open=true → click → setOpen(false)`; `foldable=false`/aborted/error → static bar with no setOpen path; Running Bar appears at 0s, non-interactive, touches no fold state; smooth handover on turn close; degraded rendering without `turnProcess` |
 | `unit.poker.test.mjs` | Activity→suit mapping (full official ProcessActivity vocabulary), stack/fan/flip SVG generation, **running flip axis = vertical diagonal axis (axis angle = `atan(w/h)` + geometry/origin checks + a CSS-override regression guard)**, component rendering, reduced-motion and no-WAAPI static fallback |
-| `unit.css.test.mjs` | Step skin gate (`applyIconStyle()` flipping `disabled` on the two style sheets) + official DOM hook rules; **flat-rotation contract (the `tf-step-flat-rotation` group wrapping every phase, angle taken verbatim from `pokerSpin.restAngle` and asserted to round to the design literal 35.5, five phases / 72 animateTransform / 15 animate / `0.8s`×82 / `4s`×5 untouched, ±3.1° planar tilt, four knockout masks, poker 5:7 card)**; **architecture guard: the old engine's `:has()` hiding rules must be gone** |
+| `unit.css.test.mjs` | Step skin gate (`applyIconStyle()` flipping `disabled` on the two style sheets) + official DOM hook rules; **flat-rotation contract (the tilt only exists when expanded: collapsed = upright, expanded = 35.5°, driven by the official `aria-expanded`; the two assets differ only by the outermost `<g class="tf-step-flat-rotation">` wrapper; the `tf-step-flat-rotation` group wrapping every phase, angle taken verbatim from `pokerSpin.restAngle` and asserted to round to the design literal 35.5, five phases / 72 animateTransform / 15 animate / `0.8s`×82 / `4s`×5 untouched, ±3.1° planar tilt, four knockout masks, poker 5:7 card)**; **architecture guard: the old engine's `:has()` hiding rules must be gone** |
 | `unit.gear.test.mjs` | Settings popup: field checkboxes, persistence, icon style / step skin selectors (hooks-order guard); **the "poker" preview row rotating one face per second (pure shift + the real shared 1s clock + unsubscribe on close)** |
 | `unit.compat.test.mjs` | **Registration audit: only `turn-process` is shadowed**, `exports.inject=['slots']`, priority-conflict yielding, soft degradation of registration errors; **architecture guard: zero old-engine identifiers / official-renderer delegation plumbing / transcriptView writes (comment-stripped, scanning both `client.js` and `index.js`); the plugin has zero scroll permission (0 `.scrollTop` writes, no `scrollIntoView`/`scrollTo`/`overflow-anchor`, no `data-chat-following-tail` read, no `data-conversation-scroll` sweep, no DOM observers at all); style-injection failure must not break plugin activation (a throwing appendChild still registers)**; rendering compatibility across the four official transcript modes |
 | `unit.step-cards.test.mjs` | Step card-count bridge: official `counts` summation → 3/5 cards, morph identity continuity, per-group mask geometry, whole bridge chain (groupSource subscription, same-domain rule revocation/restoration, leader unmount cleanup); **step file list: path extraction (settled/running/preparing/truncated/directory-tool/escaped), basename de-dup + `+N` folding, session-scope branches, running-state output, refresh on argument change, empty fallback without ChatNodeStore** |
@@ -442,7 +455,8 @@ poker cards**, and the same setting also decides the Step skin:
   reads — the old `scaleKeys`/`scaleKeyTimes` (73 values, zero runtime readers) and `pokerAnimSVG`
   (a 54 KB snapshot, zero consumers) are gone, which alone shrank `client.js` by ~59 KB.
   The **Step running rotation** is a build-time artifact on top of it: `npm run sync:step-anim`
-  regenerates it from the reference design's animation body (row 3) plus row 5's 35.5° design label,
+  regenerates it from the reference design's animation body (row 3) plus row 5's 35.5° design label
+  (this is the expanded-state tilt; the collapsed state strips the wrapper at runtime),
   and the script reads **only `pokerSpin.restAngle`** (plus the reference HTML) — changing
   `pokerPips` / `pokerSpinDeepseek` does **not** require re-running it; if `restAngle` changes and the
   script is not re-run, the running angle stays stale (`npm test`'s generation-block guard fails
@@ -642,9 +656,11 @@ git push --follow-tags
     - DSH 0.2.0+ (master, `TextShimmer.tsx`: `data-shimmer={active || undefined}`) →
       `data-shimmer="true"`.
     The plugin supports both: either one present → Running Step Poker animation
-    (`:has()` matching swaps the card mask to the **five-face rotation SVG rotated 35.5°** —
+    (`:has()` matching swaps the card mask to the **five-face rotation SVG** —
     ♠ ♥ ♦ ♣ + the DeepSeek whale as five equal faces, one rotation every 0.8s, a 4s loop with
-    dynamic knockout of the lower card, the whole animation rotated around the icon centre);
+    dynamic knockout of the lower card; **upright while collapsed, and only the expanded state
+    (the same button's `aria-expanded="true"`) rotates the whole animation around the icon
+    centre by 35.5°**);
     both absent →
     completed two-state fallback (collapsed five-suit stack / expanded fan).
     **Used only to identify running steps for the poker rotation animation**; when the

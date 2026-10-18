@@ -206,7 +206,7 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   播种的确定性洗牌给出，组内不重复；5 张恰好用满牌面池，池只有四花色时把重复牌面放在
   最下层 card1）。身份 = `sessionId + 官方 groupKey`，**只有已完成（官方
   `ProcessGroupData.closed === true`）的组参与分配**——running 组走运行态轮换动画
-  （平面旋转 35.5°），既不消耗 bag 也不产出覆盖规则；分配只在组第一次渲染（CSS 规则生成）时发生，之后重渲染 / 开合 /
+  （展开态才平面旋转 35.5°），既不消耗 bag 也不产出覆盖规则；分配只在组第一次渲染（CSS 规则生成）时发生，之后重渲染 / 开合 /
   快照更新都命中缓存（随机不藏在 CSS builder 里）；不持久化，F5 / 插件重载后重新随机。
   为控制样式体积，逐组牌面资产按 `(count, topFace)` 懒生成、永久缓存、每个变体一个
   `<style>` 元素（只写一次）：逐组规则只有 ~0.5KB（引用变量），整页资产上限 = 池大小 ×
@@ -245,13 +245,21 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   thinking/questions → ♥，read/readImage/search/webSearch/webFetch → ♠，
   edit/write → ♦，commands/code → ♣，subagents/plan/tools → 🐋鲸鱼（DeepSeek Logo）；
   未登记活动回退 ♥（该映射现在主要作为 reduced-motion 的运行态回落）；
-- **运行态牌面轮换 · 平面旋转 35.5°**（**不是**回合栏运行中那套竖直对角线轴翻牌——
+- **运行态牌面轮换 · 展开时平面旋转 35.5°**（**不是**回合栏运行中那套竖直对角线轴翻牌——
   两者刻意不同）：运行中的 Step（官方标题带 shimmer。Soft running-state
   dependencies——DSH 0.1.7 输出 `data-text-shimmer`、DSH 0.2.0+ 输出 `data-shimmer`，
   两者都是官方真实历史契约，插件同时兼容）保持**五牌面轮换**本体
-  （♠ ♥ ♦ ♣ + DeepSeek 鲸鱼五张地位相同的牌面，无正/背面），再把整套可见动画
-  （卡牌、花色、以及它们引用的 mask）**绕图标中心整体旋转 35.5°**。自运行 SVG（SMIL）
-  作为卡牌的 CSS mask，牌线颜色仍由 `currentColor` 跟随主题：
+  （♠ ♥ ♦ ♣ + DeepSeek 鲸鱼五张地位相同的牌面，无正/背面）。**倾斜只在「运行中 + 展开」**：
+  收起态是**正立**轮换（不加旋转包装），展开态才把整套可见动画（卡牌、花色、以及它们
+  引用的 mask）**绕图标中心整体旋转 35.5°**。自运行 SVG（SMIL）作为卡牌的 CSS mask，
+  牌线颜色仍由 `currentColor` 跟随主题：
+  - **状态事实** = 官方组头按钮的 `aria-expanded="true"`（官方 `ChatGroupSeat` 恒渲染
+    `aria-expanded={open}`，插件 Legacy Header 也主动渲染同一钩子；与 completed 展开扇形
+    同一个官方事实）。运行中收起 → 正立；运行中展开 → 倾斜。插件零 JS 判定，纯 CSS cascade；
+  - **两份资产**：展开态用生成块（带旋转包装）的 data URI；收起态用**运行时从生成块摘掉
+    最外层 `<g class="tf-step-flat-rotation" …>` 包装**派生的正立 SVG。两者动画本体逐字节
+    相同（守卫断言「只差最外层包装」），不存在第二套关键帧。代价：两份 data URI 各自一条
+    SMIL 时间线，开合切换会从相位 0 重新开始（切换本身是用户操作，可接受）；
   - **设计源** = 参考实现 `docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html`：动画本体取自
     **第三行**（`── 第三行：五牌面轮换动画 ──`）的 `const ANIM_SVG`，再加上 `svg3dRotated()`
     那一步（在 `</defs>` 之后插入 `<g class="anim-root-rotation" transform="rotate(angle 8 8)">`，
@@ -274,16 +282,17 @@ shimmer、官方分页与搜索显隐）原样工作，插件只换装：
   - **结构** = 五牌面轮换（每 0.8s 一组：两张完整平面牌对角轻微错开再合拢，唯一的 rotate 是
     ±3.1° 二维平面小角度；中途 `discrete` 在中点换层；四个动态 luminance 蒙版把下层牌与
     上层牌重叠处的线条挖空；五组相位连成 4s 完整循环：
-    diamond → club → spade → heart → deepseek →（回到 diamond））
-    **外面套一层** `<g class="tf-step-flat-rotation" transform="rotate(35.5377 8 8)">`；
+    diamond → club → spade → heart → deepseek →（回到 diamond））；
+    **展开态外面套一层** `<g class="tf-step-flat-rotation" transform="rotate(35.5377 8 8)">`，
+    收起态由同一份本体摘掉这层包装得到；
   - **边界（如实记录）**：本 SVG 是构建期烘焙进 `client.js` 的，运行时 localStorage
     图标包覆盖不改写它（覆盖只作用于回合栏翻牌与运行时生成的 completed 双态牌面）——
     与改动前的实现同性质；
   - 运行态与牌数无关（本组只有一个工具也照轮换）；回合结束 shimmer 消失 → 自动回落
     completed 双态（按本组工具数的 3/5 张收起牌堆 / 展开扇形），全程纯 CSS cascade、
-    零 JS 运行态。系统「减少动态效果」开启时运行态直接显示静态花色牌；
+    零 JS 运行态。系统「减少动态效果」开启时运行态直接显示静态花色牌（倾斜也一并关闭）；
   - 旋转角只由 SVG 的 `transform` 属性决定：**CSS 不得再写 transform 覆盖它**
-    （CSS transform 会压掉同名属性，回合栏踩过这个坑）。步骤侧旋转组类名
+    （CSS transform 会压掉同名属性，回合栏踩过这个坑；收起/展开两份资产同理）。步骤侧旋转组类名
     `tf-step-flat-rotation` 与回合栏 `ccg-axis-rest-rotation` 刻意分开，守卫见
     `tests/unit.css.test.mjs` 的「平面旋转契约」；
 - **软依赖**：全部选择器挂在官方 DOM 钩子上，总闸 = 皮肤 `<style>` 元素的
@@ -882,7 +891,7 @@ npm run check      # 语法检查 client.js / index.js
 | `unit.turn-renderer.test.mjs` | Turn 渲染器：`open=false → 点击 → setOpen(true)`、`open=true → 点击 → setOpen(false)`；`foldable=false`/aborted/error → 静态栏无 setOpen 通道；Running Bar 0 秒出现、非交互、不触碰 Fold 状态；回合结束平滑交接；`turnProcess` 缺失降级 |
 | `unit.poker.test.mjs` | 活动→花色映射（官方 ProcessActivity 词表全覆盖）、牌堆/扇形/翻牌 SVG 生成、**运行中翻牌轴 = 竖直对角线轴（轴角 = atan(w/h) + 几何/原点校验 + CSS 覆盖回归守卫）**、组件渲染、reduced-motion 与无 WAAPI 静态降级 |
 | `unit.step-cards.test.mjs` | Step 牌数桥：官方 `counts` 求和 → 3/5 张、3 张 morph 身份连续、逐组 mask 几何、桥全链路（groupSource 订阅、同域规则撤销/恢复、leader 卸载清空）；**步骤文件清单：路径抽取（结算态/运行中/preparing/截断/目录型工具/转义）、basename 去重 + `+N` 截断、会话作用域双支、运行中也输出、参数变化跟随刷新、无 ChatNodeStore 时降级为空** |
-| `unit.css.test.mjs` | Step 皮总闸（`applyIconStyle()` 切两张样式表的 `disabled`）与官方 DOM 钩子规则；**平面旋转契约（`tf-step-flat-rotation` 包住全部相位、角 = 数据源 `pokerSpin.restAngle` 且四舍五入 == 参考稿字面量 35.5、五相位/72 animateTransform/15 animate/0.8s×82/4s×5 全部原样、±3.1° 二维小角度、四蒙版挖空、poker 5:7 卡牌）**；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
+| `unit.css.test.mjs` | Step 皮总闸（`applyIconStyle()` 切两张样式表的 `disabled`）与官方 DOM 钩子规则；**平面旋转契约（倾斜只在展开态：收起 = 正立、展开 = 35.5°，由官方 `aria-expanded` 驱动，两份资产只差最外层 `<g class="tf-step-flat-rotation">` 包装；`tf-step-flat-rotation` 包住全部相位、角 = 数据源 `pokerSpin.restAngle` 且四舍五入 == 参考稿字面量 35.5、五相位/72 animateTransform/15 animate/0.8s×82/4s×5 全部原样、±3.1° 二维小角度、四蒙版挖空、poker 5:7 卡牌）**；**架构守卫：旧 Fold Engine 的 `:has()` 隐藏规则必须消失** |
 | `unit.gear.test.mjs` | 设置弹窗：字段 checkbox 双向绑定、设置持久化、图标风格 / Step 皮选择器（hooks 顺序守卫）；**「动态扑克牌」预览的牌面每秒轮换（纯函数位移 + 真实直播时钟驱动 + 关窗退订）** |
 | `unit.compat.test.mjs` | **注册审计：仅 shadow `turn-process` 一个 key**、`exports.inject=['slots']`、priority 冲突让位、注册异常软降级；**架构守卫：旧引擎标识符 / 官方 renderer 代理层 / transcriptView 写入扫描为零（剥注释后同时扫 `client.js` 与 `index.js`）；插件零滚动权限（`.scrollTop` 写入 0 处、无 `scrollIntoView`/`scrollTo`/`overflow-anchor`、不读 `data-chat-following-tail`、不扫 `data-conversation-scroll`、无任何 DOM 观察器）；样式注入失败不得带崩插件激活（appendChild 抛错仍能注册）**；官方四档 transcript 模式渲染兼容 |
 | `regression.test.mjs` | 历史回归：直播时钟空转定时器、**禁止假 Token 增长（真实数据不变 → 数字不变）**、齿轮 stopPropagation、降级要求（图标包/设置损坏回退默认） |
@@ -952,9 +961,9 @@ npm run check      # 语法检查 client.js / index.js
   （`frames: 72` = 5°/步，与历史字面量表逐字节相同，有守卫锁死）；数据源里不放"没人读的值"
   ——旧 `scaleKeys`/`scaleKeyTimes`（73 个值、运行时零读取）与 `pokerAnimSVG`（54 KB 快照、
   零消费者）已删除，client.js 因此瘦了 ~59 KB；
-- **步骤栏运行中轮换（平面旋转 35.5°）**是**构建期**产物（`npm run sync:step-anim` 由参考稿
+- **步骤栏运行中轮换（展开态平面旋转 35.5°，收起态正立）**是**构建期**产物（`npm run sync:step-anim` 由参考稿
   第三行动画本体 + 第五行的 35.5° 设计标签生成、旋转角取上面的数据源 `pokerSpin.restAngle`，
-  见「Step 运行态」一节）：脚本**只读 `pokerSpin.restAngle`**（外加参考稿 HTML）——改
+  见「Step 运行态」一节；收起态正立版由运行时摘掉旋转包装派生）：脚本**只读 `pokerSpin.restAngle`**（外加参考稿 HTML）——改
   `pokerPips` / `pokerSpinDeepseek` **不需要**重跑它；改了 `restAngle` 忘了重跑，运行中旋转角
   仍是旧值（`npm test` 的生成块守卫会先失败）。
 - **图标包（`localStorage['dsh-turn-fold:icons']`）的覆盖面**（不对称是设计，不是 bug）。
@@ -1138,8 +1147,9 @@ git push --follow-tags
     - DSH 0.2.0+（master，`TextShimmer.tsx`：`data-shimmer={active || undefined}`）→
       `data-shimmer="true"`。
     插件同时兼容两者，任一存在 → Running Step Poker 动画（`:has()` 命中即把卡牌
-    mask 换成**五牌面轮换 · 平面旋转 35.5° 的 SVG**——♠ ♥ ♦ ♣ + DeepSeek 五张地位相同的
-    牌面、每 0.8s 一次轮换、4s 完整循环、动态蒙版挖空下层牌，整套动画绕图标中心整体旋转 35.5°）；
+    mask 换成**五牌面轮换 SVG**——♠ ♥ ♦ ♣ + DeepSeek 五张地位相同的
+    牌面、每 0.8s 一次轮换、4s 完整循环、动态蒙版挖空下层牌；**收起态正立，展开态
+    （同一按钮 `aria-expanded="true"`）才把整套动画绕图标中心旋转 35.5°**）；
     两者都不存在 → completed 双态静态回落（收起五张牌堆 / 展开扇形）。**仅用于运行中 Step 的
     扑克轮换动画识别**；官方回合结束属性消失 → 动画规则不再命中 → 自动回落，
     交接零 JS。无论视觉钩子是否失效，都不影响 Step Fold / Tool / Think /

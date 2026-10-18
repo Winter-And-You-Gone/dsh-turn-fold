@@ -337,7 +337,7 @@ describe('iconStyle D：native 体积门控与图标包兜底', () => {
     const skin = styleEl(win, fresh.SKIN_CSS_ID)
     const cards = styleEl(win, fresh.STEP_CARD_CSS_ID)
     assert.ok(skin, '皮肤元素仍要建出来（总闸挂在它的 disabled 上）')
-    assert.equal(skin.textContent, '', 'native：不生成约 522 KB 皮肤 CSS')
+    assert.equal(skin.textContent, '', 'native：不生成约 640 KB 皮肤 CSS')
     assert.equal(skin.disabled, true, 'native：总闸关闭')
     assert.ok(cards && cards.disabled === true, '牌数桥表同样禁用')
 

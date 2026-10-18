@@ -85,19 +85,23 @@ Two different running icons — do not assume they are the same animation:
   It is an inline SVG built at runtime by `buildPokerSpinSVG` from `iconConfig` (so a
   `localStorage['dsh-turn-fold:icons']` pack override reaches it); the axis group is
   `.ccg-axis-rest-rotation`, and CSS must never restate its angle.
-- **Step group header (running) — "face rotation · flat-rotated 35.5°"**: the five equal faces
-  (♠ ♥ ♦ ♣ + whale, no front/back) keep rotating exactly as in the reference design's row 3 (its
-  `const ANIM_SVG` animation body plus the `svg3dRotated()` step), and the whole visible animation is
-  wrapped in one plane rotation
-  (`<g class="tf-step-flat-rotation" transform="rotate(35.5377 8 8)">`, angle from the same
-  `pokerSpin.restAngle`, which must round to the design's literal 35.5). The 35.5° target angle and
-  the design label come from **row 5's** click-toggle variant, not from row 3's own previews (those
-  render at `ANIM_ANGLES = [0, 30, 45, 60, 90]`). It is a **self-running SVG baked into `client.js`**
-  by `npm run sync:step-anim`, used as the `[data-step-process-icon]::before` mask data URI;
-  regenerating it asserts the reference design's wiring and structure (row 3's animation body and
-  flat-rotation wiring, row 5's 35.5 literal, the rotation group wrapping every phase, no banned
-  axis-rotation identifiers) and **prints** the output counts to stdout — the count invariants
-  (5 phases / 72 animateTransform / 15 animate / `0.8s`×82 / `4s`×5) are asserted by
+- **Step group header (running) — "face rotation · flat-rotated 35.5° when expanded"**: the five equal
+  faces (♠ ♥ ♦ ♣ + whale, no front/back) keep rotating exactly as in the reference design's row 3 (its
+  `const ANIM_SVG` animation body plus the `svg3dRotated()` step). The tilt is **not permanent**:
+  - **running + collapsed** → the same rotation animation **upright** (the runtime strips the wrapper);
+  - **running + expanded** (`aria-expanded="true"` on the official group header button) → the whole
+    visible animation is wrapped in one plane rotation
+    (`<g class="tf-step-flat-rotation" transform="rotate(35.5377 8 8)">`, angle from the same
+    `pokerSpin.restAngle`, which must round to the design's literal 35.5).
+  The 35.5° target angle and the design label come from **row 5's** click-toggle variant, not from
+  row 3's own previews (those render at `ANIM_ANGLES = [0, 30, 45, 60, 90]`). It is a **self-running
+  SVG baked into `client.js`** by `npm run sync:step-anim`, used as the
+  `[data-step-process-icon]::before` mask data URI (two data URIs: expanded = generated block,
+  collapsed = same block with the outermost rotation group removed at runtime — the bodies are
+  byte-identical); regenerating it asserts the reference design's wiring and structure (row 3's
+  animation body and flat-rotation wiring, row 5's 35.5 literal, the rotation group wrapping every
+  phase, no banned axis-rotation identifiers) and **prints** the output counts to stdout — the count
+  invariants (5 phases / 72 animateTransform / 15 animate / `0.8s`×82 / `4s`×5) are asserted by
   `tests/unit.css.test.mjs`'s flat-rotation contract. Because it is a build-time artifact, a runtime
   icon-pack override does **not** rewrite it, and the script reads **only `pokerSpin.restAngle`** (plus
   the reference HTML) — re-run it after changing that one value if the step rotation must follow.

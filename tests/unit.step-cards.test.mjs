@@ -523,19 +523,32 @@ describe('Step 牌数 E：只读视觉桥', () => {
 // F. 回归：running / hover-focus / 双契约 / reduced-motion / Turn 栏
 // ══════════════════════════════════════════════════════════════════════
 describe('Step 牌数 F：零回归', () => {
-  it('running 平面旋转轮换未受影响（规则、相位、牌面顺序原样）', () => {
+  it('running 平面旋转轮换未受影响（收起正立 / 展开 35.5°，本体与牌面顺序原样）', () => {
     const css = skinCss()
     const running = css.split('\n').find((l) => l.includes(':has([data-shimmer="true"]) [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
     assert.ok(running, 'running 轮换规则缺失')
-    const m = running.match(/-webkit-mask-image:url\("(data:image\/svg\+xml,[^"]+)"\)/)
-    const svg = decodeURIComponent(m[1].slice('data:image/svg+xml,'.length))
-    for (let n = 1; n <= 5; n++) assert.ok(svg.includes('<g id="phase-' + n + '">'), 'phase-' + n)
-    assert.ok((svg.match(/type="rotate" values="/g) || []).length >= 20, 'rotate 帧数（≥20）')
-    assert.ok(svg.includes('id="card-deepseek"'), '五牌面（含鲸鱼）原样')
-    // 平面旋转 35.5°：整套动画包在旋转组里（角取数据源 pokerSpin.restAngle）
+    const tilted = css.split('\n').find((l) => l.includes(':has([data-shimmer="true"]) [data-process-activity][aria-expanded="true"] [data-step-process-icon]::before{') && l.includes('-webkit-mask-image:url("data:image/svg+xml'))
+    assert.ok(tilted, '展开态倾斜规则缺失')
+    const svgOf = (rule) => decodeURIComponent(
+      rule.match(/-webkit-mask-image:url\("(data:image\/svg\+xml,[^"]+)"\)/)[1].slice('data:image/svg+xml,'.length))
+    const flatSvg = svgOf(running)
+    const tiltSvg = svgOf(tilted)
+    for (const svg of [flatSvg, tiltSvg]) {
+      for (let n = 1; n <= 5; n++) assert.ok(svg.includes('<g id="phase-' + n + '">'), 'phase-' + n)
+      assert.ok((svg.match(/type="rotate" values="/g) || []).length >= 20, 'rotate 帧数（≥20）')
+      assert.ok(svg.includes('id="card-deepseek"'), '五牌面（含鲸鱼）原样')
+    }
+    // 收起 = 正立；展开 = 35.5°（角取数据源 pokerSpin.restAngle）
+    assert.ok(!flatSvg.includes('tf-step-flat-rotation'), '收起态不得带倾斜')
     const spin = T.ICON_DEFAULTS.pokerSpin
-    assert.ok(svg.includes('<g class="tf-step-flat-rotation" transform="rotate(' + spin.restAngle + ' 8 8)">'),
-      '平面旋转组缺失或角度与数据源不一致')
+    assert.ok(tiltSvg.includes('<g class="tf-step-flat-rotation" transform="rotate(' + spin.restAngle + ' 8 8)">'),
+      '展开态平面旋转组缺失或角度与数据源不一致')
+    // 两份本体只差最外层包装（不存在第二套关键帧）
+    assert.equal(
+      tiltSvg.replace(/<g class="tf-step-flat-rotation" transform="rotate\([^)]*\)">/, '').replace(/<\/g><\/svg>$/, '</svg>'),
+      flatSvg,
+      '收起/展开两份轮换 SVG 必须只差最外层旋转包装',
+    )
     // running 与 tool count 无关：规则本身不引用 --tf-stack-3/-fan-3
     assert.ok(!running.includes('--tf-stack-3') && !running.includes('--tf-fan-3'), 'running 动画必须与牌数无关')
   })
