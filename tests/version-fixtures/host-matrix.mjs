@@ -95,7 +95,7 @@ export const HOST_VERSION_FIXTURES = [
     tag: 'dsh-v0.2.1-rc.3',
     probe: { officialTurnProcess: true, officialStandardKit: true, turnDataSource: true, stepGroups: true, sessionDomScope: true, conversationContentAnchor: true, oldShimmer: false, newShimmer: true, transcriptView: true, turnOwnerHasContent: true },
     expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
-    note: 'ui-chat 客户端契约与 0.2.1-rc.2 逐字一致（仅 package.json 版本号变化）；engines.dsh 上限抬到 rc.3 以覆盖运行时',
+    note: 'ui-chat 客户端契约与 0.2.1-rc.2 逐字一致（仅 package.json 版本号变化）；当时 engines.dsh 上限抬到 rc.3 以覆盖运行时（2026-10-25 起区间策略改为仅下限、无上限，未验证版本由探测降级兜底——抬上限动作成为历史，见 README）',
   },
 ]
 

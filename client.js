@@ -148,7 +148,7 @@ window.__ModuleLoader__.load({
 		// 「NOTICE_VERSION == package.json version」守卫钉死：只 bump 包版本而忘了这里，
 		// `npm test` 直接红（Release workflow 在 publish 前跑全量测试，所以发不出去）。
 		// 漂移的后果是静默的：用户按当前版本写 meta.compat 会被判不兼容、悄悄回退内置默认。
-		var NOTICE_VERSION = "0.7.2";
+		var NOTICE_VERSION = "0.7.3";
 
 		// ---- 自有 UI 原语（零宿主包依赖） ----
 		// 官方插件实践（cordis-plugin-development/references/practices.md）：不要运行时
@@ -2421,6 +2421,25 @@ window.__ModuleLoader__.load({
 				if (typeof console !== "undefined" && console.warn) console.warn("[dsh-turn-fold] " + message);
 			} catch (e) { /* 忽略 */ }
 		}
+		/** 宿主通知路径统一防护（崩溃隔离承诺的第 4 层，见 README「2026-10-25 政策注记」）：
+		 *  ctx.on("slots/changed") / slots.onEntryError / slots.subscribe 的回调都在宿主的
+		 *  通知循环里**同步执行**，抛错会沿宿主 dispatch 冒泡。所有宿主通知回调必须经本包装
+		 *  ——抛错就地拦截、打 console.warn、绝不逃逸（engines.dsh 改为仅下限后，这是
+		 *  "插件崩溃绝不影响宿主"承诺在通知路径上的兜底）。
+		 *  tests/unit.compat.test.mjs 的「宿主通知回调防护」守卫会数裸注册。 */
+		function guardedHostListener(label, fn) {
+			return function () {
+				try {
+					return fn.apply(this, arguments);
+				} catch (err) {
+					try {
+						if (typeof console !== "undefined" && console.warn) {
+							console.warn("[dsh-turn-fold] 宿主通知回调抛错（已拦截，不影响宿主）：" + label, err);
+						}
+					} catch (e) { /* 诊断失败不影响运行 */ }
+				}
+			};
+		}
 		/** 严格 builtin 查找：key 匹配 + priority 恰好 0 + component 非空。
 		 *  component 类型不做 function 限制（memo/forwardRef 是 object，同样可 createElement）。 */
 		function findLegacyBuiltinRenderer(slots, kind) {
@@ -2510,6 +2529,7 @@ window.__ModuleLoader__.load({
 			for (var j = 0; j < defs.length; j++) {
 				if (!legacyShadowOwnershipAvailable(slots, defs[j][0])) {
 					legacyTurnBackendBlocked = true;
+					legacyWarnOnce("legacyBackendBlocked", "legacy backend 槽位被其他插件占用（stable conflict）→ 放弃 bootstrap，不自动重抢；DSH 不受影响");
 					stopLegacyTurnBootstrap();
 					return;
 				}
@@ -2521,10 +2541,10 @@ window.__ModuleLoader__.load({
 			var ctxRef = legacyStepContextRef;
 			if (!legacyTurnBootstrapDisposer && ctxRef && typeof ctxRef.on === "function") {
 				try {
-					var dispose = ctxRef.on("slots/changed", function (key) {
+					var dispose = ctxRef.on("slots/changed", guardedHostListener("legacy-turn-bootstrap", function (key) {
 						if (key !== "conversation.chat.node") return;
 						legacyTurnBootstrapCheck();
-					});
+					}));
 					if (typeof dispose === "function") legacyTurnBootstrapDisposer = dispose;
 				} catch (e) { /* bootstrap 监听不可用 → 只依赖同步首查 */ }
 			}
@@ -2593,19 +2613,19 @@ window.__ModuleLoader__.load({
 			try {
 				if (!ctxRef || typeof ctxRef.on !== "function") return null;
 				if (typeof slots.onEntryError !== "function" || typeof slots.subscribe !== "function") return null;
-				var onChanged = ctxRef.on("slots/changed", function (key) {
+				var onChanged = ctxRef.on("slots/changed", guardedHostListener("ownership-monitor", function (key) {
 					if (key !== "conversation.chat.node") return;   // 只关心本 slot 的 registry mutation
 					legacyStepOwnershipCheck();
-				});
+				}));
 				if (typeof onChanged !== "function") return rollback();
 				disposers.push(onChanged);
-				var errSub = slots.onEntryError(function (key) {
+				var errSub = slots.onEntryError(guardedHostListener("ownership-entry-error", function (key) {
 					if (key !== "conversation.chat.node") return;
 					legacyStepOwnershipCheck();
-				});
+				}));
 				if (typeof errSub !== "function") return rollback();
 				disposers.push(errSub);
-				var sub = slots.subscribe("conversation.chat.node", legacyStepOwnershipCheck);
+				var sub = slots.subscribe("conversation.chat.node", guardedHostListener("ownership-subscribe", legacyStepOwnershipCheck));
 				if (typeof sub !== "function") return rollback();
 				disposers.push(sub);
 				return {
@@ -5408,13 +5428,13 @@ window.__ModuleLoader__.load({
 				deferredTurnFoldScheduled = false;
 				try { resolveDeferredTurnFold(slotsSvc); } catch (e) { /* 定论失败保持等待，不影响宿主 */ }
 			};
-			deferredTurnFoldDisposer = ctx.on("slots/changed", function (key) {
+			deferredTurnFoldDisposer = ctx.on("slots/changed", guardedHostListener("deferred-turn-fold", function (key) {
 				if (key !== "conversation.chat.node" || deferredTurnFoldDisposer === null) return;
 				if (scheduled) return;
 				scheduled = true;
 				deferredTurnFoldScheduled = true;
 				Promise.resolve().then(check);   // 等同一同步突变批（声明 + 官方 inject 回调注册）全部落地
-			});
+			}));
 			// 同步首查：声明可能已经发生（apply 与官方 apply 的间隔内）。
 			check();
 		}

@@ -542,6 +542,18 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 > 版本矩阵与源码契约测试加入 rc.3 基线（commit `1f81c047fc`），`npm test` 全绿。
 > 证据等级：CONTRACT-VERIFIED；LOAD/APPLY 待重启桌面端后复核。
 
+> **2026-10-25（同日第二项）：`engines.dsh` 改为仅下限（无上限）。** 闭环区间时代（每个新
+> 宿主 prerelease 都要抬上限并发版，否则 0.2.1+ 宿主预检整包跳过、插件"静默消失"）到此为止。
+> 依据是"插件崩溃绝不影响宿主"已有四层兜底：① 宿主 `app-boot` 逐条目激活隔离（插件激活失败
+> 只是一条 `did not activate` 警告，宿主照常启动）；② 宿主 `ui-renderer` 的 SlotErrorBoundary
+> 逐条目渲染隔离（插件 renderer 崩溃只在原位渲染 `data-slot-error` 占位符，兄弟条目与会话树
+> 存活）；③ 插件注册事务 FAIL OPEN（预检失败整体不装，官方 priority-0 renderer 保持 owner）；
+> ④ 插件全部宿主通知回调（`ctx.on("slots/changed")` / `slots.onEntryError` / `slots.subscribe`）
+> 经 `guardedHostListener` 统一 try/catch 包装，抛错不逃逸进宿主 dispatch。未验证宿主版本的
+> 最坏行为 = 插件零注册（FAIL OPEN）或单个 slot 占位符；控制台 `[dsh-turn-fold]` 的
+> probing/resolved 信息行与降级警告是诊断线索。此后 DSH 升级不再需要抬上限发版才能加载；
+> 契约核对照常进行（本矩阵 = 已验证基线的证据表），只是不再作为加载门控。
+
 **验收期间发现并修复的真机缺陷（bundle 装载时序竞态）**：本插件以 bundle 方式装载时只注入
 `slots`，cordis 会在服务就绪时立即 apply——可能**早于**官方 conversation 层声明
 `conversation.chat.node`。此时注册期探测把「没有 turn-process 条目」误判成 legacy →
@@ -819,12 +831,16 @@ main 的 Turn 折叠**语义**（membership / 边界 / header / final / reason�
 TurnBarView fallback 面负责：Turn 级时钟取 `legacy.turnTimings`/`turnEnds`，TTFT 取
 turn-tail 的官方 `ttftMs`，decode 由 assistant-step 证据聚合，取不到的字段显示 "—"）。
 
-当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.1-rc.3"`：区间内的 0.1.7-rc.1 / 0.1.7-rc.2 /
-0.2.0-rc.2 三个版本**已 LIVE-HOST VERIFIED**（见上文「Live-host acceptance：已真机验收的版本」）；
+当前 `engines.dsh = ">=0.1.7-rc.1"`——**仅下限、无上限**（2026-10-25 起，政策见上文注记）。
+已验证基线：0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 三个版本**已 LIVE-HOST VERIFIED**
+（见上文「Live-host acceptance：已真机验收的版本」）；
 0.2.1-rc.2 已按 release commit `d1b9c04067` 逐契约核对并纳入版本矩阵，证据等级为
 **CONTRACT-VERIFIED + LOAD/APPLY VERIFIED**（Turn Bar 接管待真实会话验收）。
 0.2.1-rc.3 按 release commit `1f81c047fc` 核对：`ui-chat` 客户端契约与 rc.2 逐字一致，
 证据等级 **CONTRACT-VERIFIED**（LOAD/APPLY 待重启桌面端复核）。
+**上限不设**：未验证的未来宿主版本由运行时探测降级兜底——注册期三态探测 + 安装事务
+FAIL OPEN + 宿主 app-boot 逐条目激活隔离 + 官方 SlotErrorBoundary 逐条目渲染隔离 +
+宿主通知回调统一 try/catch 包装；最坏行为 = 插件零注册或单个 slot 占位符，不影响宿主本身。
 **下限不放开**：0.1.1-rc.2 的 Full Legacy Node Backend（Turn + Step 双语义）与 0.1.2 ~ 0.1.6 的
 Official Turn + Legacy Step 都必须等真实旧宿主矩阵通过后才会放开 `engines.dsh`——0.1.1 的真机
 结论是**失败**（3 键 backend 安装后自行 teardown，折叠未生效），0.1.2 / 0.1.5 连官方 npm
@@ -1127,13 +1143,17 @@ git push --follow-tags
   **更早版本不再声明兼容**——
   "安装后自然休眠"不计入兼容，兼容 = 插件核心功能真正工作。DSH 升级若改变上述
   契约，本插件可能需要随版本小改（属插件维护，非改源码）。
-- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1 <=0.2.1-rc.3`
-  —— 插件市场（dshmarket）读 npm `latest` manifest 的这个字段，在插件卡片上显示
-  宿主要求，并在**更新**前拦下确定不满足的版本。
+- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1`（**仅下限、无上限**；
+  2026-10-25 前曾是闭区间、锁到已核验版本——那个时代每个宿主升级都要抬上限并发版，否则
+  0.2.1+ 宿主预检会把 bundle 整包跳过，用户升级桌面端后插件"静默消失"）。
+  插件市场（dshmarket）仍读 npm `latest` manifest 的这个字段显示宿主要求，并在**更新**前
+  拦下确定不满足的版本（现在只有低于 0.1.7-rc.1 的宿主会被拦）。
   **DSH 0.2.1 起宿主自己也会执行该字段**（`app-boot` 的 plugin-compatibility 预检）：
-  运行时版本不满足区间的 bundle 会在 profile 组装时被跳过（记入 `skippedBundles`），
-  插件不会加载——所以每次 DSH 升级后必须重新核对契约、抬上限并发布，否则用户升级
-  桌面端后插件会"静默消失"。区间是**闭区间**、锁到已核验的宿主版本。
+  仅下限的区间对任何未来版本都满足 → bundle 永远通过预检被加载；未验证版本上的不兼容由
+  **崩溃隔离**兜底（四层机制见上文 2026-10-25 政策注记）：探测不过 → 零注册（FAIL OPEN）；
+  渲染崩溃 → 官方 SlotErrorBoundary 单条目占位；激活失败 → app-boot 逐条目隔离，宿主照常
+  启动。契约核对在每次 DSH 升级后照常进行（版本矩阵 = 已验证基线证据表），但**不再作为
+  加载门控**——适配节奏从"必须发版"降为"最好核实"。
 - **集成依赖清单**（DSH 升级时对照排查；已按 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2
   `c1b47e41fc` ↔ 0.2.1-rc.2 `d1b9c04067` ↔ 0.2.1-rc.3 `1f81c047fc` 逐契约 diff 审计：
   Public/stable 契约在四个 release 间保持不变；0.2.1 只新增 `interrupted` 停止语义、

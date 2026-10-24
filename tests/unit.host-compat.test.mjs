@@ -693,9 +693,12 @@ describe('最终支持契约矩阵（supported-host-matrix contract）', () => {
       assert.equal(fixture.tag, 'dsh-v' + fixture.version, fixture.version + ' tag 与版本一致')
     }
   })
-  it('K4 engines.dsh 是审计结论的唯一载体：当前区间只声明已真机/契约覆盖的版本段', () => {
+  it('K4 engines.dsh 是审计结论的唯一载体：2026-10-25 起为仅下限（无上限），未验证版本由探测降级兜底', () => {
     const pkg = JSON.parse(require('node:fs').readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-    assert.equal(pkg.engines.dsh, '>=0.1.7-rc.1 <=0.2.1-rc.3',
-      'engines.dsh 只能在契约核对/宿主矩阵通过后修改；0.2.1-rc.3 已按 release 源码逐契约核对并纳入版本矩阵')
+    assert.equal(pkg.engines.dsh, '>=0.1.7-rc.1',
+      'engines.dsh 仅下限策略（2026-10-25）：上限不再锁版本，bundle 对任何未来宿主都通过预检被加载；' +
+      '未验证版本上的不兼容由崩溃隔离兜底（注册期三态探测 FAIL OPEN / 宿主 app-boot 逐条目激活隔离 / ' +
+      '官方 SlotErrorBoundary 逐条目渲染隔离 / 插件通知回调统一 try-catch 包装，见 README 兼容政策注记）；' +
+      '下限 0.1.7-rc.1 仍不放开（更早宿主未验证且 0.1.2/0.1.5 连 runtime 都起不来）')
   })
 })

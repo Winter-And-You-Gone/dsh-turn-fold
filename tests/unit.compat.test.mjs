@@ -326,6 +326,31 @@ describe('架构守卫（源码扫描）', () => {
   })
 })
 
+describe('宿主通知回调防护（崩溃隔离承诺：监听器抛错不得逃逸进宿主 dispatch）', () => {
+  // engines.dsh 改为仅下限（2026-10-25，见 README 兼容政策注记）后，"插件崩溃绝不影响宿主"
+  // 由四层兜底：app-boot 逐条目激活隔离（宿主侧）/ SlotErrorBoundary 逐条目渲染隔离（宿主侧）/
+  // 注册事务 FAIL OPEN（插件侧）/ 本守卫锁定的通知回调统一 try-catch 包装（插件侧）。
+  // ctx.on("slots/changed") / slots.onEntryError / slots.subscribe 的回调都在宿主通知循环里
+  // 同步执行——新增宿主回调必须经 guardedHostListener 包装，裸注册在这里红。
+  const code = readFileSync(CLIENT_JS, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.split('//')[0]).join('\n').replace(/\r/g, '')
+
+  it('guardedHostListener 定义恰好一次，五处注册全部经包装', () => {
+    assert.equal(code.split('function guardedHostListener(').length - 1, 1, '防护 helper 定义恰好一次')
+    assert.equal((code.match(/ctx(Ref)?\.on\("slots\/changed", guardedHostListener\(/g) || []).length, 3,
+      '三处 slots/changed（legacy bootstrap / ownership monitor / deferred turnFold）全部经包装')
+    assert.equal(code.split('slots.onEntryError(guardedHostListener(').length - 1, 1, 'onEntryError 经包装')
+    assert.equal(code.split('slots.subscribe("conversation.chat.node", guardedHostListener(').length - 1, 1, 'subscribe 经包装')
+  })
+
+  it('不存在裸注册（新加宿主回调不经包装 → 这里红）', () => {
+    assert.equal((code.match(/ctx(Ref)?\.on\("slots\/changed",\s*function/g) || []).length, 0, 'slots/changed 有裸回调')
+    assert.ok(!code.includes('onEntryError(function'), 'onEntryError 有裸回调')
+    assert.ok(!code.includes('slots.subscribe("conversation.chat.node", legacyStepOwnershipCheck)'), 'subscribe 旧裸形态残留')
+  })
+})
+
 describe('官方 transcript 四模式兼容（Compact / Standard / Detailed / Verbose）', () => {
   const usageStep = {
     turn: 13, step: 1, status: 'settled',

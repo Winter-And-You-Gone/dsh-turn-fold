@@ -620,15 +620,24 @@ git push --follow-tags
   count as compatibility; compatibility means the plugin's core features really work.
   If a DSH upgrade changes the contract above, this plugin may need a matching
   maintenance release (plugin maintenance, never source patches).
-- **Declared host requirement**: `engines.dsh` = `>=0.1.7-rc.1 <=0.2.1-rc.3` in
-  `package.json`. The plugin marketplace (dshmarket) reads this field from the npm
-  `latest` manifest to show the badge and to block updates that certainly cannot
-  satisfy it. **Since DSH 0.2.1 the host enforces it too** (the `app-boot`
-  plugin-compatibility preflight): a bundle whose range does not cover the running
-  version is skipped during profile composition and never loads. Re-verify the
-  contract after every DSH upgrade, raise the ceiling, and ship a release — otherwise
-  the plugin silently disappears for users who update their desktop app. The range is
-  **closed** and locked to verified host versions.
+- **Declared host requirement**: `engines.dsh` = `>=0.1.7-rc.1` in `package.json`
+  (**floor only, no ceiling** — since 2026-10-25; before that it was a closed range locked
+  to verified host versions, and every DSH release required raising the ceiling and shipping,
+  otherwise the 0.2.1+ host preflight skipped the bundle and the plugin silently disappeared
+  for users who updated their desktop app). The plugin marketplace (dshmarket) still reads
+  this field from the npm `latest` manifest to show the badge and to block updates that
+  certainly cannot satisfy it (only hosts below 0.1.7-rc.1 are blocked now). **Since DSH 0.2.1
+  the host enforces the field too** (the `app-boot` plugin-compatibility preflight): a
+  floor-only range satisfies every future version, so the bundle always passes the preflight
+  and loads; on unverified versions incompatibility is absorbed by **crash isolation** —
+  failed probes → zero registration (FAIL OPEN); a crashed renderer → the official
+  SlotErrorBoundary replaces that single slot entry with a placeholder; a failed activation →
+  app-boot's per-entry containment and the host keeps booting; every host-notification
+  callback (`ctx.on("slots/changed")` / `slots.onEntryError` / `slots.subscribe`) is wrapped
+  in a try/catch guard so a throwing listener never escapes into the host dispatch. Contract
+  audits continue after every DSH upgrade (the zh capability matrix is the evidence table of
+  verified baselines) but no longer gate loading — adaptation went from "must ship a release"
+  to "should re-verify".
 - **Integration dependency list** (check against DSH upgrades; audited via a
   contract-by-contract diff of 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2 `c1b47e41fc` ↔
   0.2.1-rc.2 `d1b9c04067` ↔ 0.2.1-rc.3 `1f81c047fc`: the Public/stable contracts are unchanged

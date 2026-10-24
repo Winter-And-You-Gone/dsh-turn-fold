@@ -13,10 +13,12 @@
 //     ① turnProcessAlwaysOpen 增加 interrupted（与 aborted 同为停止语义）→ 插件同一判定；
 //     ② 官方分组改由 group-tree 位置驱动（turn-process/turn-tail = groupTree:'turn'）：
 //        插件只读官方 group snapshot 的成员与 DOM 钩子，不参与分组；
-//     ③ 宿主开始用 engines.dsh 拦截不兼容 bundle → package.json 区间必须覆盖运行时。
+//     ③ 宿主开始用 engines.dsh 拦截不兼容 bundle → 当时 package.json 区间必须覆盖运行时
+//        （2026-10-25 起策略改为仅下限、无上限：未验证版本由注册期探测/FAIL OPEN/宿主
+//        SlotErrorBoundary 兜底，抬上限不再作为加载前提，见 README 兼容政策注记）。
 //   0.2.1-rc.3 的变化同样已核对：packages/client/ui-chat/src/client 与 0.2.1-rc.2
-//   逐字一致（仅 package.json 版本号变化），插件集成面零差异；engines.dsh 上限随之
-//   抬到 0.2.1-rc.3，避免宿主把 bundle 判为不兼容而整包跳过。
+//   逐字一致（仅 package.json 版本号变化），插件集成面零差异；当时 engines.dsh 上限随之
+//   抬到 0.2.1-rc.3（现为历史动作），避免宿主把 bundle 判为不兼容而整包跳过。
 // 本文件用同一组官方形状 fixtures 显式按版本标注跑双份断言，锁定
 // "一个实现 + feature detection"——禁止 if DSH 0.1.7 / if DSH 0.2.0 分叉。
 import { describe, it, beforeEach } from 'node:test'

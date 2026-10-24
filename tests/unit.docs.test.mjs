@@ -23,7 +23,7 @@ const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', imp
 /** 语言中立字面量：中英两侧都必须**原样**出现（改了一侧忘了另一侧 → 这里红）。 */
 const SHARED_LITERALS = [
   // 宿主契约与兼容区间
-  ['>=0.1.7-rc.1 <=0.2.1-rc.3', 'engines.dsh 支持区间（闭区间，两侧同款）'],
+  ['>=0.1.7-rc.1', 'engines.dsh 下限（2026-10-25 起仅下限、无上限，两侧同款）'],
   ['engines.dsh', '宿主要求字段名'],
   ['TurnProcessOwnerProps', '官方 owner state 契约名'],
   ['turnProcessAlwaysOpen', '官方"运行中不可折叠"语义'],
