@@ -148,7 +148,7 @@ window.__ModuleLoader__.load({
 		// 「NOTICE_VERSION == package.json version」守卫钉死：只 bump 包版本而忘了这里，
 		// `npm test` 直接红（Release workflow 在 publish 前跑全量测试，所以发不出去）。
 		// 漂移的后果是静默的：用户按当前版本写 meta.compat 会被判不兼容、悄悄回退内置默认。
-		var NOTICE_VERSION = "0.7.1";
+		var NOTICE_VERSION = "0.7.2";
 
 		// ---- 自有 UI 原语（零宿主包依赖） ----
 		// 官方插件实践（cordis-plugin-development/references/practices.md）：不要运行时

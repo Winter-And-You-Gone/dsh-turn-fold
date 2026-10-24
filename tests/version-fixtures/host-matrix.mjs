@@ -90,6 +90,13 @@ export const HOST_VERSION_FIXTURES = [
     expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
     note: '契约面与 0.2.0 同形；宿主开始用 engines.dsh 拦截不兼容 bundle，turnProcessAlwaysOpen 增加 interrupted（与 aborted 同为停止语义）',
   },
+  {
+    version: '0.2.1-rc.3',
+    tag: 'dsh-v0.2.1-rc.3',
+    probe: { officialTurnProcess: true, officialStandardKit: true, turnDataSource: true, stepGroups: true, sessionDomScope: true, conversationContentAnchor: true, oldShimmer: false, newShimmer: true, transcriptView: true, turnOwnerHasContent: true },
+    expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
+    note: 'ui-chat 客户端契约与 0.2.1-rc.2 逐字一致（仅 package.json 版本号变化）；engines.dsh 上限抬到 rc.3 以覆盖运行时',
+  },
 ]
 
 /** 由 fixture 的 probe 生成能力矩阵的输入（每个探针独立审计、绝不互相推导）。 */

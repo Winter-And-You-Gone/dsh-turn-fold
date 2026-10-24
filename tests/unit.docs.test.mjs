@@ -23,7 +23,7 @@ const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', imp
 /** 语言中立字面量：中英两侧都必须**原样**出现（改了一侧忘了另一侧 → 这里红）。 */
 const SHARED_LITERALS = [
   // 宿主契约与兼容区间
-  ['>=0.1.7-rc.1 <=0.2.1-rc.2', 'engines.dsh 支持区间（闭区间，两侧同款）'],
+  ['>=0.1.7-rc.1 <=0.2.1-rc.3', 'engines.dsh 支持区间（闭区间，两侧同款）'],
   ['engines.dsh', '宿主要求字段名'],
   ['TurnProcessOwnerProps', '官方 owner state 契约名'],
   ['turnProcessAlwaysOpen', '官方"运行中不可折叠"语义'],
@@ -38,6 +38,7 @@ const SHARED_LITERALS = [
   ['787b746b807df83776957875683b8853c862ca2c', '0.1.7-rc.2 release commit（逐包 diff 审计用）'],
   ['c1b47e41fc', '0.2.0-rc.2 release commit'],
   ['d1b9c04067', '0.2.1-rc.2 release commit（interrupted / engines.dsh 审计）'],
+  ['1f81c047fc', '0.2.1-rc.3 release commit（engines.dsh 上限审计）'],
   ['21638c5631', '审计过的官方 master commit（样式注册面）'],
   ['dsh-client-ui-chat', '官方契约包名'],
   ['dsh-client-ui-conversation', '官方契约包名'],

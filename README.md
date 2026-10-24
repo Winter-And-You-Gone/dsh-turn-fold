@@ -511,6 +511,7 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 | 0.1.7-rc.2 | modern | 新形状 | modern | reactive | official（`data-conversation-session`，commit b7ac0ade10） |
 | 0.2.0-rc.2 | modern | 新形状 | modern | reactive | official |
 | 0.2.1-rc.2 | modern | 新形状 | modern | reactive | official（宿主开始用 `engines.dsh` 拦截不兼容 bundle；`interrupted` 与 aborted 同为停止语义） |
+| 0.2.1-rc.3 | modern | 新形状 | modern | reactive | official（`ui-chat` 客户端契约与 0.2.1-rc.2 逐字一致；仅 `engines.dsh` 上限抬到 rc.3） |
 
 ### Live-host acceptance：已真机验收的版本（2026-10-06，RELEASE GATE PASSED）
 
@@ -534,6 +535,12 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 > 0.2.1 与 0.2.0 的插件集成面差异：`turnProcessAlwaysOpen` 增加 `interrupted`（插件已同步为
 > "已停止 + 不可折叠"）；官方分组改由 group-tree 位置驱动（插件只读 group snapshot 与 DOM
 > 钩子，不参与分组）；宿主开始执行 `engines.dsh` 拦截（区间不覆盖运行时 → bundle 被跳过）。
+
+> **2026-10-25：`engines.dsh` 上限抬到 0.2.1-rc.3。** 依据 `git diff
+> dsh-v0.2.1-rc.2..dsh-v0.2.1-rc.3 -- packages/client/ui-chat/src/client` 为空
+> （仅 `ui-chat/package.json` 版本号变化），插件消费的 Public/stable 契约与 rc.2 逐字一致；
+> 版本矩阵与源码契约测试加入 rc.3 基线（commit `1f81c047fc`），`npm test` 全绿。
+> 证据等级：CONTRACT-VERIFIED；LOAD/APPLY 待重启桌面端后复核。
 
 **验收期间发现并修复的真机缺陷（bundle 装载时序竞态）**：本插件以 bundle 方式装载时只注入
 `slots`，cordis 会在服务就绪时立即 apply——可能**早于**官方 conversation 层声明
@@ -587,7 +594,8 @@ turn 并读插件自身的内部状态。结论（**证据等级逐项标注**�
 
 因此本轮（2026-10-05）**没有放开 `engines.dsh`**：0.1.1 的 live 结论是失败，0.1.2/0.1.5 连官方
 runtime 都起不来，0.1.6+ 未真机验证。当时区间保持 `>=0.1.7-rc.1 <=0.2.0-rc.2`
-（2026-10-17 上限已按 0.2.1-rc.2 契约核对结果抬到 `<=0.2.1-rc.2`）。
+（2026-10-17 上限已按 0.2.1-rc.2 契约核对结果抬到 `<=0.2.1-rc.2`；
+2026-10-25 再按 0.2.1-rc.3 的客户端契约核对结果抬到 `<=0.2.1-rc.3`）。
 
 ### 诊断输出：probing → resolved 两行制
 
@@ -811,10 +819,12 @@ main 的 Turn 折叠**语义**（membership / 边界 / header / final / reason�
 TurnBarView fallback 面负责：Turn 级时钟取 `legacy.turnTimings`/`turnEnds`，TTFT 取
 turn-tail 的官方 `ttftMs`，decode 由 assistant-step 证据聚合，取不到的字段显示 "—"）。
 
-当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.1-rc.2"`：区间内的 0.1.7-rc.1 / 0.1.7-rc.2 /
+当前 `engines.dsh = ">=0.1.7-rc.1 <=0.2.1-rc.3"`：区间内的 0.1.7-rc.1 / 0.1.7-rc.2 /
 0.2.0-rc.2 三个版本**已 LIVE-HOST VERIFIED**（见上文「Live-host acceptance：已真机验收的版本」）；
 0.2.1-rc.2 已按 release commit `d1b9c04067` 逐契约核对并纳入版本矩阵，证据等级为
 **CONTRACT-VERIFIED + LOAD/APPLY VERIFIED**（Turn Bar 接管待真实会话验收）。
+0.2.1-rc.3 按 release commit `1f81c047fc` 核对：`ui-chat` 客户端契约与 rc.2 逐字一致，
+证据等级 **CONTRACT-VERIFIED**（LOAD/APPLY 待重启桌面端复核）。
 **下限不放开**：0.1.1-rc.2 的 Full Legacy Node Backend（Turn + Step 双语义）与 0.1.2 ~ 0.1.6 的
 Official Turn + Legacy Step 都必须等真实旧宿主矩阵通过后才会放开 `engines.dsh`——0.1.1 的真机
 结论是**失败**（3 键 backend 安装后自行 teardown，折叠未生效），0.1.2 / 0.1.5 连官方 npm
@@ -1108,15 +1118,16 @@ git push --follow-tags
 
 ## 注意事项
 
-- 兼容性目标：**DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2 的
+- 兼容性目标：**DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2 / 0.2.1-rc.3 的
   `conversation.chat.node` + `turn-process` owner state 契约**（前三个 LIVE-HOST VERIFIED，
-  0.2.1-rc.2 为 CONTRACT-VERIFIED + LOAD/APPLY VERIFIED（Turn Bar 接管待验收），见上文能力矩阵）。
+  0.2.1-rc.2 为 CONTRACT-VERIFIED + LOAD/APPLY VERIFIED，0.2.1-rc.3 为 CONTRACT-VERIFIED
+  （Turn Bar 接管待验收），见上文能力矩阵）。
   0.1.7-rc.1 起官方才提供完整契约面（`TurnProcessOwnerProps`、
   `useTurnData` reactive hook、`ChatNodeStore.turnDataSource`——已核对 rc.1 源码）；
   **更早版本不再声明兼容**——
   "安装后自然休眠"不计入兼容，兼容 = 插件核心功能真正工作。DSH 升级若改变上述
   契约，本插件可能需要随版本小改（属插件维护，非改源码）。
-- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1 <=0.2.1-rc.2`
+- **宿主要求已声明**：`package.json` 的 `engines.dsh` = `>=0.1.7-rc.1 <=0.2.1-rc.3`
   —— 插件市场（dshmarket）读 npm `latest` manifest 的这个字段，在插件卡片上显示
   宿主要求，并在**更新**前拦下确定不满足的版本。
   **DSH 0.2.1 起宿主自己也会执行该字段**（`app-boot` 的 plugin-compatibility 预检）：
@@ -1124,9 +1135,10 @@ git push --follow-tags
   插件不会加载——所以每次 DSH 升级后必须重新核对契约、抬上限并发布，否则用户升级
   桌面端后插件会"静默消失"。区间是**闭区间**、锁到已核验的宿主版本。
 - **集成依赖清单**（DSH 升级时对照排查；已按 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2
-  `c1b47e41fc` ↔ 0.2.1-rc.2 `d1b9c04067` 逐契约 diff 审计：Public/stable 契约在三个
-  release 间保持不变；0.2.1 只新增 `interrupted` 停止语义、group-tree 分组位置与
-  `engines.dsh` 强制检查，均已被插件消化或属于宿主行为）：
+  `c1b47e41fc` ↔ 0.2.1-rc.2 `d1b9c04067` ↔ 0.2.1-rc.3 `1f81c047fc` 逐契约 diff 审计：
+  Public/stable 契约在四个 release 间保持不变；0.2.1 只新增 `interrupted` 停止语义、
+  group-tree 分组位置与 `engines.dsh` 强制检查，rc.3 仅抬版本号与 `engines.dsh` 上限，
+  均已被插件消化或属于宿主行为）：
   - **Cordis activation**：`exports.inject = ["slots"]` + `ctx.inject(["slots"], …)`
     （客户端 slots 服务与 keyed slot 注册语义，官方 `boot-client` 未变）；
   - **Public/stable**：`conversation.chat.node` keyed slot（`turn-process` key +

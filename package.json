@@ -1,6 +1,6 @@
 {
   "name": "@winteries/dsh-turn-fold",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "type": "module",
   "main": "index.js",
   "description": "Enhances DeepSeek Harness native folding with a richer turn bar (poker icon, duration, TTFT, tokens, tok/s, cache hit, running status), a pure-CSS poker skin for official step groups and plugin-owned appearance settings. DSH owns all folding semantics; this plugin only enhances the UI. Zero source patches.",
@@ -19,7 +19,7 @@
   "sideEffects": true,
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
-    "dsh": ">=0.1.7-rc.1 <=0.2.1-rc.2"
+    "dsh": ">=0.1.7-rc.1 <=0.2.1-rc.3"
   },
   "scripts": {
     "check": "node --check client.js && node --check index.js",
