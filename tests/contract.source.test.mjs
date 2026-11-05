@@ -1,10 +1,11 @@
-// 官方源码契约测试（四版本，条件式）。
+// 官方源码契约测试（五版本，条件式）。
 //
-// 直接读取本地 DSH checkout，用 git show 对 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2 / 0.2.1-rc.3
-// 四个正式 release commit 分别核对插件真正依赖的源码契约——不止 shimmer：
+// 直接读取本地 DSH checkout，用 git show 对 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2 / 0.2.1-rc.3 / 0.2.2-rc.1
+// 五个正式 release commit 分别核对插件真正依赖的源码契约——不止 shimmer：
 //   slot 注册 / TurnProcessOwnerProps / turn-process 投影生命周期 /
 //   turnDataSource / useTurnData / TurnTokenUsage / Step DOM hooks /
-//   0.2.1 的 interrupted 停止语义与 engines.dsh 拦截。
+//   0.2.1 的 interrupted 停止语义与 engines.dsh 拦截；0.2.2 的叠加式新增（两个 chat slot /
+//   package-asset 路由 / foldedReplies）与移除项（fileMentions 等）插件均不受影响。
 // CI 无 checkout（或无 git）时跳过；插件自己的 fixture 契约测试
 // （unit.css / unit.version-matrix 等）不依赖 checkout，始终执行。
 import { describe, it } from 'node:test'
@@ -13,12 +14,13 @@ import { access, readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 
 const CHECKOUT = process.env.DSH_CHECKOUT || 'X:/DSH/deepseek-harness'
-// 四个正式 release 基线（git tag：dsh-v0.1.7-rc.2 / dsh-v0.2.0-rc.2 / dsh-v0.2.1-rc.2 / dsh-v0.2.1-rc.3）
+// 五个正式 release 基线（git tag：dsh-v0.1.7-rc.2 / dsh-v0.2.0-rc.2 / dsh-v0.2.1-rc.2 / dsh-v0.2.1-rc.3 / dsh-v0.2.2-rc.1）
 const BASELINES = [
   { label: '0.1.7-rc.2', commit: '787b746b807df83776957875683b8853c862ca2c' },
   { label: '0.2.0-rc.2', commit: 'c1b47e41fcd54d20a0f061df28683bfc29ee24e5' },
   { label: '0.2.1-rc.2', commit: 'd1b9c0406783051f53587719372489aa0a9d76ac' },
   { label: '0.2.1-rc.3', commit: '1f81c047fc48fa190a683e469daa699857e9afe8' },
+  { label: '0.2.2-rc.1', commit: '66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db' },
 ]
 const UI_CHAT = 'packages/client/ui-chat/src/client'
 
@@ -44,7 +46,7 @@ async function contractSkipReason() {
 }
 const CONTRACT_SKIP = await contractSkipReason()
 
-describe('官方源码契约（四 release commit，条件式）', { skip: CONTRACT_SKIP || false }, () => {
+describe('官方源码契约（五 release commit，条件式）', { skip: CONTRACT_SKIP || false }, () => {
   const show = (rev, path) => new Promise((resolve, reject) => {
     execFile('git', ['-C', CHECKOUT, 'show', rev + ':' + path], (err, stdout) => (err ? reject(err) : resolve(stdout)))
   })
@@ -68,7 +70,7 @@ describe('官方源码契约（四 release commit，条件式）', { skip: CONTR
       assert.ok(tp.includes('turnProcessAlwaysOpen'), 'alwaysOpen 助手变更')
       assert.ok(tp.includes("'aborted'") && tp.includes("'error'"), 'aborted/error 不可折叠语义变更')
       // 0.2.1 起 interrupted 与 aborted 同为停止语义（官方 message.stopped）
-      if (b.label === '0.2.1-rc.2' || b.label === '0.2.1-rc.3') {
+      if (b.label === '0.2.1-rc.2' || b.label === '0.2.1-rc.3' || b.label === '0.2.2-rc.1') {
         assert.ok(tp.includes("'interrupted'"), '0.2.1 interrupted 停止语义变更')
       }
     })
@@ -137,8 +139,13 @@ describe('官方源码契约（四 release commit，条件式）', { skip: CONTR
     assert.ok(shimmer.includes('data-shimmer={active || undefined}'), '0.2.1-rc.3 shimmer 契约变更')
   })
 
-  it('0.2.1-rc.2 / 0.2.1-rc.3：engines.dsh 是宿主要求的唯一权威（缺失才回退 peerDependencies）', async () => {
-    for (const baseline of [BASELINES[2], BASELINES[3]]) {
+  it('0.2.2-rc.1 的 TextShimmer 仍是 data-shimmer（0.2.2 客户端契约延续）', async () => {
+    const shimmer = await show(BASELINES[4].commit, 'packages/client/ui-primitives/src/TextShimmer.tsx')
+    assert.ok(shimmer.includes('data-shimmer={active || undefined}'), '0.2.2-rc.1 shimmer 契约变更')
+  })
+
+  it('0.2.1-rc.2 / 0.2.1-rc.3 / 0.2.2-rc.1：engines.dsh 是宿主要求的唯一权威（缺失才回退 peerDependencies）', async () => {
+    for (const baseline of [BASELINES[2], BASELINES[3], BASELINES[4]]) {
       const compat = await show(baseline.commit, 'packages/boot/app-boot/src/plugin-compatibility.ts')
       assert.ok(compat.includes("Object.hasOwn(engines, 'dsh')"), baseline.label + ' engines.dsh 判定变更')
       assert.ok(compat.includes('includePrerelease: true'), baseline.label + ' 预发布版必须参与区间判定')

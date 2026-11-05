@@ -668,6 +668,7 @@ describe('最终支持契约矩阵（supported-host-matrix contract）', () => {
     ['0.2.0-rc.2', 'modern', 'modern', 'reactive'],
     ['0.2.1-rc.2', 'modern', 'modern', 'reactive'],
     ['0.2.1-rc.3', 'modern', 'modern', 'reactive'],
+    ['0.2.2-rc.1', 'modern', 'modern', 'reactive'],
   ]
   it('K1 每个目标版本的 fixture expect 与最终契约一致（capability 三态各自独立）', () => {
     for (const [version, turn, step, metrics] of CONTRACT) {

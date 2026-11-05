@@ -97,6 +97,13 @@ export const HOST_VERSION_FIXTURES = [
     expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
     note: 'ui-chat 客户端契约与 0.2.1-rc.2 逐字一致（仅 package.json 版本号变化）；当时 engines.dsh 上限抬到 rc.3 以覆盖运行时（2026-10-25 起区间策略改为仅下限、无上限，未验证版本由探测降级兜底——抬上限动作成为历史，见 README）',
   },
+  {
+    version: '0.2.2-rc.1',
+    tag: 'dsh-v0.2.2-rc.1',
+    probe: { officialTurnProcess: true, officialStandardKit: true, turnDataSource: true, stepGroups: true, sessionDomScope: true, conversationContentAnchor: true, oldShimmer: false, newShimmer: true, transcriptView: true, turnOwnerHasContent: true },
+    expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
+    note: '客户端契约面与 0.2.1 同形：TurnProcessOwnerProps / ChatNodeOwnerProps.turnProcess / Step DOM 钩子 / TextShimmer 逐字未变；0.2.2 的变更均为叠加或移除插件未用项——新增 conversation.chat.text-interaction / chat.user.before slots、package-asset 路由与 foldedReplies 设置（默认 all），移除 fileMentions / compactAnswer / data-turn-process-answer',
+  },
 ]
 
 /** 由 fixture 的 probe 生成能力矩阵的输入（每个探针独立审计、绝不互相推导）。 */
