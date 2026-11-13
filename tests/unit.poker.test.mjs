@@ -57,6 +57,7 @@ describe('活动 → 花色映射（Step Poker Skin 数据源）', () => {
     assert.equal(T.activitySuitOf('search'), 'spade')
     assert.equal(T.activitySuitOf('webSearch'), 'spade')
     assert.equal(T.activitySuitOf('webFetch'), 'spade')
+    assert.equal(T.activitySuitOf('context'), 'spade')
     assert.equal(T.activitySuitOf('edit'), 'diamond')
     assert.equal(T.activitySuitOf('write'), 'diamond')
     assert.equal(T.activitySuitOf('commands'), 'club')
@@ -72,7 +73,8 @@ describe('活动 → 花色映射（Step Poker Skin 数据源）', () => {
   })
 
   it('官方 ProcessActivity 词表全覆盖', () => {
-    const official = ['thinking', 'read', 'readImage', 'search', 'edit', 'write', 'commands', 'code', 'webSearch', 'webFetch', 'subagents', 'plan', 'questions', 'tools']
+    // 0.2.2-rc.2 起官方词表新增 context（全-Context 组）
+    const official = ['thinking', 'read', 'readImage', 'search', 'edit', 'write', 'commands', 'code', 'webSearch', 'webFetch', 'context', 'subagents', 'plan', 'questions', 'tools']
     for (const a of official) assert.ok(T.ACTIVITY_SUIT[a] !== undefined, '缺活动 ' + a)
   })
 })

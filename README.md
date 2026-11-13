@@ -513,6 +513,8 @@ running）语义两代契约一致、零回归；所有切换仍只调用 `turnP
 | 0.2.1-rc.2 | modern | 新形状 | modern | reactive | official（宿主开始用 `engines.dsh` 拦截不兼容 bundle；`interrupted` 与 aborted 同为停止语义） |
 | 0.2.1-rc.3 | modern | 新形状 | modern | reactive | official（`ui-chat` 客户端契约与 0.2.1-rc.2 逐字一致；仅 `engines.dsh` 上限抬到 rc.3） |
 | 0.2.2-rc.1 | modern | 新形状 | modern | reactive | official（客户端契约面与 0.2.1 同形；0.2.2 只叠加 `conversation.chat.text-interaction` / `chat.user.before` slot、package-asset 路由与 `foldedReplies` 设置（默认保留全部回复），并移除插件未用的 `fileMentions` / `compactAnswer` / `data-turn-process-answer`） |
+| 0.2.2-rc.2 | modern | 新形状 | modern | reactive | official（仍为叠加式：新增 `conversation.chat.markdown.fence` slot / `consumeOlder` 分页消费 / `conversation.hero.frame` 包裹层 / composer 粘贴路由 / `sessionHeader` 菜单；ProcessActivity 词表新增 `context`（全-Context 组，running 永不取该值）——插件花色映射已补 context→spade；Step DOM 钩子 / 会话锚点 / owner state / TextShimmer 逐字未变） |
+| 0.2.2-rc.3 | modern | 新形状 | modern | reactive | official（ui-chat / ui-conversation / boot 源码零变更，仅各 package.json 版本号 bump；契约面与 0.2.2-rc.2 完全同形） |
 
 ### Live-host acceptance：已真机验收的版本（2026-10-06，RELEASE GATE PASSED）
 
@@ -843,6 +845,12 @@ turn-tail 的官方 `ttftMs`，decode 由 assistant-step 证据聚合，取不�
 TextShimmer）与 0.2.1 逐字同形，证据等级 **CONTRACT-VERIFIED + LOAD/APPLY VERIFIED**
 （源码构建 0.2.2-rc.1 宿主 + 隔离 profile 实跑：插件 bundle 编入 boot 图、注入四张样式表、
 `turn=modern` 注册成功、零异常；Turn Bar 视觉接管仍待真实模型会话）。
+0.2.2-rc.2 按 release commit `ddac96760b` 核对：仍为叠加式（`conversation.chat.markdown.fence`
+slot、`consumeOlder` 分页消费、`conversation.hero.frame` 包裹层与 composer 粘贴路由、
+`sessionHeader` 菜单），唯一词表级变化是 ProcessActivity 新增 `context`（全-Context 组）——
+插件花色映射已补 context→spade，证据等级 **CONTRACT-VERIFIED**（LOAD/APPLY 待重启桌面端复核）。
+0.2.2-rc.3 按 release commit `38a6a5c965` 核对：ui-chat / ui-conversation / boot 源码零变更
+（仅版本号 bump），契约面与 rc.2 完全同形，证据等级 **CONTRACT-VERIFIED**。
 **上限不设**：未验证的未来宿主版本由运行时探测降级兜底——注册期三态探测 + 安装事务
 FAIL OPEN + 宿主 app-boot 逐条目激活隔离 + 官方 SlotErrorBoundary 逐条目渲染隔离 +
 宿主通知回调统一 try/catch 包装；最坏行为 = 插件零注册或单个 slot 占位符，不影响宿主本身。
@@ -1139,10 +1147,13 @@ git push --follow-tags
 
 ## 注意事项
 
-- 兼容性目标：**DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2 / 0.2.1-rc.3 / 0.2.2-rc.1 的
+- 兼容性目标：**DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2 / 0.2.1-rc.3 / 0.2.2-rc.1 /
+  0.2.2-rc.2 / 0.2.2-rc.3 的
   `conversation.chat.node` + `turn-process` owner state 契约**（前三个 LIVE-HOST VERIFIED，
   0.2.1-rc.2 为 CONTRACT-VERIFIED + LOAD/APPLY VERIFIED，0.2.1-rc.3 为 CONTRACT-VERIFIED，
   0.2.2-rc.1 为 CONTRACT-VERIFIED + LOAD/APPLY VERIFIED（Turn Bar 接管待真实模型会话验收），
+  0.2.2-rc.2 / 0.2.2-rc.3 为 CONTRACT-VERIFIED（rc.2 叠加式新增 + `context` 词表项已消化，
+  rc.3 仅版本号 bump），
   见上文能力矩阵）。
   0.1.7-rc.1 起官方才提供完整契约面（`TurnProcessOwnerProps`、
   `useTurnData` reactive hook、`ChatNodeStore.turnDataSource`——已核对 rc.1 源码）；
@@ -1162,11 +1173,16 @@ git push --follow-tags
   加载门控**——适配节奏从"必须发版"降为"最好核实"。
 - **集成依赖清单**（DSH 升级时对照排查；已按 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2
   `c1b47e41fc` ↔ 0.2.1-rc.2 `d1b9c04067` ↔ 0.2.1-rc.3 `1f81c047fc` ↔ 0.2.2-rc.1 `66491b05e3`
-  逐契约 diff 审计：Public/stable 契约在五个 release 间保持不变；0.2.1 只新增 `interrupted`
+  ↔ 0.2.2-rc.2 `ddac96760b` ↔ 0.2.2-rc.3 `38a6a5c965`
+  逐契约 diff 审计：Public/stable 契约在七个 release 间保持不变；0.2.1 只新增 `interrupted`
   停止语义、group-tree 分组位置与 `engines.dsh` 强制检查，rc.3 仅抬版本号与 `engines.dsh` 上限，
   0.2.2 只新增 `conversation.chat.text-interaction` / `conversation.chat.user.before` slot、
   package-asset 路由与 `foldedReplies` 设置，并移除 `ChatNodeOwnerProps.fileMentions` /
   `compactAnswer` / `data-turn-process-answer`（插件均未使用），
+  0.2.2-rc.2 再叠加 `conversation.chat.markdown.fence` slot / `consumeOlder` /
+  `conversation.hero.frame` 包裹层 / composer 粘贴路由 / `sessionHeader` 菜单，并把
+  ProcessActivity 词表扩了 `context`（全-Context 组；插件花色映射已补 context→spade），
+  0.2.2-rc.3 仅各 package.json 版本号 bump，
   均已被插件消化或属于宿主行为）：
   - **Cordis activation**：`exports.inject = ["slots"]` + `ctx.inject(["slots"], …)`
     （客户端 slots 服务与 keyed slot 注册语义，官方 `boot-client` 未变）；

@@ -23,6 +23,11 @@
 //   TextShimmer）与 0.2.1 逐字同形；0.2.2 只新增 slots（text-interaction / chat.user.before）、
 //   package-asset 路由与 foldedReplies 设置，并移除插件未用的 fileMentions / compactAnswer /
 //   data-turn-process-answer。故本矩阵只需把同一组 fixture 再跑一份 0.2.2 版本标注。
+//   0.2.2-rc.2/rc.3 同样已核对（2026-11-14）：rc.2 仍为叠加式——markdown.fence slot /
+//   consumeOlder / conversation.hero.frame 包裹层 / composer 粘贴路由 / sessionHeader 菜单，
+//   唯一词表级变化是 ProcessActivity 新增 context（全-Context 组，running 永不取该值，
+//   插件 ACTIVITY_SUIT 已补 context→spade）；rc.3 对 ui-chat / ui-conversation / boot 仅
+//   版本号 bump。Step DOM 钩子 / 会话锚点 / owner state / TextShimmer 逐字未变。
 // 本文件用同一组官方形状 fixtures 显式按版本标注跑双份断言，锁定
 // "一个实现 + feature detection"——禁止 if DSH 0.1.7 / if DSH 0.2.0 分叉。
 import { describe, it, beforeEach } from 'node:test'
@@ -51,6 +56,8 @@ const VERSIONS = [
   { label: '0.2.1-rc.2', commit: 'd1b9c0406783051f53587719372489aa0a9d76ac' },
   { label: '0.2.1-rc.3', commit: '1f81c047fc48fa190a683e469daa699857e9afe8' },
   { label: '0.2.2-rc.1', commit: '66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db' },
+  { label: '0.2.2-rc.2', commit: 'ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c' },
+  { label: '0.2.2-rc.3', commit: '38a6a5c965aa99ab525161efb7cc5cf1fe62fced' },
 ]
 
 // 每个版本的 contract shapes 一致（审计结论）——fixture 工厂按版本打标复用。
@@ -76,8 +83,8 @@ function renderTurnBar(props) {
   }
 }
 
-// ══════════════ A. Slot contract：turn-process renderer props（五版本） ══════════════
-describe('版本矩阵 A：turn-process slot renderer props（contract/slots.ts 五版本一致）', () => {
+// ══════════════ A. Slot contract：turn-process renderer props（七版本） ══════════════
+describe('版本矩阵 A：turn-process slot renderer props（contract/slots.ts 七版本一致）', () => {
   for (const v of VERSIONS) {
     it(v.label + '：closed Turn + owner → 折叠栏，aria-expanded 来自 owner.open', () => {
       const f = fixturesFor(v)
@@ -263,7 +270,7 @@ describe('版本矩阵 D：metrics 数据形状（turn-tail 聚合 + assistant-s
 })
 
 // ══════════════ E. Step DOM：0.1.7 平铺 shimmer / 0.2.0 嵌套 TextShimmer ══════════════
-describe('版本矩阵 E：Step Group DOM soft hooks（五版本 DOM 形状）', () => {
+describe('版本矩阵 E：Step Group DOM soft hooks（七版本 DOM 形状）', () => {
   // 从皮肤 CSS 提取 running 选择器（与 unit.css.test 同款解析；轮换 mask 规则）。
   // :has(...) 后必须紧跟卡牌位——排除 completed fan 规则里的 :not(:has(...)) 排除子句。
   function runningHostSelectors(skin) {
@@ -301,7 +308,7 @@ describe('版本矩阵 E：Step Group DOM soft hooks（五版本 DOM 形状）',
 
   beforeEach(() => { T.settings.iconStyle = 'poker'; T.applyIconStyle() })
 
-  for (const shape of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.2-rc.1']) {
+  for (const shape of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3']) {
     it(shape + ' 官方 DOM → running 选择器命中（任一 shimmer 契约），轮换 mask 规则到位', () => {
       const skin = document.querySelector('style[data-plugin-css="' + T.SKIN_CSS_ID + '"]').textContent
       const selectors = runningHostSelectors(skin)

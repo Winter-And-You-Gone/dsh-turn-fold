@@ -91,7 +91,7 @@ describe('Step Poker Skin（官方结构 + 软 DOM 依赖 + style.disabled 总�
 
   it('活动 → 花色映射规则（官方 ProcessActivity 词表全覆盖）', () => {
     const skin = skinEl().textContent
-    const activities = ['thinking', 'read', 'readImage', 'search', 'edit', 'write', 'commands', 'code', 'webSearch', 'webFetch', 'subagents', 'plan', 'questions', 'tools']
+    const activities = ['thinking', 'read', 'readImage', 'search', 'edit', 'write', 'commands', 'code', 'webSearch', 'webFetch', 'context', 'subagents', 'plan', 'questions', 'tools']
     for (const activity of activities) {
       assert.ok(skin.includes('[data-process-activity="' + activity + '"]'), '缺少活动规则 ' + activity)
     }

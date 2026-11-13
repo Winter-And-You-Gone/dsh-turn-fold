@@ -104,6 +104,20 @@ export const HOST_VERSION_FIXTURES = [
     expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
     note: '客户端契约面与 0.2.1 同形：TurnProcessOwnerProps / ChatNodeOwnerProps.turnProcess / Step DOM 钩子 / TextShimmer 逐字未变；0.2.2 的变更均为叠加或移除插件未用项——新增 conversation.chat.text-interaction / chat.user.before slots、package-asset 路由与 foldedReplies 设置（默认 all），移除 fileMentions / compactAnswer / data-turn-process-answer',
   },
+  {
+    version: '0.2.2-rc.2',
+    tag: 'dsh-v0.2.2-rc.2',
+    probe: { officialTurnProcess: true, officialStandardKit: true, turnDataSource: true, stepGroups: true, sessionDomScope: true, conversationContentAnchor: true, oldShimmer: false, newShimmer: true, transcriptView: true, turnOwnerHasContent: true },
+    expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
+    note: '仍为叠加式：新增 conversation.chat.markdown.fence slot（fence 层）与 consumeOlder 分页消费、conversation.hero.frame 包裹层与 composer 文件粘贴路由、sessionHeader 右键菜单（ui-conversation）；ProcessActivity 词表新增 context（全-Context 组，running 永不取该值）——TurnProcessOwnerProps / Step DOM 钩子 / 会话锚点 / TextShimmer / plugin-compatibility 逐字未变，插件 ACTIVITY_SUIT 已补 context→spade',
+  },
+  {
+    version: '0.2.2-rc.3',
+    tag: 'dsh-v0.2.2-rc.3',
+    probe: { officialTurnProcess: true, officialStandardKit: true, turnDataSource: true, stepGroups: true, sessionDomScope: true, conversationContentAnchor: true, oldShimmer: false, newShimmer: true, transcriptView: true, turnOwnerHasContent: true },
+    expect: { turnFold: 'modern', stepFold: 'modern', metrics: 'reactive', sessionScope: 'official', mode: 'modern' },
+    note: 'ui-chat / ui-conversation / boot 源码零变更（仅各 package.json 版本号 bump），插件契约面与 0.2.2-rc.2 完全同形',
+  },
 ]
 
 /** 由 fixture 的 probe 生成能力矩阵的输入（每个探针独立审计、绝不互相推导）。 */

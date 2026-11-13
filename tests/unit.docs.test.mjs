@@ -40,6 +40,8 @@ const SHARED_LITERALS = [
   ['d1b9c04067', '0.2.1-rc.2 release commit（interrupted / engines.dsh 审计）'],
   ['1f81c047fc', '0.2.1-rc.3 release commit（engines.dsh 上限审计）'],
   ['66491b05e3', '0.2.2-rc.1 release commit（0.2.2 客户端契约 + LOAD/APPLY 核对）'],
+  ['ddac96760b', '0.2.2-rc.2 release commit（叠加式新增 + context 词表项审计）'],
+  ['38a6a5c965', '0.2.2-rc.3 release commit（仅版本 bump，契约面同 rc.2）'],
   ['21638c5631', '审计过的官方 master commit（样式注册面）'],
   ['dsh-client-ui-chat', '官方契约包名'],
   ['dsh-client-ui-conversation', '官方契约包名'],

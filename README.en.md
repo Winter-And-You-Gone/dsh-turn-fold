@@ -607,14 +607,19 @@ git push --follow-tags
 ## Notes
 
 - Compatibility target: the **DSH 0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2 / 0.2.1-rc.2 / 0.2.1-rc.3
-  / 0.2.2-rc.1 `conversation.chat.node` + `turn-process` owner-state contract** (the first
+  / 0.2.2-rc.1 / 0.2.2-rc.2 / 0.2.2-rc.3 `conversation.chat.node` + `turn-process` owner-state
+  contract** (the first
   three are LIVE-HOST VERIFIED; 0.2.1-rc.2 is CONTRACT-VERIFIED against release commit
   `d1b9c04067` and the version matrix, plus LOAD/APPLY VERIFIED on a source-built 0.2.1-rc.2
   host with an isolated profile; 0.2.1-rc.3 is CONTRACT-VERIFIED against release commit
   `1f81c047fc`; 0.2.2-rc.1 is CONTRACT-VERIFIED + LOAD/APPLY VERIFIED against release commit
   `66491b05e3` — source-built host, isolated profile: the bundle is composed into the boot
   graph, four style sheets are injected, capability detection reports `turn=modern`, zero
-  exceptions; Turn Bar takeover still needs a real model session — see the capability
+  exceptions; Turn Bar takeover still needs a real model session; 0.2.2-rc.2 is
+  CONTRACT-VERIFIED against release commit `ddac96760b` — additive-only plus the new
+  `context` ProcessActivity word-list entry, already consumed by the plugin's suit map;
+  0.2.2-rc.3 is CONTRACT-VERIFIED against release commit `38a6a5c965` — version bumps only —
+  see the capability
   matrix above). The full contract surface
   exists from 0.1.7-rc.1 onward (`TurnProcessOwnerProps`, the reactive `useTurnData` hook,
   `ChatNodeStore.turnDataSource` — verified against the rc.1 sources).
@@ -642,14 +647,19 @@ git push --follow-tags
   to "should re-verify".
 - **Integration dependency list** (check against DSH upgrades; audited via a
   contract-by-contract diff of 0.1.7-rc.2 `787b746b80` ↔ 0.2.0-rc.2 `c1b47e41fc` ↔
-  0.2.1-rc.2 `d1b9c04067` ↔ 0.2.1-rc.3 `1f81c047fc` ↔ 0.2.2-rc.1 `66491b05e3`: the
-  Public/stable contracts are unchanged across all five releases; 0.2.1 only adds the
+  0.2.1-rc.2 `d1b9c04067` ↔ 0.2.1-rc.3 `1f81c047fc` ↔ 0.2.2-rc.1 `66491b05e3` ↔
+  0.2.2-rc.2 `ddac96760b` ↔ 0.2.2-rc.3 `38a6a5c965`: the
+  Public/stable contracts are unchanged across all seven releases; 0.2.1 only adds the
   `interrupted` stop semantics, group-tree placement, and the `engines.dsh` preflight; rc.3
   only bumps the version and the `engines.dsh` ceiling; 0.2.2 only adds the
   `conversation.chat.text-interaction` / `conversation.chat.user.before` slots, the
   package-asset route, and the `foldedReplies` setting, and removes
   `ChatNodeOwnerProps.fileMentions` / `compactAnswer` / `data-turn-process-answer` (none of
-  which the plugin uses) — all either already consumed by the plugin or host-side behaviour):
+  which the plugin uses); 0.2.2-rc.2 further adds the `conversation.chat.markdown.fence`
+  slot / `consumeOlder` / the `conversation.hero.frame` wrapper / composer paste routing /
+  the `sessionHeader` menu and extends the ProcessActivity word list with `context`
+  (all-Context groups; the plugin's suit map already covers it), and 0.2.2-rc.3 only bumps
+  package.json versions — all either already consumed by the plugin or host-side behaviour):
   - **Cordis activation**: `exports.inject = ["slots"]` + `ctx.inject(["slots"], …)`
     (the client slots service and keyed-slot registration semantics; the official
     `boot-client` is unchanged);

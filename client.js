@@ -543,10 +543,12 @@ window.__ModuleLoader__.load({
 		// 的扑克牌（CSS mask，当前色描边 + 花色点），花色按官方 activity 映射。
 		// 软依赖：任一钩子改名/移除 → 选择器不再命中 → 官方图标原样显示，
 		// 官方折叠行为不受任何影响（最坏退化 = 皮消失）。
-		// 官方 ProcessActivity 词表（ui-chat contract/process-groups.ts）。
+		// 官方 ProcessActivity 词表（ui-chat contract/process-groups.ts；0.2.2-rc.2 起新增 context）。
 		var ACTIVITY_SUIT = {
 			thinking: "heart", questions: "heart",
 			read: "spade", readImage: "spade", search: "spade", webSearch: "spade", webFetch: "spade",
+			// context（0.2.2-rc.2：全-Context 组）与输入类同组——向模型喂数据，归 spade。
+			context: "spade",
 			edit: "diamond", write: "diamond",
 			commands: "club", code: "club",
 			subagents: "whale", plan: "whale", tools: "whale"
