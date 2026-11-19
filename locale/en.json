@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Turn fold",
+    "description": "Adds a poker-card turn bar to DSH's native folding: duration, TTFT, tokens, tok/s, cache hit and running status, plus a matching card skin for step groups. Open the gear at the right of the turn bar to choose fields and the icon mode."
+  }
+}

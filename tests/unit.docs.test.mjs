@@ -1,24 +1,48 @@
-// README 中英对齐守卫（docs pairing guard）
+// 中英文档对齐守卫（docs pairing guard）
 //
 // 为什么需要：`README.md`（简体中文，主文档）与 `README.en.md`（英文，精简版）是**两份手写**
 // 文档，靠人比对。2026-10-09 就发生过一次真实漂移：EN 侧写「injects two minimal `<style>`
 // elements」，而代码里实际是**六处**注入（zh 侧按代码列全了）——靠人工发现，两次提交才补齐
 // （9f9a165 改 EN、a7def33 补 zh）。本守卫把"两侧都讲了的同一件事"钉住：只改一侧就红。
 //
+// 2026-11-19 起 README 拆成「落地页 + docs/ 工程附录」：主文档只保留功能、安装、设置与
+// 兼容摘要，深度契约/历史/实现细节移到 docs/*.md，避免插件详情页展示一份上百 KB 的 README。
+// 守卫因此按**语言文档集**比对（zh = README + docs/*.md；en = README.en.md + docs/*.en.md），
+// 事实仍必须两侧同时存在，只是不再强制都挤在 README 里。
+//
 // 边界（如实记录，别当漏测）：EN 是**精简**文档，整章缺失（Compatibility Architecture、
 // 0.1.1~0.1.6 历史验收、诊断两行制等）是设计选择，**不在**本守卫范围内。本守卫只管：
 //   1) 语言中立的事实字面量（数字 / 标识符 / 区间 / commit / 存储键 / 选择器）——两侧必须原样出现；
 //   2) 平行章节里同一事实的两种语言写法（PAIRED）——各自必须出现，任一侧被删或改口径就红；
-//   3) 与代码耦合的数量不变量（样式注入处数）——文档清单条数必须等于 client.js 的实际处数。
+//   3) 与代码耦合的数量不变量（样式注入处数）——文档清单条数必须等于 client.js 的实际处数；
+//   4) README 仍是落地页（体积上限），防止工程细节重新长回主文档。
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const zh = readFileSync(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8')
-const en = readFileSync(fileURLToPath(new URL('../README.en.md', import.meta.url)), 'utf8')
-const client = readFileSync(fileURLToPath(new URL('../client.js', import.meta.url)), 'utf8')
-const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'))
+const read = (path) => readFileSync(fileURLToPath(new URL('../' + path, import.meta.url)), 'utf8')
+
+/** 中文文档集：README 落地页 + docs/ 工程附录。 */
+const ZH_DOCS = [
+  'README.md',
+  'docs/COMPATIBILITY.md',
+  'docs/POKER-SKIN.md',
+  'docs/INTERNALS.md',
+  'docs/DEVELOPMENT.md',
+]
+/** 英文文档集：README landing page + docs/*.en.md appendices。 */
+const EN_DOCS = [
+  'README.en.md',
+  'docs/POKER-SKIN.en.md',
+  'docs/INTERNALS.en.md',
+  'docs/DEVELOPMENT.en.md',
+]
+
+const zh = ZH_DOCS.map(read).join('\n\n')
+const en = EN_DOCS.map(read).join('\n\n')
+const client = read('client.js')
+const pkg = JSON.parse(read('package.json'))
 
 /** 语言中立字面量：中英两侧都必须**原样**出现（改了一侧忘了另一侧 → 这里红）。 */
 const SHARED_LITERALS = [
@@ -175,13 +199,13 @@ const PAIRED_CLAIMS = [
 function missingInBoth(literals) {
   const missing = []
   for (const [literal, why] of literals) {
-    if (!zh.includes(literal)) missing.push('README.md（zh）缺：' + literal + '  ← ' + why)
-    if (!en.includes(literal)) missing.push('README.en.md（en）缺：' + literal + '  ← ' + why)
+    if (!zh.includes(literal)) missing.push('中文文档集（README + docs/）缺：' + literal + '  ← ' + why)
+    if (!en.includes(literal)) missing.push('英文文档集（README.en + docs/*.en.md）缺：' + literal + '  ← ' + why)
   }
   return missing
 }
 
-describe('README 中英对齐守卫（zh 主文档 ↔ en 精简版）', () => {
+describe('中英文档对齐守卫（zh 主文档 ↔ en 精简版，含 docs/ 附录）', () => {
   it('client.js 的 NOTICE_VERSION 必须等于 package.json 的 version', () => {
     // 2026-10-13 评审修复：该常量是 localStorage 图标包 meta.compat 的比较基准，此前
     // 静默漂移了两个版本（0.5.4 vs 0.7.0）——用户按当前版本写 meta.compat 会被判不兼容、
@@ -195,6 +219,33 @@ describe('README 中英对齐守卫（zh 主文档 ↔ en 精简版）', () => {
   it('两份文档互相链接（语言切换入口必须在两侧都在）', () => {
     assert.ok(zh.includes('README.en.md'), 'zh 文档缺少指向英文版的链接')
     assert.ok(en.includes('README.md'), 'en 文档缺少指向中文版的链接')
+  })
+
+  it('README 仍是落地页（体积上限，工程细节留在 docs/）', () => {
+    // 2026-11-19：插件详情页在未声明 meta.detail 时直接渲染 README；上一位超 100 KB
+    // 的中文 README 会把插件页变成天书。主文档超过 48 KB 就先考虑移到 docs/ 附录。
+    for (const file of ['README.md', 'README.en.md']) {
+      const bytes = Buffer.byteLength(read(file), 'utf8')
+      assert.ok(bytes <= 48 * 1024, `${file} 已 ${bytes} 字节，超过落地页上限 48 KB；请把工程细节移到 docs/`)
+    }
+  })
+
+  it('插件元数据：icon 与 locale 中英标题/描述可被 DSH 读取', () => {
+    // 2026-11-19：此前 manifest 没声明 icon / locale，DSH 【插件】列表只能显示
+    // 通用占位图与 package.json 的英文长描述——不是面板 bug。这里把元数据契约定死：
+    // 根 manifest 的 icon（优先级高于 ./icon 导出）+ locale/*.json + files 打包清单。
+    assert.equal(pkg.icon, './icon.svg', 'package.json 必须声明根 icon（DSH 优先读它）')
+    assert.equal(pkg.exports['./icon'], './icon.svg', '必须导出 ./icon（无根 icon 时的回退）')
+    assert.ok(pkg.exports['./locale/*.json'], '必须导出 ./locale/*.json')
+    assert.ok(pkg.files.includes('icon.svg'), 'icon.svg 必须在 files 里')
+    assert.ok(pkg.files.includes('locale/*.json'), 'locale/*.json 必须在 files 里')
+    const icon = read('icon.svg')
+    assert.ok(icon.includes('<svg') && icon.includes('viewBox="0 0 36 36"'), 'icon.svg 必须是 36×36 自包含 SVG')
+    assert.ok(Buffer.byteLength(icon, 'utf8') <= 256 * 1024, 'icon 不得超过 DSH 的 256 KiB 上限')
+    for (const file of ['locale/en.json', 'locale/zh.json']) {
+      const meta = JSON.parse(read(file)).meta
+      assert.ok(meta.title && meta.description, `${file} 必须有 meta.title / meta.description`)
+    }
   })
 
   it('语言中立事实：数字 / 标识符 / 区间 / commit / 选择器两侧原样一致', () => {
@@ -217,8 +268,8 @@ describe('README 中英对齐守卫（zh 主文档 ↔ en 精简版）', () => {
   it('平行事实：同一件事在中英两侧各自有对应表述', () => {
     const missing = []
     for (const [zhPhrase, enPhrase, why] of PAIRED_CLAIMS) {
-      if (!zh.includes(zhPhrase)) missing.push('README.md（zh）缺表述：' + zhPhrase + '  ← ' + why)
-      if (!en.includes(enPhrase)) missing.push('README.en.md（en）缺表述：' + enPhrase + '  ← ' + why)
+      if (!zh.includes(zhPhrase)) missing.push('中文文档集（README + docs/）缺表述：' + zhPhrase + '  ← ' + why)
+      if (!en.includes(enPhrase)) missing.push('英文文档集（README.en + docs/*.en.md）缺表述：' + enPhrase + '  ← ' + why)
     }
     assert.deepEqual(missing, [], '\n缺 ' + missing.length + ' 项：\n' + missing.join('\n'))
   })

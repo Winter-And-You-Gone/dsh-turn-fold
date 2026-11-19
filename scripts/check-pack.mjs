@@ -33,6 +33,9 @@ const REQUIRED = [
   'package.json',
   'index.js',
   'client.js',
+  'icon.svg',
+  'locale/en.json',
+  'locale/zh.json',
   'icons/default.json',
   'assets/dsh-turn-fold-customize-icons.md',
   'scripts/sync-icons.mjs',
@@ -42,6 +45,13 @@ const REQUIRED = [
   'LICENSE',
   'README.md',
   'README.en.md',
+  'docs/COMPATIBILITY.md',
+  'docs/POKER-SKIN.md',
+  'docs/POKER-SKIN.en.md',
+  'docs/INTERNALS.md',
+  'docs/INTERNALS.en.md',
+  'docs/DEVELOPMENT.md',
+  'docs/DEVELOPMENT.en.md',
   'docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html',
 ]
 /** 绝不能出现在 tarball 里的东西（workspace-only / 测试 / 锁 / 日志）。 */
@@ -67,10 +77,15 @@ function packJson() {
     closeSync(fd)
   }
   const out = readFileSync(outFile, 'utf8')
-  // npm 可能先打几条 notice；JSON 数组是 stdout 上的最后一段结构化输出。
-  const start = out.indexOf('[')
-  if (start < 0) throw new Error('npm pack --json 没有输出 JSON：\n' + out)
-  return JSON.parse(out.slice(start))
+  // npm 可能先打几条 notice；JSON 是 stdout 上的最后一段结构化输出。
+  // npm 11 及以前输出数组 `[{...}]`，npm 12 起输出按包名索引的对象 `{"name": {...}}`——
+  // 两种都接受，否则新版 npm 会把 check-pack 直接炸在 JSON.parse 上。
+  const candidates = ['[', '{'].map((ch) => out.indexOf(ch)).filter((i) => i >= 0)
+  if (candidates.length === 0) throw new Error('npm pack --json 没有输出 JSON：\n' + out)
+  const payload = JSON.parse(out.slice(Math.min(...candidates)))
+  const entry = Array.isArray(payload) ? payload[0] : Object.values(payload)[0]
+  if (!entry || !Array.isArray(entry.files)) throw new Error('npm pack --json 的输出里没有 files 清单：\n' + out)
+  return entry
 }
 
 let packResult = null
@@ -82,7 +97,7 @@ try {
   if (ownCache) { try { rmSync(cache, { recursive: true, force: true }) } catch { /* 忽略 */ } }
 }
 
-const [entry] = packResult
+const entry = packResult
 const paths = entry.files.map((f) => f.path.split(path.sep).join('/'))
 const problems = []
 

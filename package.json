@@ -42,6 +42,8 @@
   "files": [
     "index.js",
     "client.js",
+    "icon.svg",
+    "locale/*.json",
     "icons/default.json",
     "assets/dsh-turn-fold-customize-icons.md",
     "scripts/sync-icons.mjs",
@@ -52,8 +54,16 @@
     "LICENSE",
     "README.md",
     "README.en.md",
+    "docs/COMPATIBILITY.md",
+    "docs/POKER-SKIN.md",
+    "docs/INTERNALS.md",
+    "docs/DEVELOPMENT.md",
+    "docs/POKER-SKIN.en.md",
+    "docs/INTERNALS.en.md",
+    "docs/DEVELOPMENT.en.md",
     "docs/扑克牌轮换_动态蒙版遮挡_文件图标加强版.html"
   ],
+  "icon": "./icon.svg",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -65,6 +75,8 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "devDependencies": {
